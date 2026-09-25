@@ -2,42 +2,38 @@ import Host
 
 ## Blocking TCP sockets.
 ##
-## Listeners and streams are host resources: call `close!` when you are done
-## with one, or it stays open until the program exits.
+## Sockets close automatically once nothing refers to them any more, including
+## when a task ends early because of an error.
 Tcp := [].{
 
 	## A socket bound to a local address, waiting for connections.
-	Listener :: U64.{
+	Listener :: Host.TcpListener.{
 
 		## Block until a client connects.
 		accept! : Listener => Try(Stream, [TcpErr(Str)])
-		accept! = |Listener.(id)|
-			match Host.tcp_accept!(id) {
-				Ok(stream_id) => Ok(Stream.(stream_id))
+		accept! = |Listener.(listener)|
+			match Host.tcp_accept!(listener) {
+				Ok(stream) => Ok(Stream.(stream))
 				Err(TcpErr(err)) => Err(TcpErr(err))
 			}
-
-		## Stop listening.
-		close! : Listener => {}
-		close! = |Listener.(id)| Host.tcp_close!(id)
 	}
 
 	## A connected TCP stream.
-	Stream :: U64.{
+	Stream :: Host.TcpStream.{
 
 		## Read up to `max` bytes. Returns an empty list once the peer has closed
 		## its side of the connection.
 		read! : Stream, U64 => Try(List(U8), [TcpErr(Str)])
-		read! = |Stream.(id), max|
-			match Host.tcp_read!(id, max) {
+		read! = |Stream.(stream), max|
+			match Host.tcp_read!(stream, max) {
 				Ok(bytes) => Ok(bytes)
 				Err(TcpErr(err)) => Err(TcpErr(err))
 			}
 
 		## Write all of `bytes` to the stream.
 		write! : Stream, List(U8) => Try({}, [TcpErr(Str)])
-		write! = |Stream.(id), bytes|
-			match Host.tcp_write!(id, bytes) {
+		write! = |Stream.(stream), bytes|
+			match Host.tcp_write!(stream, bytes) {
 				Ok({}) => Ok({})
 				Err(TcpErr(err)) => Err(TcpErr(err))
 			}
@@ -46,16 +42,18 @@ Tcp := [].{
 		write_str! : Stream, Str => Try({}, [TcpErr(Str)])
 		write_str! = |stream, text| stream.write!(Str.to_utf8(text))
 
-		## Close the connection.
+		## Close the connection now instead of waiting for the stream to be
+		## dropped. Any task blocked reading this stream wakes up and sees the
+		## end of the stream, and later reads and writes fail.
 		close! : Stream => {}
-		close! = |Stream.(id)| Host.tcp_close!(id)
+		close! = |Stream.(stream)| Host.tcp_shutdown!(stream)
 	}
 
 	## Listen on `address`, such as `"127.0.0.1:8080"`.
 	listen! : Str => Try(Listener, [TcpErr(Str)])
 	listen! = |address|
 		match Host.tcp_listen!(address) {
-			Ok(id) => Ok(Listener.(id))
+			Ok(listener) => Ok(Listener.(listener))
 			Err(TcpErr(err)) => Err(TcpErr(err))
 		}
 
@@ -63,7 +61,7 @@ Tcp := [].{
 	connect! : Str => Try(Stream, [TcpErr(Str)])
 	connect! = |address|
 		match Host.tcp_connect!(address) {
-			Ok(id) => Ok(Stream.(id))
+			Ok(stream) => Ok(Stream.(stream))
 			Err(TcpErr(err)) => Err(TcpErr(err))
 		}
 }

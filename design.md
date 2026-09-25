@@ -77,14 +77,23 @@ cross-thread closure and value handling.
 
 ## Resources and lifetime
 
-Phase 1: sockets are `U64` handles into a host table (`src/sockets.rs`) and
-applications call `close!`. Every operation validates the handle and its kind.
+Sockets are ARC-owned handles, as in basic-webserver's `host_resource.rs`
+(`src/resource.rs`). A handle is a Roc `Box(U64)` whose allocation is a slot in
+a fixed host heap: an atomic refcount followed by a (generation, index) token.
+When Roc releases the last reference it deallocates the slot's address, and
+`roc_dealloc` (and the `RocHost` dealloc the glue helpers use) routes that
+address to the heap, which drops the socket and frees the slot. Every lookup
+checks the token, so a handle whose slot was reused is rejected.
 
-Target: ARC-owned handles, as in basic-webserver's `host_resource.rs`. A handle
-is a `Box(U64)`-compatible allocation; when Roc releases the last reference,
-`roc_dealloc` routes it to the owning table, which closes the socket. `close!`
-then becomes optional (still useful for closing early). Tables have fixed
-capacity and report `CapacityExhausted`.
+`Stream.close!` shuts a stream down early (for example, so a task blocked
+reading it wakes up); the socket itself is freed when its last reference goes.
+Listeners have no `close!`. The heap holds 4096 sockets; past that, creating
+one fails with an error.
+
+Invariant: platform Roc code never `Box.unbox`es or re-boxes a handle. The
+compiler's box-reuse rewrite (`lir/box_reuse.zig`) only fires on
+`box_box(f(box_unbox(b)))`, and that would recycle a handle's memory without
+calling `roc_dealloc`.
 
 Concurrent use of one resource from two tasks is memory-safe. Each resource
 has its own lock, and a conflicting operation either waits or returns `Busy`,
@@ -177,7 +186,7 @@ linker inputs don't cover it.
    datagrams; `Dns.resolve!`.
 5. **Framing + Bytes.** A pure-Roc buffered reader and codecs, with examples:
    a line-protocol chat server and a length-prefixed RPC.
-6. **ARC handles.** Automatic close, bounded tables.
+6. **ARC handles (done).** Automatic close, bounded socket heap.
 7. **Channels, TLS, coroutine scheduler**, in whatever order use cases demand.
 
 ## Risks and open questions
@@ -191,11 +200,12 @@ linker inputs don't cover it.
   values (110 KB list, 64 large strings). There were no mismatches or crashes,
   memory stayed flat, and every task thread exited. That is evidence, not
   proof; a ThreadSanitizer run would be stronger.
-- **Error paths leak explicitly-closed resources.** In the same experiment,
-  a proxy task whose `Tcp.connect!` failed returned early through `?`, never
-  closed the accepted client, and left that client hanging. Handles that close
-  on final release (milestone 6) remove this class of bug, so that milestone
-  should move earlier.
+- **Error paths leaked explicitly-closed resources (resolved).** In the same
+  experiment, a proxy task whose `Tcp.connect!` failed returned early through
+  `?`, never closed the accepted client, and left that client hanging. With
+  ARC handles the client is closed when the failed task's closure is dropped
+  (it now sees a reset within 40 ms), and 10,000 connections without any
+  `close!` left the server's file-descriptor count unchanged.
 - **Glue sizing with type variables.** basic-webserver documents that
   `roc glue` sizes unresolved type variables incorrectly. Generic values that
   cross the host boundary (task results, channel payloads) should be boxed,

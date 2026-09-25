@@ -1,59 +1,51 @@
-//! Host-side table of open sockets. Roc only ever sees the `u64` handles.
+//! Sockets owned by Roc through `Box(U64)` handles (see `resource.rs`).
 
-use std::collections::BTreeMap;
-use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::Mutex;
+use std::net::{TcpListener, TcpStream};
+use std::sync::OnceLock;
+
+use crate::resource::ResourceHeap;
+
+const MAX_SOCKETS: usize = 4096;
 
 pub enum Socket {
-    Listener(TcpListener),
-    Stream(TcpStream),
+    TcpListener(TcpListener),
+    TcpStream(TcpStream),
 }
 
-struct Table {
-    next_id: u64,
-    open: BTreeMap<u64, Socket>,
+fn heap() -> &'static ResourceHeap<Socket> {
+    static HEAP: OnceLock<ResourceHeap<Socket>> = OnceLock::new();
+    HEAP.get_or_init(|| ResourceHeap::new(MAX_SOCKETS))
 }
 
-static TABLE: Mutex<Table> = Mutex::new(Table {
-    next_id: 1,
-    open: BTreeMap::new(),
-});
-
-fn table() -> std::sync::MutexGuard<'static, Table> {
-    TABLE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+/// Hand a new socket to Roc.
+pub fn insert(socket: Socket) -> Result<*mut u64, String> {
+    heap()
+        .insert(socket)
+        .map_err(|_| format!("too many open sockets (limit {MAX_SOCKETS})"))
 }
 
-pub fn insert(socket: Socket) -> u64 {
-    let mut table = table();
-    let id = table.next_id;
-    table.next_id += 1;
-    table.open.insert(id, socket);
-    id
-}
-
-pub fn remove(id: u64) {
-    // Other tasks may hold clones of a stream (e.g. one blocked in read), so
-    // shut it down explicitly; that wakes them with EOF instead of leaving them
-    // blocked on a socket that stays open until every clone is dropped.
-    if let Some(Socket::Stream(stream)) = table().open.remove(&id) {
-        let _ = stream.shutdown(Shutdown::Both);
+/// # Safety
+/// The caller must own a live Roc reference to `handle` while using the result.
+pub unsafe fn listener<'a>(handle: *mut u64) -> Result<&'a TcpListener, String> {
+    match unsafe { heap().get(handle) } {
+        Ok(Socket::TcpListener(listener)) => Ok(listener),
+        Ok(_) => Err("handle is not a TCP listener".into()),
+        Err(_) => Err("invalid socket handle".into()),
     }
 }
 
-/// A clone of the listener, so callers can block on it without holding the lock.
-pub fn listener(id: u64) -> Result<TcpListener, String> {
-    match table().open.get(&id) {
-        Some(Socket::Listener(listener)) => listener.try_clone().map_err(|err| err.to_string()),
-        Some(Socket::Stream(_)) => Err(format!("handle {id} is a stream, not a listener")),
-        None => Err(format!("handle {id} is closed or unknown")),
+/// # Safety
+/// The caller must own a live Roc reference to `handle` while using the result.
+pub unsafe fn stream<'a>(handle: *mut u64) -> Result<&'a TcpStream, String> {
+    match unsafe { heap().get(handle) } {
+        Ok(Socket::TcpStream(stream)) => Ok(stream),
+        Ok(_) => Err("handle is not a TCP stream".into()),
+        Err(_) => Err("invalid socket handle".into()),
     }
 }
 
-/// A clone of the stream, so callers can block on it without holding the lock.
-pub fn stream(id: u64) -> Result<TcpStream, String> {
-    match table().open.get(&id) {
-        Some(Socket::Stream(stream)) => stream.try_clone().map_err(|err| err.to_string()),
-        Some(Socket::Listener(_)) => Err(format!("handle {id} is a listener, not a stream")),
-        None => Err(format!("handle {id} is closed or unknown")),
-    }
+/// Called by `roc_dealloc`. Returns true if `ptr` was a socket slot, which is
+/// now closed and must not be freed as ordinary memory.
+pub fn release(ptr: *mut std::ffi::c_void) -> bool {
+    heap().release(ptr)
 }

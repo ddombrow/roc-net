@@ -18,6 +18,7 @@ just check                 # type-check every example
 just build-examples        # build every example into target/examples/
 just run hello_world       # run an example
 just smoke                 # echo server + client round trip
+just docs                  # API reference in target/docs/index.html
 ```
 
 Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
@@ -25,13 +26,19 @@ Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
 
 ## Platform API
 
+Full reference: run `just docs` and open `target/docs/index.html`. In brief:
+
 - `Stdout.line!`, `Stderr.line!`, `Stdin.line!`: line-based standard I/O
 - `Tcp.listen!` and `Tcp.connect!`: blocking TCP sockets
-  - `Tcp.Listener`: `accept!`, `close!`
+  - `Tcp.Listener`: `accept!`
   - `Tcp.Stream`: `read!`, `write!`, `write_str!`, `close!`
+- `Task.spawn!`: run a closure concurrently on its own thread
 
-Sockets are host resources held in a handle table (`src/sockets.rs`); Roc only
-sees opaque `Listener`/`Stream` values. Close them explicitly.
+Sockets close automatically when Roc drops the last reference to them, including
+when a task ends early on an error. `Stream.close!` is only for closing early,
+for example to wake a task blocked reading the same stream. Handles are Roc
+`Box(U64)` values whose memory is a slot in a host-owned heap
+(`src/resource.rs`); `roc_dealloc` recognizes those slots and closes the socket.
 
 The app provides `main! : List(Str) => Try({}, [Exit(I32), ..])`.
 
@@ -58,4 +65,7 @@ just run tcp_proxy 127.0.0.1:9000 127.0.0.1:8080     # proxy in front of the ech
 - The host calls `signal(SIGPIPE, SIG_IGN)` at startup. Roc links this library
   behind its own `main`, so Rust's usual startup (which does this) never runs,
   and a write to a disconnected peer would otherwise kill the process.
+- Platform Roc code must never `Box.unbox` or re-box a socket handle. The
+  compiler can reuse an unboxed box's memory in place, which would bypass
+  `roc_dealloc` and leak the socket.
 - `Tcp.Stream.read!` caps a single read at 64 KiB regardless of the requested maximum.

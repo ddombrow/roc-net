@@ -36,6 +36,5 @@ echo! = |stream| {
 		}
 		stream.write!(bytes)?
 	}
-	stream.close!()
 	Ok({})
 }

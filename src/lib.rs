@@ -5,21 +5,23 @@
 use std::ffi::c_void;
 use std::io::{self, BufRead, Read, Write};
 use std::mem::ManuallyDrop;
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 
+mod resource;
 mod roc_platform_abi;
 mod sockets;
 mod tasks;
 
 use crate::roc_platform_abi::{
-    make_roc_host, roc_main, DefaultAllocators, DefaultHandlers, HostStderrLineResult,
-    HostStderrLineResultPayload, HostStderrLineResultTag, HostStdinLineResult,
-    HostStdinLineResultPayload, HostStdinLineResultTag, HostStdoutLineResult,
+    decref_box_with, make_roc_host, roc_main, DefaultAllocators, DefaultHandlers,
+    HostStderrLineResult, HostStderrLineResultPayload, HostStderrLineResultTag,
+    HostStdinLineResult, HostStdinLineResultPayload, HostStdinLineResultTag, HostStdoutLineResult,
     HostStdoutLineResultPayload, HostStdoutLineResultTag, HostTcpAcceptResult,
     HostTcpAcceptResultPayload, HostTcpAcceptResultTag, HostTcpConnectResult,
-    HostTcpListenResult, HostTcpReadResult, HostTcpReadResultPayload, HostTcpReadResultTag,
-    HostTcpWriteResult, HostTcpWriteResultPayload, HostTcpWriteResultTag, RocHost, RocList,
-    RocListWith, RocStr,
+    HostTcpConnectResultPayload, HostTcpConnectResultTag, HostTcpListenResult,
+    HostTcpListenResultPayload, HostTcpListenResultTag, HostTcpReadResult,
+    HostTcpReadResultPayload, HostTcpReadResultTag, HostTcpWriteResult, HostTcpWriteResultPayload,
+    HostTcpWriteResultTag, RocBox, RocHost, RocList, RocListWith, RocStr,
 };
 use crate::sockets::Socket;
 
@@ -118,7 +120,9 @@ pub extern "C" fn roc_stderr_line(message: RocStr) -> HostStderrLineResult {
 
     match result {
         Ok(()) => HostStderrLineResult {
-            payload: HostStderrLineResultPayload { ok: unit_ok_payload() },
+            payload: HostStderrLineResultPayload {
+                ok: unit_ok_payload(),
+            },
             tag: HostStderrLineResultTag::Ok,
         },
         Err(err) => HostStderrLineResult {
@@ -159,7 +163,9 @@ pub extern "C" fn roc_stdout_line(message: RocStr) -> HostStdoutLineResult {
 
     match result {
         Ok(()) => HostStdoutLineResult {
-            payload: HostStdoutLineResultPayload { ok: unit_ok_payload() },
+            payload: HostStdoutLineResultPayload {
+                ok: unit_ok_payload(),
+            },
             tag: HostStdoutLineResultTag::Ok,
         },
         Err(err) => HostStdoutLineResult {
@@ -172,62 +178,98 @@ pub extern "C" fn roc_stdout_line(message: RocStr) -> HostStdoutLineResult {
 /// Largest single read buffer, so a huge `max` from Roc cannot force a huge allocation.
 const MAX_READ_BYTES: u64 = 64 * 1024;
 
-fn handle_result(result: Result<u64, String>) -> HostTcpAcceptResult {
-    match result {
-        Ok(id) => HostTcpAcceptResult {
-            payload: HostTcpAcceptResultPayload { ok: ManuallyDrop::new(id) },
-            tag: HostTcpAcceptResultTag::Ok,
-        },
-        Err(err) => HostTcpAcceptResult {
-            payload: HostTcpAcceptResultPayload { err: err_str(err) },
-            tag: HostTcpAcceptResultTag::Err,
-        },
-    }
+/// Release the Roc reference a hosted function received for a socket handle.
+/// If it was the last one, this closes the socket (via `roc_dealloc`).
+fn release_handle(handle: *mut u64) {
+    unsafe {
+        decref_box_with(
+            handle as RocBox,
+            core::mem::align_of::<u64>(),
+            false,
+            None,
+            roc_host(),
+        )
+    };
+}
+
+macro_rules! handle_result {
+    ($result:ident, $payload:ident, $tag:ident, $value:expr) => {
+        match $value {
+            Ok(handle) => $result {
+                payload: $payload {
+                    ok: ManuallyDrop::new(handle),
+                },
+                tag: $tag::Ok,
+            },
+            Err(err) => $result {
+                payload: $payload { err: err_str(err) },
+                tag: $tag::Err,
+            },
+        }
+    };
 }
 
 /// Hosted function: Host.tcp_listen!
 #[no_mangle]
 pub extern "C" fn roc_tcp_listen(address: RocStr) -> HostTcpListenResult {
     let result = TcpListener::bind(address.as_str())
-        .map(|listener| sockets::insert(Socket::Listener(listener)))
-        .map_err(|err| format!("{}: {err}", address.as_str()));
+        .map_err(|err| format!("{}: {err}", address.as_str()))
+        .and_then(|listener| sockets::insert(Socket::TcpListener(listener)));
     unsafe { address.decref(roc_host()) };
-    handle_result(result)
+    handle_result!(
+        HostTcpListenResult,
+        HostTcpListenResultPayload,
+        HostTcpListenResultTag,
+        result
+    )
 }
 
 /// Hosted function: Host.tcp_accept!
 #[no_mangle]
-pub extern "C" fn roc_tcp_accept(listener_id: u64) -> HostTcpAcceptResult {
-    // Clone the listener so the table isn't locked while accept blocks.
-    let result = sockets::listener(listener_id).and_then(|listener| {
+pub extern "C" fn roc_tcp_accept(listener: *mut u64) -> HostTcpAcceptResult {
+    let result = unsafe { sockets::listener(listener) }.and_then(|listener| {
         let (stream, _peer) = listener.accept().map_err(|err| err.to_string())?;
-        Ok(sockets::insert(Socket::Stream(stream)))
+        sockets::insert(Socket::TcpStream(stream))
     });
-    handle_result(result)
+    release_handle(listener);
+    handle_result!(
+        HostTcpAcceptResult,
+        HostTcpAcceptResultPayload,
+        HostTcpAcceptResultTag,
+        result
+    )
 }
 
 /// Hosted function: Host.tcp_connect!
 #[no_mangle]
 pub extern "C" fn roc_tcp_connect(address: RocStr) -> HostTcpConnectResult {
     let result = TcpStream::connect(address.as_str())
-        .map(|stream| sockets::insert(Socket::Stream(stream)))
-        .map_err(|err| format!("{}: {err}", address.as_str()));
+        .map_err(|err| format!("{}: {err}", address.as_str()))
+        .and_then(|stream| sockets::insert(Socket::TcpStream(stream)));
     unsafe { address.decref(roc_host()) };
-    handle_result(result)
+    handle_result!(
+        HostTcpConnectResult,
+        HostTcpConnectResultPayload,
+        HostTcpConnectResultTag,
+        result
+    )
 }
 
 /// Hosted function: Host.tcp_read!
 #[no_mangle]
-pub extern "C" fn roc_tcp_read(stream_id: u64, max: u64) -> HostTcpReadResult {
-    let result = sockets::stream(stream_id).and_then(|mut stream| {
+pub extern "C" fn roc_tcp_read(stream: *mut u64, max: u64) -> HostTcpReadResult {
+    let result = unsafe { sockets::stream(stream) }.and_then(|mut stream| {
         let mut buf = vec![0u8; max.min(MAX_READ_BYTES) as usize];
         let len = stream.read(&mut buf).map_err(|err| err.to_string())?;
         Ok(unsafe { RocListWith::<u8, false>::from_slice(&buf[..len], roc_host()) })
     });
+    release_handle(stream);
 
     match result {
         Ok(bytes) => HostTcpReadResult {
-            payload: HostTcpReadResultPayload { ok: ManuallyDrop::new(bytes) },
+            payload: HostTcpReadResultPayload {
+                ok: ManuallyDrop::new(bytes),
+            },
             tag: HostTcpReadResultTag::Ok,
         },
         Err(err) => HostTcpReadResult {
@@ -239,14 +281,23 @@ pub extern "C" fn roc_tcp_read(stream_id: u64, max: u64) -> HostTcpReadResult {
 
 /// Hosted function: Host.tcp_write!
 #[no_mangle]
-pub extern "C" fn roc_tcp_write(stream_id: u64, bytes: RocListWith<u8, false>) -> HostTcpWriteResult {
-    let result = sockets::stream(stream_id)
-        .and_then(|mut stream| stream.write_all(bytes.as_slice()).map_err(|err| err.to_string()));
+pub extern "C" fn roc_tcp_write(
+    stream: *mut u64,
+    bytes: RocListWith<u8, false>,
+) -> HostTcpWriteResult {
+    let result = unsafe { sockets::stream(stream) }.and_then(|mut stream| {
+        stream
+            .write_all(bytes.as_slice())
+            .map_err(|err| err.to_string())
+    });
     unsafe { bytes.decref(roc_host()) };
+    release_handle(stream);
 
     match result {
         Ok(()) => HostTcpWriteResult {
-            payload: HostTcpWriteResultPayload { ok: unit_ok_payload() },
+            payload: HostTcpWriteResultPayload {
+                ok: unit_ok_payload(),
+            },
             tag: HostTcpWriteResultTag::Ok,
         },
         Err(err) => HostTcpWriteResult {
@@ -256,10 +307,14 @@ pub extern "C" fn roc_tcp_write(stream_id: u64, bytes: RocListWith<u8, false>) -
     }
 }
 
-/// Hosted function: Host.tcp_close!
+/// Hosted function: Host.tcp_shutdown!
 #[no_mangle]
-pub extern "C" fn roc_tcp_close(id: u64) {
-    sockets::remove(id);
+pub extern "C" fn roc_tcp_shutdown(stream: *mut u64) {
+    if let Ok(stream) = unsafe { sockets::stream(stream) } {
+        // Fails only if the stream is already shut down or disconnected.
+        let _ = stream.shutdown(Shutdown::Both);
+    }
+    release_handle(stream);
 }
 
 #[no_mangle]
@@ -269,7 +324,16 @@ pub extern "C" fn roc_alloc(length: usize, alignment: usize) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn roc_dealloc(ptr: *mut c_void, alignment: usize) {
-    DefaultAllocators::roc_dealloc(roc_host_ptr(), ptr, alignment);
+    host_dealloc(roc_host_ptr(), ptr, alignment);
+}
+
+/// Every Roc deallocation, from compiled Roc code (via `roc_dealloc`) or from
+/// glue helpers (via `RocHost`), comes through here. Socket handles are routed
+/// to the socket heap, which closes them; everything else is ordinary memory.
+extern "C" fn host_dealloc(roc_host: *mut RocHost, ptr: *mut c_void, alignment: usize) {
+    if !sockets::release(ptr) {
+        DefaultAllocators::roc_dealloc(roc_host, ptr, alignment);
+    }
 }
 
 #[no_mangle]
@@ -344,7 +408,10 @@ pub fn rust_main() -> i32 {
     ignore_sigpipe();
 
     // Leaked so it stays valid for tasks that are still running when `main!` returns.
-    let roc_host: &'static mut RocHost = Box::leak(Box::new(make_roc_host(core::ptr::null_mut())));
+    let roc_host: &'static mut RocHost = Box::leak(Box::new(RocHost {
+        roc_dealloc: host_dealloc,
+        ..make_roc_host(core::ptr::null_mut())
+    }));
     set_roc_host(roc_host);
 
     let args_list = build_args_list(roc_host);

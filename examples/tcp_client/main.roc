@@ -23,7 +23,6 @@ main! = |args| {
 	stream = Tcp.connect!(address)?
 	stream.write_str!(message)?
 	reply = stream.read!(4096)?
-	stream.close!()
 
 	Stdout.line!("Received: ${Str.from_utf8_lossy(reply)}")
 }

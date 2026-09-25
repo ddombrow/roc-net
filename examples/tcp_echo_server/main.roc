@@ -38,11 +38,9 @@ main! = |args| {
 				_ = Stderr.line!("connection error: ${err}")
 			}
 		}
-		stream.close!()
 		$served = $served + 1
 	}
 
-	listener.close!()
 	Ok({})
 }
 
