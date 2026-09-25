@@ -39,7 +39,7 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Stdout, Stderr, Stdin, Task, Tcp]
+	exposes [IOErr, Stdout, Stderr, Stdin, Task, Tcp]
 	packages { roc: "nightly-2026-09-24-f45bfbe" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
@@ -50,7 +50,12 @@ platform ""
 		"roc_tcp_accept": Host.tcp_accept!,
 		"roc_tcp_connect": Host.tcp_connect!,
 		"roc_tcp_listen": Host.tcp_listen!,
+		"roc_tcp_listener_local_addr": Host.tcp_listener_local_addr!,
+		"roc_tcp_local_addr": Host.tcp_local_addr!,
+		"roc_tcp_peer_addr": Host.tcp_peer_addr!,
 		"roc_tcp_read": Host.tcp_read!,
+		"roc_tcp_set_nodelay": Host.tcp_set_nodelay!,
+		"roc_tcp_set_timeout": Host.tcp_set_timeout!,
 		"roc_tcp_shutdown": Host.tcp_shutdown!,
 		"roc_tcp_write": Host.tcp_write!,
 	}
@@ -68,6 +73,7 @@ import Stdin
 import Task
 import Tcp
 import Host
+import IOErr
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {

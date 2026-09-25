@@ -1418,7 +1418,7 @@ pub enum HostTcpListenResultTag {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union HostTcpListenResultPayload {
-    pub err: core::mem::ManuallyDrop<RocStr>,
+    pub err: core::mem::ManuallyDrop<IOErr>,
     pub ok: core::mem::ManuallyDrop<*mut u64>,
 }
 
@@ -1433,7 +1433,7 @@ pub struct HostTcpListenResultPayloadAlignment;
 #[derive(Clone, Copy)]
 pub struct HostTcpListenResult {
     pub _payload_alignment: [HostTcpListenResultPayloadAlignment; 0],
-    pub payload: [u8; 12],
+    pub payload: [u8; 16],
     pub tag: HostTcpListenResultTag,
 }
 
@@ -1452,8 +1452,8 @@ impl HostTcpListenResult {
     /// # Safety
     /// `self.tag` must be `HostTcpListenResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
     }
 
     /// Borrow the `Err` payload without creating another owner.
@@ -1461,8 +1461,8 @@ impl HostTcpListenResult {
     /// # Safety
     /// `self.tag` must be `HostTcpListenResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
@@ -1470,8 +1470,8 @@ impl HostTcpListenResult {
     /// # Safety
     /// `self.tag` must be `HostTcpListenResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
@@ -1479,7 +1479,7 @@ impl HostTcpListenResult {
     /// # Safety
     /// `self.tag` must be `HostTcpListenResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
     }
 
@@ -1522,17 +1522,136 @@ impl HostTcpListenResult {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostTcpListenResult>() == 32, "HostTcpListenResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostTcpListenResult>() == 40, "HostTcpListenResult size mismatch");
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::align_of::<HostTcpListenResult>() == 8, "HostTcpListenResult alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostTcpListenResult, tag) == 24, "HostTcpListenResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostTcpListenResult, tag) == 32, "HostTcpListenResult tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostTcpListenResult>() == 16, "HostTcpListenResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostTcpListenResult>() == 20, "HostTcpListenResult size mismatch");
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<HostTcpListenResult>() == 4, "HostTcpListenResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostTcpListenResult, tag) == 12, "HostTcpListenResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostTcpListenResult, tag) == 16, "HostTcpListenResult tag offset mismatch");
+
+/// Tag discriminant for IOErr.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IOErrTag {
+    AddrInUse = 0,
+    AddrNotAvailable = 1,
+    BrokenPipe = 2,
+    ConnectionAborted = 3,
+    ConnectionRefused = 4,
+    ConnectionReset = 5,
+    Interrupted = 6,
+    InvalidInput = 7,
+    NotConnected = 8,
+    NotFound = 9,
+    Other = 10,
+    PermissionDenied = 11,
+    TimedOut = 12,
+    TooManySockets = 13,
+    UnexpectedEof = 14,
+    Unsupported = 15,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union IOErrPayload {
+    pub addr_in_use: [u8; 0],
+    pub addr_not_available: [u8; 0],
+    pub broken_pipe: [u8; 0],
+    pub connection_aborted: [u8; 0],
+    pub connection_refused: [u8; 0],
+    pub connection_reset: [u8; 0],
+    pub interrupted: [u8; 0],
+    pub invalid_input: [u8; 0],
+    pub not_connected: [u8; 0],
+    pub not_found: [u8; 0],
+    pub other: core::mem::ManuallyDrop<RocStr>,
+    pub permission_denied: [u8; 0],
+    pub timed_out: [u8; 0],
+    pub too_many_sockets: [u8; 0],
+    pub unexpected_eof: [u8; 0],
+    pub unsupported: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct IOErrPayloadAlignment;
+
+/// Tag union: IOErr
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct IOErr {
+    pub _payload_alignment: [IOErrPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: IOErrTag,
+}
+
+/// Tag union: IOErr
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct IOErr {
+    pub payload: IOErrPayload,
+    pub tag: IOErrTag,
+}
+
+impl IOErr {
+    /// Borrow the `Other` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `IOErrTag::Other` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_other_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Other` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `IOErrTag::Other` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_other_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.other as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Other` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `IOErrTag::Other`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_other_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Other` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `IOErrTag::Other`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_other_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.other) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<IOErr>() == 32, "IOErr size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<IOErr>() == 8, "IOErr alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(IOErr, tag) == 24, "IOErr tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<IOErr>() == 16, "IOErr size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<IOErr>() == 4, "IOErr alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(IOErr, tag) == 12, "IOErr tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -1545,7 +1664,7 @@ pub enum HostTcpAcceptResultTag {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union HostTcpAcceptResultPayload {
-    pub err: core::mem::ManuallyDrop<RocStr>,
+    pub err: core::mem::ManuallyDrop<HostIOErr>,
     pub ok: core::mem::ManuallyDrop<*mut u64>,
 }
 
@@ -1560,7 +1679,7 @@ pub struct HostTcpAcceptResultPayloadAlignment;
 #[derive(Clone, Copy)]
 pub struct HostTcpAcceptResult {
     pub _payload_alignment: [HostTcpAcceptResultPayloadAlignment; 0],
-    pub payload: [u8; 12],
+    pub payload: [u8; 16],
     pub tag: HostTcpAcceptResultTag,
 }
 
@@ -1579,8 +1698,8 @@ impl HostTcpAcceptResult {
     /// # Safety
     /// `self.tag` must be `HostTcpAcceptResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &HostIOErr {
+        unsafe { &*(self.payload.as_ptr() as *const HostIOErr) }
     }
 
     /// Borrow the `Err` payload without creating another owner.
@@ -1588,8 +1707,8 @@ impl HostTcpAcceptResult {
     /// # Safety
     /// `self.tag` must be `HostTcpAcceptResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &HostIOErr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<HostIOErr> as *const HostIOErr) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
@@ -1597,8 +1716,8 @@ impl HostTcpAcceptResult {
     /// # Safety
     /// `self.tag` must be `HostTcpAcceptResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> HostIOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const HostIOErr) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
@@ -1606,7 +1725,7 @@ impl HostTcpAcceptResult {
     /// # Safety
     /// `self.tag` must be `HostTcpAcceptResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> HostIOErr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
     }
 
@@ -1649,17 +1768,263 @@ impl HostTcpAcceptResult {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostTcpAcceptResult>() == 32, "HostTcpAcceptResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostTcpAcceptResult>() == 40, "HostTcpAcceptResult size mismatch");
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::align_of::<HostTcpAcceptResult>() == 8, "HostTcpAcceptResult alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostTcpAcceptResult, tag) == 24, "HostTcpAcceptResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostTcpAcceptResult, tag) == 32, "HostTcpAcceptResult tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostTcpAcceptResult>() == 16, "HostTcpAcceptResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostTcpAcceptResult>() == 20, "HostTcpAcceptResult size mismatch");
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<HostTcpAcceptResult>() == 4, "HostTcpAcceptResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostTcpAcceptResult, tag) == 12, "HostTcpAcceptResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostTcpAcceptResult, tag) == 16, "HostTcpAcceptResult tag offset mismatch");
+
+/// Tag discriminant for IOErr.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostIOErrTag {
+    AddrInUse = 0,
+    AddrNotAvailable = 1,
+    BrokenPipe = 2,
+    ConnectionAborted = 3,
+    ConnectionRefused = 4,
+    ConnectionReset = 5,
+    Interrupted = 6,
+    InvalidInput = 7,
+    NotConnected = 8,
+    NotFound = 9,
+    Other = 10,
+    PermissionDenied = 11,
+    TimedOut = 12,
+    TooManySockets = 13,
+    UnexpectedEof = 14,
+    Unsupported = 15,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostIOErrPayload {
+    pub addr_in_use: [u8; 0],
+    pub addr_not_available: [u8; 0],
+    pub broken_pipe: [u8; 0],
+    pub connection_aborted: [u8; 0],
+    pub connection_refused: [u8; 0],
+    pub connection_reset: [u8; 0],
+    pub interrupted: [u8; 0],
+    pub invalid_input: [u8; 0],
+    pub not_connected: [u8; 0],
+    pub not_found: [u8; 0],
+    pub other: core::mem::ManuallyDrop<RocStr>,
+    pub permission_denied: [u8; 0],
+    pub timed_out: [u8; 0],
+    pub too_many_sockets: [u8; 0],
+    pub unexpected_eof: [u8; 0],
+    pub unsupported: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostIOErrPayloadAlignment;
+
+/// Tag union: IOErr
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostIOErr {
+    pub _payload_alignment: [HostIOErrPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: HostIOErrTag,
+}
+
+/// Tag union: IOErr
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostIOErr {
+    pub payload: HostIOErrPayload,
+    pub tag: HostIOErrTag,
+}
+
+impl HostIOErr {
+    /// Borrow the `Other` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostIOErrTag::Other` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_other_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Other` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostIOErrTag::Other` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_other_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.other as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Other` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostIOErrTag::Other`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_other_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Other` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostIOErrTag::Other`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_other_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.other) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostIOErr>() == 32, "HostIOErr size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostIOErr>() == 8, "HostIOErr alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostIOErr, tag) == 24, "HostIOErr tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostIOErr>() == 16, "HostIOErr size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostIOErr>() == 4, "HostIOErr alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostIOErr, tag) == 12, "HostIOErr tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostTcpListenerLocalAddrResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostTcpListenerLocalAddrResultPayload {
+    pub err: core::mem::ManuallyDrop<IOErr>,
+    pub ok: core::mem::ManuallyDrop<RocStr>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostTcpListenerLocalAddrResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTcpListenerLocalAddrResult {
+    pub _payload_alignment: [HostTcpListenerLocalAddrResultPayloadAlignment; 0],
+    pub payload: [u8; 16],
+    pub tag: HostTcpListenerLocalAddrResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTcpListenerLocalAddrResult {
+    pub payload: HostTcpListenerLocalAddrResultPayload,
+    pub tag: HostTcpListenerLocalAddrResultTag,
+}
+
+impl HostTcpListenerLocalAddrResult {
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTcpListenerLocalAddrResultTag::Err` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTcpListenerLocalAddrResultTag::Err` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTcpListenerLocalAddrResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTcpListenerLocalAddrResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTcpListenerLocalAddrResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTcpListenerLocalAddrResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTcpListenerLocalAddrResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTcpListenerLocalAddrResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostTcpListenerLocalAddrResult>() == 40, "HostTcpListenerLocalAddrResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostTcpListenerLocalAddrResult>() == 8, "HostTcpListenerLocalAddrResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostTcpListenerLocalAddrResult, tag) == 32, "HostTcpListenerLocalAddrResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostTcpListenerLocalAddrResult>() == 20, "HostTcpListenerLocalAddrResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostTcpListenerLocalAddrResult>() == 4, "HostTcpListenerLocalAddrResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostTcpListenerLocalAddrResult, tag) == 16, "HostTcpListenerLocalAddrResult tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -1672,7 +2037,7 @@ pub enum HostTcpReadResultTag {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union HostTcpReadResultPayload {
-    pub err: core::mem::ManuallyDrop<RocStr>,
+    pub err: core::mem::ManuallyDrop<IOErr>,
     pub ok: core::mem::ManuallyDrop<RocListWith<u8, false>>,
 }
 
@@ -1687,7 +2052,7 @@ pub struct HostTcpReadResultPayloadAlignment;
 #[derive(Clone, Copy)]
 pub struct HostTcpReadResult {
     pub _payload_alignment: [HostTcpReadResultPayloadAlignment; 0],
-    pub payload: [u8; 12],
+    pub payload: [u8; 16],
     pub tag: HostTcpReadResultTag,
 }
 
@@ -1706,8 +2071,8 @@ impl HostTcpReadResult {
     /// # Safety
     /// `self.tag` must be `HostTcpReadResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
     }
 
     /// Borrow the `Err` payload without creating another owner.
@@ -1715,8 +2080,8 @@ impl HostTcpReadResult {
     /// # Safety
     /// `self.tag` must be `HostTcpReadResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
@@ -1724,8 +2089,8 @@ impl HostTcpReadResult {
     /// # Safety
     /// `self.tag` must be `HostTcpReadResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
@@ -1733,7 +2098,7 @@ impl HostTcpReadResult {
     /// # Safety
     /// `self.tag` must be `HostTcpReadResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
     }
 
@@ -1776,108 +2141,108 @@ impl HostTcpReadResult {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostTcpReadResult>() == 32, "HostTcpReadResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostTcpReadResult>() == 40, "HostTcpReadResult size mismatch");
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::align_of::<HostTcpReadResult>() == 8, "HostTcpReadResult alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostTcpReadResult, tag) == 24, "HostTcpReadResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostTcpReadResult, tag) == 32, "HostTcpReadResult tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostTcpReadResult>() == 16, "HostTcpReadResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostTcpReadResult>() == 20, "HostTcpReadResult size mismatch");
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<HostTcpReadResult>() == 4, "HostTcpReadResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostTcpReadResult, tag) == 12, "HostTcpReadResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostTcpReadResult, tag) == 16, "HostTcpReadResult tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostTcpWriteResultTag {
+pub enum HostTcpSetNodelayResultTag {
     Err = 0,
     Ok = 1,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union HostTcpWriteResultPayload {
-    pub err: core::mem::ManuallyDrop<RocStr>,
+pub union HostTcpSetNodelayResultPayload {
+    pub err: core::mem::ManuallyDrop<IOErr>,
     pub ok: [u8; 0],
 }
 
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct HostTcpWriteResultPayloadAlignment;
+pub struct HostTcpSetNodelayResultPayloadAlignment;
 
 /// Tag union: Try
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostTcpWriteResult {
-    pub _payload_alignment: [HostTcpWriteResultPayloadAlignment; 0],
-    pub payload: [u8; 12],
-    pub tag: HostTcpWriteResultTag,
+pub struct HostTcpSetNodelayResult {
+    pub _payload_alignment: [HostTcpSetNodelayResultPayloadAlignment; 0],
+    pub payload: [u8; 16],
+    pub tag: HostTcpSetNodelayResultTag,
 }
 
 /// Tag union: Try
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostTcpWriteResult {
-    pub payload: HostTcpWriteResultPayload,
-    pub tag: HostTcpWriteResultTag,
+pub struct HostTcpSetNodelayResult {
+    pub payload: HostTcpSetNodelayResultPayload,
+    pub tag: HostTcpSetNodelayResultTag,
 }
 
-impl HostTcpWriteResult {
+impl HostTcpSetNodelayResult {
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostTcpWriteResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostTcpSetNodelayResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
     }
 
     /// Borrow the `Err` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostTcpWriteResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `HostTcpSetNodelayResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostTcpWriteResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostTcpSetNodelayResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostTcpWriteResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `HostTcpSetNodelayResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
     }
 
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostTcpWriteResult>() == 32, "HostTcpWriteResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostTcpSetNodelayResult>() == 40, "HostTcpSetNodelayResult size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<HostTcpWriteResult>() == 8, "HostTcpWriteResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<HostTcpSetNodelayResult>() == 8, "HostTcpSetNodelayResult alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostTcpWriteResult, tag) == 24, "HostTcpWriteResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostTcpSetNodelayResult, tag) == 32, "HostTcpSetNodelayResult tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostTcpWriteResult>() == 16, "HostTcpWriteResult size mismatch");
+const _: () = assert!(core::mem::size_of::<HostTcpSetNodelayResult>() == 20, "HostTcpSetNodelayResult size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<HostTcpWriteResult>() == 4, "HostTcpWriteResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<HostTcpSetNodelayResult>() == 4, "HostTcpSetNodelayResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostTcpWriteResult, tag) == 12, "HostTcpWriteResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(HostTcpSetNodelayResult, tag) == 16, "HostTcpSetNodelayResult tag offset mismatch");
 
 /// Arguments for Host.stderr_line!
 /// Roc signature: Str => Try({}, [StderrErr(Str)])
@@ -1907,7 +2272,7 @@ pub struct HostTaskSpawnArgs {
 }
 
 /// Arguments for Host.tcp_accept!
-/// Roc signature: Host.TcpListener => Try(Host.TcpStream, [TcpErr(Str)])
+/// Roc signature: Host.TcpListener => Try(Host.TcpStream, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1916,16 +2281,17 @@ pub struct HostTcpAcceptArgs {
 }
 
 /// Arguments for Host.tcp_connect!
-/// Roc signature: Str => Try(Host.TcpStream, [TcpErr(Str)])
+/// Roc signature: Str, U64 => Try(Host.TcpStream, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HostTcpConnectArgs {
     pub arg0: RocStr,
+    pub arg1: u64,
 }
 
 /// Arguments for Host.tcp_listen!
-/// Roc signature: Str => Try(Host.TcpListener, [TcpErr(Str)])
+/// Roc signature: Str => Try(Host.TcpListener, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1933,8 +2299,35 @@ pub struct HostTcpListenArgs {
     pub arg0: RocStr,
 }
 
+/// Arguments for Host.tcp_listener_local_addr!
+/// Roc signature: Host.TcpListener => Try(Str, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTcpListenerLocalAddrArgs {
+    pub arg0: *mut u64,
+}
+
+/// Arguments for Host.tcp_local_addr!
+/// Roc signature: Host.TcpStream => Try(Str, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTcpLocalAddrArgs {
+    pub arg0: *mut u64,
+}
+
+/// Arguments for Host.tcp_peer_addr!
+/// Roc signature: Host.TcpStream => Try(Str, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTcpPeerAddrArgs {
+    pub arg0: *mut u64,
+}
+
 /// Arguments for Host.tcp_read!
-/// Roc signature: Host.TcpStream, U64 => Try(List(U8), [TcpErr(Str)])
+/// Roc signature: Host.TcpStream, U64 => Try(List(U8), IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1943,17 +2336,39 @@ pub struct HostTcpReadArgs {
     pub arg1: u64,
 }
 
+/// Arguments for Host.tcp_set_nodelay!
+/// Roc signature: Host.TcpStream, Bool => Try({}, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTcpSetNodelayArgs {
+    pub arg0: *mut u64,
+    pub arg1: bool,
+}
+
+/// Arguments for Host.tcp_set_timeout!
+/// Roc signature: Host.TcpStream, U8, U64 => Try({}, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTcpSetTimeoutArgs {
+    pub arg0: *mut u64,
+    pub arg1: u8,
+    pub arg2: u64,
+}
+
 /// Arguments for Host.tcp_shutdown!
-/// Roc signature: Host.TcpStream => {}
+/// Roc signature: Host.TcpStream, U8 => Try({}, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HostTcpShutdownArgs {
     pub arg0: *mut u64,
+    pub arg1: u8,
 }
 
 /// Arguments for Host.tcp_write!
-/// Roc signature: Host.TcpStream, List(U8) => Try({}, [TcpErr(Str)])
+/// Roc signature: Host.TcpStream, List(U8) => Try({}, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1967,6 +2382,21 @@ pub struct HostTcpWriteArgs {
 pub type HostTcpConnectResult = HostTcpAcceptResult;
 pub type HostTcpConnectResultPayload = HostTcpAcceptResultPayload;
 pub type HostTcpConnectResultTag = HostTcpAcceptResultTag;
+pub type HostTcpLocalAddrResult = HostTcpListenerLocalAddrResult;
+pub type HostTcpLocalAddrResultPayload = HostTcpListenerLocalAddrResultPayload;
+pub type HostTcpLocalAddrResultTag = HostTcpListenerLocalAddrResultTag;
+pub type HostTcpPeerAddrResult = HostTcpListenerLocalAddrResult;
+pub type HostTcpPeerAddrResultPayload = HostTcpListenerLocalAddrResultPayload;
+pub type HostTcpPeerAddrResultTag = HostTcpListenerLocalAddrResultTag;
+pub type HostTcpSetTimeoutResult = HostTcpSetNodelayResult;
+pub type HostTcpSetTimeoutResultPayload = HostTcpSetNodelayResultPayload;
+pub type HostTcpSetTimeoutResultTag = HostTcpSetNodelayResultTag;
+pub type HostTcpShutdownResult = HostTcpSetNodelayResult;
+pub type HostTcpShutdownResultPayload = HostTcpSetNodelayResultPayload;
+pub type HostTcpShutdownResultTag = HostTcpSetNodelayResultTag;
+pub type HostTcpWriteResult = HostTcpSetNodelayResult;
+pub type HostTcpWriteResultPayload = HostTcpSetNodelayResultPayload;
+pub type HostTcpWriteResultTag = HostTcpSetNodelayResultTag;
 
 // Generated Refcount Helpers
 
@@ -2154,6 +2584,77 @@ unsafe impl RocRelease<HostTcpListenResult> for HostTcpListenResultRelease {
     }
 }
 
+impl IOErr {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            IOErrTag::AddrInUse => {},
+            IOErrTag::AddrNotAvailable => {},
+            IOErrTag::BrokenPipe => {},
+            IOErrTag::ConnectionAborted => {},
+            IOErrTag::ConnectionRefused => {},
+            IOErrTag::ConnectionReset => {},
+            IOErrTag::Interrupted => {},
+            IOErrTag::InvalidInput => {},
+            IOErrTag::NotConnected => {},
+            IOErrTag::NotFound => {},
+            IOErrTag::Other => {
+                let payload = unsafe { value.take_payload_other_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            IOErrTag::PermissionDenied => {},
+            IOErrTag::TimedOut => {},
+            IOErrTag::TooManySockets => {},
+            IOErrTag::UnexpectedEof => {},
+            IOErrTag::Unsupported => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            IOErrTag::AddrInUse => {},
+            IOErrTag::AddrNotAvailable => {},
+            IOErrTag::BrokenPipe => {},
+            IOErrTag::ConnectionAborted => {},
+            IOErrTag::ConnectionRefused => {},
+            IOErrTag::ConnectionReset => {},
+            IOErrTag::Interrupted => {},
+            IOErrTag::InvalidInput => {},
+            IOErrTag::NotConnected => {},
+            IOErrTag::NotFound => {},
+            IOErrTag::Other => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_other_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            IOErrTag::PermissionDenied => {},
+            IOErrTag::TimedOut => {},
+            IOErrTag::TooManySockets => {},
+            IOErrTag::UnexpectedEof => {},
+            IOErrTag::Unsupported => {},
+        }
+    }
+}
+
+pub struct IOErrRelease;
+
+unsafe impl RocRelease<IOErr> for IOErrRelease {
+    unsafe fn release(value: IOErr, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl HostTcpAcceptResult {
     /// Recursively decrement Roc-owned payloads.
     ///
@@ -2199,6 +2700,126 @@ pub struct HostTcpAcceptResultRelease;
 
 unsafe impl RocRelease<HostTcpAcceptResult> for HostTcpAcceptResultRelease {
     unsafe fn release(value: HostTcpAcceptResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostIOErr {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostIOErrTag::AddrInUse => {},
+            HostIOErrTag::AddrNotAvailable => {},
+            HostIOErrTag::BrokenPipe => {},
+            HostIOErrTag::ConnectionAborted => {},
+            HostIOErrTag::ConnectionRefused => {},
+            HostIOErrTag::ConnectionReset => {},
+            HostIOErrTag::Interrupted => {},
+            HostIOErrTag::InvalidInput => {},
+            HostIOErrTag::NotConnected => {},
+            HostIOErrTag::NotFound => {},
+            HostIOErrTag::Other => {
+                let payload = unsafe { value.take_payload_other_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            HostIOErrTag::PermissionDenied => {},
+            HostIOErrTag::TimedOut => {},
+            HostIOErrTag::TooManySockets => {},
+            HostIOErrTag::UnexpectedEof => {},
+            HostIOErrTag::Unsupported => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostIOErrTag::AddrInUse => {},
+            HostIOErrTag::AddrNotAvailable => {},
+            HostIOErrTag::BrokenPipe => {},
+            HostIOErrTag::ConnectionAborted => {},
+            HostIOErrTag::ConnectionRefused => {},
+            HostIOErrTag::ConnectionReset => {},
+            HostIOErrTag::Interrupted => {},
+            HostIOErrTag::InvalidInput => {},
+            HostIOErrTag::NotConnected => {},
+            HostIOErrTag::NotFound => {},
+            HostIOErrTag::Other => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_other_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostIOErrTag::PermissionDenied => {},
+            HostIOErrTag::TimedOut => {},
+            HostIOErrTag::TooManySockets => {},
+            HostIOErrTag::UnexpectedEof => {},
+            HostIOErrTag::Unsupported => {},
+        }
+    }
+}
+
+pub struct HostIOErrRelease;
+
+unsafe impl RocRelease<HostIOErr> for HostIOErrRelease {
+    unsafe fn release(value: HostIOErr, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostTcpListenerLocalAddrResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostTcpListenerLocalAddrResultTag::Err => {
+                let payload = unsafe { value.take_payload_err_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            HostTcpListenerLocalAddrResultTag::Ok => {
+                let payload = unsafe { value.take_payload_ok_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostTcpListenerLocalAddrResultTag::Err => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostTcpListenerLocalAddrResultTag::Ok => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct HostTcpListenerLocalAddrResultRelease;
+
+unsafe impl RocRelease<HostTcpListenerLocalAddrResult> for HostTcpListenerLocalAddrResultRelease {
+    unsafe fn release(value: HostTcpListenerLocalAddrResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -2252,7 +2873,7 @@ unsafe impl RocRelease<HostTcpReadResult> for HostTcpReadResultRelease {
     }
 }
 
-impl HostTcpWriteResult {
+impl HostTcpSetNodelayResult {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -2261,11 +2882,11 @@ impl HostTcpWriteResult {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            HostTcpWriteResultTag::Err => {
+            HostTcpSetNodelayResultTag::Err => {
                 let payload = unsafe { value.take_payload_err_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
-            HostTcpWriteResultTag::Ok => {},
+            HostTcpSetNodelayResultTag::Ok => {},
         }
     }
 
@@ -2278,19 +2899,19 @@ impl HostTcpWriteResult {
         let value = self;
         let _ = amount;
         match value.tag {
-            HostTcpWriteResultTag::Err => {
+            HostTcpSetNodelayResultTag::Err => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
-            HostTcpWriteResultTag::Ok => {},
+            HostTcpSetNodelayResultTag::Ok => {},
         }
     }
 }
 
-pub struct HostTcpWriteResultRelease;
+pub struct HostTcpSetNodelayResultRelease;
 
-unsafe impl RocRelease<HostTcpWriteResult> for HostTcpWriteResultRelease {
-    unsafe fn release(value: HostTcpWriteResult, roc_host: &RocHost) {
+unsafe impl RocRelease<HostTcpSetNodelayResult> for HostTcpSetNodelayResultRelease {
+    unsafe fn release(value: HostTcpSetNodelayResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -2393,7 +3014,7 @@ unsafe extern "C" {
     pub fn roc_task_spawn(arg0: RocErasedCallable) -> bool;
 
     /// Hosted symbol for Host.tcp_accept!
-    /// Roc signature: Host.TcpListener => Try(Host.TcpStream, [TcpErr(Str)])
+    /// Roc signature: Host.TcpListener => Try(Host.TcpStream, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
@@ -2401,44 +3022,85 @@ unsafe extern "C" {
     pub fn roc_tcp_accept(arg0: *mut u64) -> HostTcpAcceptResult;
 
     /// Hosted symbol for Host.tcp_connect!
-    /// Roc signature: Str => Try(Host.TcpStream, [TcpErr(Str)])
+    /// Roc signature: Str, U64 => Try(Host.TcpStream, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tcp_connect(arg0: RocStr) -> HostTcpAcceptResult;
+    pub fn roc_tcp_connect(arg0: RocStr, arg1: u64) -> HostTcpAcceptResult;
 
     /// Hosted symbol for Host.tcp_listen!
-    /// Roc signature: Str => Try(Host.TcpListener, [TcpErr(Str)])
+    /// Roc signature: Str => Try(Host.TcpListener, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_tcp_listen(arg0: RocStr) -> HostTcpListenResult;
 
+    /// Hosted symbol for Host.tcp_listener_local_addr!
+    /// Roc signature: Host.TcpListener => Try(Str, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tcp_listener_local_addr(arg0: *mut u64) -> HostTcpListenerLocalAddrResult;
+
+    /// Hosted symbol for Host.tcp_local_addr!
+    /// Roc signature: Host.TcpStream => Try(Str, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tcp_local_addr(arg0: *mut u64) -> HostTcpListenerLocalAddrResult;
+
+    /// Hosted symbol for Host.tcp_peer_addr!
+    /// Roc signature: Host.TcpStream => Try(Str, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tcp_peer_addr(arg0: *mut u64) -> HostTcpListenerLocalAddrResult;
+
     /// Hosted symbol for Host.tcp_read!
-    /// Roc signature: Host.TcpStream, U64 => Try(List(U8), [TcpErr(Str)])
+    /// Roc signature: Host.TcpStream, U64 => Try(List(U8), IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_tcp_read(arg0: *mut u64, arg1: u64) -> HostTcpReadResult;
 
-    /// Hosted symbol for Host.tcp_shutdown!
-    /// Roc signature: Host.TcpStream => {}
+    /// Hosted symbol for Host.tcp_set_nodelay!
+    /// Roc signature: Host.TcpStream, Bool => Try({}, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
-    pub fn roc_tcp_shutdown(arg0: *mut u64);
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tcp_set_nodelay(arg0: *mut u64, arg1: bool) -> HostTcpSetNodelayResult;
+
+    /// Hosted symbol for Host.tcp_set_timeout!
+    /// Roc signature: Host.TcpStream, U8, U64 => Try({}, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tcp_set_timeout(arg0: *mut u64, arg1: u8, arg2: u64) -> HostTcpSetNodelayResult;
+
+    /// Hosted symbol for Host.tcp_shutdown!
+    /// Roc signature: Host.TcpStream, U8 => Try({}, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tcp_shutdown(arg0: *mut u64, arg1: u8) -> HostTcpSetNodelayResult;
 
     /// Hosted symbol for Host.tcp_write!
-    /// Roc signature: Host.TcpStream, List(U8) => Try({}, [TcpErr(Str)])
+    /// Roc signature: Host.TcpStream, List(U8) => Try({}, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     ///     unsafe { arg1.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tcp_write(arg0: *mut u64, arg1: RocListWith<u8, false>) -> HostTcpWriteResult;
+    pub fn roc_tcp_write(arg0: *mut u64, arg1: RocListWith<u8, false>) -> HostTcpSetNodelayResult;
 
 }
 

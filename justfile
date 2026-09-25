@@ -105,6 +105,10 @@ smoke: build (build-example "tcp_echo_concurrent") (build-example "tcp_client")
     echo "$reply"
     [ "$reply" = "Received: smoke test" ]
 
+# Run the test examples, then the smoke test
+test: (build-example "tcp_tests") smoke
+    {{bin_dir}}/tcp_tests
+
 # Generate API docs from the platform's doc comments into target/docs/
 docs:
     roc docs platform/main.roc --output=target/docs --no-cache

@@ -17,6 +17,7 @@ just build                 # build the Rust host
 just check                 # type-check every example
 just build-examples        # build every example into target/examples/
 just run hello_world       # run an example
+just test                  # TCP tests (examples/tcp_tests) + smoke test
 just smoke                 # echo server + client round trip
 just docs                  # API reference in target/docs/index.html
 ```
@@ -29,9 +30,12 @@ Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
 Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 
 - `Stdout.line!`, `Stderr.line!`, `Stdin.line!`: line-based standard I/O
-- `Tcp.listen!` and `Tcp.connect!`: blocking TCP sockets
-  - `Tcp.Listener`: `accept!`
-  - `Tcp.Stream`: `read!`, `write!`, `write_str!`, `close!`
+- `Tcp.listen!`, `Tcp.connect!`, `Tcp.connect_timeout!`: blocking TCP sockets
+  - `Tcp.Listener`: `accept!`, `local_addr!`
+  - `Tcp.Stream`: `read!`, `write!`, `write_str!`, `shutdown!`, `close!`,
+    `set_read_timeout!`, `set_write_timeout!`, `set_nodelay!`, `local_addr!`, `peer_addr!`
+  - Errors are `TcpErr(IOErr)`, so you can match specific cases such as
+    `Err(TcpErr(ConnectionRefused))` or `Err(TcpErr(TimedOut))`.
 - `Task.spawn!`: run a closure concurrently on its own thread
 
 Sockets close automatically when Roc drops the last reference to them, including

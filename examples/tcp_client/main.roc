@@ -3,11 +3,11 @@ app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/ma
 import pf.Stdout
 import pf.Tcp
 
-# Demonstrates: Tcp.connect!, writing a request, reading the reply
+# Demonstrates: Tcp.connect!, handling a specific error, writing a request, reading the reply
 #
 # Usage: tcp_client [ADDRESS] [MESSAGE]
 
-main! : List(Str) => Try({}, [Exit(I32), StdoutErr(Str), TcpErr(Str)])
+main! : List(Str) => Try({}, _)
 main! = |args| {
 	address =
 		match List.get(args, 1) {
@@ -20,7 +20,15 @@ main! = |args| {
 			Err(_) => "Hello from Roc!"
 		}
 
-	stream = Tcp.connect!(address)?
+	stream =
+		match Tcp.connect!(address) {
+			Ok(s) => s
+			Err(TcpErr(ConnectionRefused)) => {
+				Stdout.line!("Nothing is listening on ${address}. Start a server first, e.g. `just run tcp_echo_concurrent ${address}`.")?
+				return Err(Exit(1))
+			}
+			Err(err) => return Err(err)
+		}
 	stream.write_str!(message)?
 	reply = stream.read!(4096)?
 

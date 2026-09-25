@@ -9,7 +9,7 @@ import pf.Tcp
 # Usage: tcp_echo_server [ADDRESS] [MAX_CONNECTIONS]
 # Serves one client at a time. With MAX_CONNECTIONS, exits after that many.
 
-main! : List(Str) => Try({}, [Exit(I32), StdoutErr(Str), TcpErr(Str)])
+main! : List(Str) => Try({}, _)
 main! = |args| {
 	address =
 		match List.get(args, 1) {
@@ -35,7 +35,7 @@ main! = |args| {
 		match echo!(stream) {
 			Ok({}) => {}
 			Err(TcpErr(err)) => {
-				_ = Stderr.line!("connection error: ${err}")
+				_ = Stderr.line!("connection error: ${Str.inspect(err)}")
 			}
 		}
 		$served = $served + 1
@@ -44,7 +44,7 @@ main! = |args| {
 	Ok({})
 }
 
-echo! : Tcp.Stream => Try({}, [TcpErr(Str)])
+echo! : Tcp.Stream => Try({}, _)
 echo! = |stream| {
 	var $open = True
 	while $open {

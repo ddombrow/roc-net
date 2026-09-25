@@ -1,3 +1,5 @@
+import IOErr
+
 ## Internal hosted-effect boundary used by the platform wrappers.
 ##
 ## Applications should import `Stdout`, `Stderr`, `Stdin`, and `Tcp` instead.
@@ -11,15 +13,22 @@ Host := [].{
 	TcpListener :: Box(U64)
 	TcpStream :: Box(U64)
 
-	tcp_listen! : Str => Try(TcpListener, [TcpErr(Str)])
-	tcp_accept! : TcpListener => Try(TcpStream, [TcpErr(Str)])
-	tcp_connect! : Str => Try(TcpStream, [TcpErr(Str)])
+	tcp_listen! : Str => Try(TcpListener, IOErr)
+	tcp_accept! : TcpListener => Try(TcpStream, IOErr)
+	tcp_listener_local_addr! : TcpListener => Try(Str, IOErr)
+	## Connect, giving up after `timeout_ms` milliseconds.
+	tcp_connect! : Str, U64 => Try(TcpStream, IOErr)
 	## Read up to `max` bytes. An empty list means the peer closed the stream.
-	tcp_read! : TcpStream, U64 => Try(List(U8), [TcpErr(Str)])
+	tcp_read! : TcpStream, U64 => Try(List(U8), IOErr)
 	## Write all bytes.
-	tcp_write! : TcpStream, List(U8) => Try({}, [TcpErr(Str)])
-	## Shut down both directions now, waking any task blocked on the stream.
-	tcp_shutdown! : TcpStream => {}
+	tcp_write! : TcpStream, List(U8) => Try({}, IOErr)
+	## Shut down reading (0), writing (1), or both (2).
+	tcp_shutdown! : TcpStream, U8 => Try({}, IOErr)
+	## Set the read (0) or write (1) timeout in milliseconds; 0 means none.
+	tcp_set_timeout! : TcpStream, U8, U64 => Try({}, IOErr)
+	tcp_set_nodelay! : TcpStream, Bool => Try({}, IOErr)
+	tcp_local_addr! : TcpStream => Try(Str, IOErr)
+	tcp_peer_addr! : TcpStream => Try(Str, IOErr)
 
 	## Start running a task on a new thread. Returns False at the task limit.
 	task_spawn! : Box(() => {}) => Bool

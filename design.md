@@ -106,7 +106,7 @@ chosen per operation and documented.
 | `Tcp` | `listen!`, `connect!`; `Listener.accept!`; `Stream` read/write methods, `shutdown!` (half-close), `set_nodelay!`, addresses |
 | `Udp` | `bind!`; `Socket.send_to!`, `recv_from!`; `connect!` then `send!`/`recv!`; broadcast, multicast join/leave |
 | `Unix` | stream `listen!`/`connect!` (same `Stream` methods as `Tcp`), datagram sockets, filesystem paths; Linux abstract names later |
-| `Dns` | `resolve!` a host name to a list of addresses |
+| `Dns` | `resolve!` a host name to a list of addresses, via the OS resolver |
 | `Task` | `spawn!`, and later `Channel` |
 | `Time` | `sleep!`, monotonic `now!`, deadlines |
 | `Bytes` (pure) | big/little-endian integer encoding and decoding, slicing helpers |
@@ -178,16 +178,34 @@ linker inputs don't cover it.
 
 1. **TCP basics (done).** Blocking listen/accept/connect/read/write/close with
    string errors and an echo server/client.
-2. **Solid TCP.** `IOErr`, timeouts, `shutdown!`, addresses, `set_nodelay!`,
-   and automated tests that run server and client together.
-3. **Tasks.** `Task.spawn!` on OS threads. A concurrent echo server and a
+2. **Solid TCP (done).** `IOErr`, read/write/connect timeouts, `shutdown!`,
+   addresses, `set_nodelay!`, and `examples/tcp_tests` (`just test`), which
+   runs servers and clients together in one process.
+3. **Tasks (done).** `Task.spawn!` on OS threads. A concurrent echo server and a
    TCP proxy (two tasks per connection pair). Validates cross-thread closures.
 4. **Unix + UDP.** `Unix` streams sharing the stream methods; `Udp`
-   datagrams; `Dns.resolve!`.
+   datagrams.
 5. **Framing + Bytes.** A pure-Roc buffered reader and codecs, with examples:
-   a line-protocol chat server and a length-prefixed RPC.
+   a line-based request/response protocol and a length-prefixed RPC.
 6. **ARC handles (done).** Automatic close, bounded socket heap.
 7. **Channels, TLS, coroutine scheduler**, in whatever order use cases demand.
+
+`Dns.resolve!` is not a milestone of its own. It is one hosted function with
+no handle, so it can be added whenever an app first needs addresses rather
+than a connection (choosing IPv4 or IPv6, trying several addresses, caching).
+`connect!` and `listen!` already resolve names implicitly, and UDP's
+`send_to!` can too.
+
+### Example apps
+
+These are protocols written in Roc on top of the platform, not platform
+features. They test whether roc-net is pleasant to use.
+
+- **DNS client.** Queries any record type (MX, TXT, SRV, ...) against a chosen
+  server, which the OS resolver behind `Dns.resolve!` cannot do. Builds query
+  packets, sends them over UDP, and parses binary replies. Needs milestones 4
+  and 5.
+- **Chat server.** A line protocol with broadcast. Needs milestone 5 and channels.
 
 ## Risks and open questions
 
