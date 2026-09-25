@@ -34,6 +34,15 @@ import Host
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {
+	# Compiler workaround (nightly-2026-09-24): if an app never calls
+	# Task.spawn!, `run_task_for_host!` calls a closure of no known type, the
+	# LLVM backend emits a call to `roc_boxy_init_embedded`, and the linker
+	# doesn't include the runtime that defines it ("undefined symbol").
+	# Mentioning one concrete task closure avoids that. `args` always holds the
+	# program name, so this never runs.
+	if List.is_empty(args) {
+		_ = Host.task_spawn!(Box.box(|| {}))
+	}
 	result = main!(args)
 	match result {
 		Ok({}) => 0

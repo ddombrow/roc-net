@@ -9,18 +9,19 @@ Started from [roc-platform-template-rust](https://github.com/lukewilliamboswell/
 - [Rust](https://rustup.rs/) (the toolchain is pinned in `rust-toolchain.toml`)
 - Roc `nightly-2026-09-24-f45bfbe`, the compiler pinned in `platform/main.roc`
 
-To install that nightly into the gitignored `.tools/` directory:
+Common tasks use [just](https://github.com/casey/just). Run `just` to list them.
 
 ```bash
-mkdir -p .tools && cd .tools
-gh release download nightly-2026-09-24-f45bfbe -R roc-lang/nightlies \
-  -p 'roc_nightly-macos_apple_silicon-*' -p 'roc_nightly-source-*.tar.gz'
-for f in *.tar.gz; do tar xzf "$f"; done
-ln -sf roc_nightly-macos_apple_silicon-2026-09-24-f45bfbe/roc roc
-cd .. && export PATH=$PWD/.tools:$PATH
+just setup                 # download the pinned nightly into .tools/ (needs gh)
+just build                 # build the Rust host
+just check                 # type-check every example
+just build-examples        # build every example into target/examples/
+just run hello_world       # run an example
+just smoke                 # echo server + client round trip
 ```
 
-The source archive provides `RustGlue.roc`, which you need to regenerate glue.
+Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
+`export PATH=$PWD/.tools:$PATH`.
 
 ## Platform API
 
@@ -37,12 +38,9 @@ The app provides `main! : List(Str) => Try({}, [Exit(I32), ..])`.
 ## Examples
 
 ```bash
-./build.sh                                    # build platform/targets/<native>/libhost.a
-roc examples/hello_world/main.roc
-
-roc build examples/tcp_echo_server/main.roc --output=.tools/tcp_echo_server
-.tools/tcp_echo_server 127.0.0.1:8080         # optional 2nd arg: exit after N connections
-roc examples/tcp_client/main.roc -- 127.0.0.1:8080 "hello"
+just run tcp_echo_concurrent 127.0.0.1:8080          # in one terminal
+just run tcp_client 127.0.0.1:8080 "hello"           # in another
+just run tcp_proxy 127.0.0.1:9000 127.0.0.1:8080     # proxy in front of the echo server
 ```
 
 ## Adding a hosted effect
@@ -50,13 +48,10 @@ roc examples/tcp_client/main.roc -- 127.0.0.1:8080 "hello"
 1. Declare it in `platform/Host.roc` and map a `roc_*` symbol to it in the
    `hosted` block of `platform/main.roc`.
 2. Wrap it in a public module (e.g. `platform/Tcp.roc`) and add that module to `exposes`.
-3. Regenerate the ABI bindings:
-   ```bash
-   roc glue .tools/roc_nightly-source-2026-09-24-f45bfbe/src/glue/src/RustGlue.roc ./src/ platform/main.roc
-   ```
+3. Regenerate the ABI bindings: `just glue`
 4. Implement the `#[no_mangle] pub extern "C" fn roc_*` in `src/lib.rs`, following
    the ownership notes in the generated doc comment for that symbol.
-5. `./build.sh`
+5. `just build`, then `just build-examples`
 
 ## Notes
 
