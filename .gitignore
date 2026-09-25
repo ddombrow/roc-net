@@ -1,0 +1,45 @@
+# Build artifacts
+target/
+generated-docs/
+
+# Local Roc source checkouts
+roc-src/
+
+# Platform binaries
+*.so
+*.dylib
+*.dll
+# Runtime files and host archives are generated or downloaded
+*.a
+
+# Object files
+*.obj
+*.lib
+*.o
+
+# Roc build artifacts
+*.rh
+*.rm
+*.wasm
+*.ll
+
+# Archives (platform bundles)
+*.tar.br
+*.tar.gz
+*.tar.zst
+
+# OS files
+.DS_Store
+
+# Cargo.lock is committed because release and CI builds use --locked.
+
+# Claude Code
+.claude
+
+# Local validation tools
+.tools/
+__pycache__/
+
+# Independently built runtime artifacts
+dist/
+platform/runtime/

@@ -1,0 +1,19 @@
+[package]
+name = "roc_host"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+name = "host"
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "host"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+lto = true
+strip = "debuginfo"
+panic = "abort"

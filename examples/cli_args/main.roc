@@ -1,0 +1,13 @@
+app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/main.roc" }
+
+import pf.Stdout
+
+main! : List(Str) => Try({}, [Exit(I32), StdoutErr(Str)])
+main! = |args| {
+	Stdout.line!("Hello Roc!")?
+
+	args_str = Str.join_with(args, ", ")
+	Stdout.line!("Args: ${args_str}")?
+
+	Ok({})
+}
