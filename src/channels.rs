@@ -196,7 +196,11 @@ fn receive_err(err: ClosedOrTimedOut) -> HostChannelReceiveResult {
 /// Hosted function: Host.channel_receive!
 #[no_mangle]
 pub extern "C" fn roc_channel_receive(end: *mut u64, timeout_ns: u64) -> HostChannelReceiveResult {
-    let deadline = (timeout_ns != u64::MAX).then(|| Instant::now() + Duration::from_nanos(timeout_ns));
+    // U64.highest means wait as long as it takes; so does any timeout too long
+    // to represent as a moment (see `deadline_after` in net.rs).
+    let deadline = (timeout_ns != u64::MAX)
+        .then(|| Instant::now().checked_add(Duration::from_nanos(timeout_ns)))
+        .flatten();
     with_end(end, |end| {
         let Some(End::Receiver(channel)) = end else {
             return receive_err(ClosedOrTimedOut::Closed);

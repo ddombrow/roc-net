@@ -7,6 +7,11 @@ import IOErr
 ## delivered whole or not at all. Use `set_read_timeout!` when waiting for a
 ## reply, since a lost packet otherwise means waiting forever.
 ##
+## Addresses given as host names (`"example.com:53"`) are looked up with the
+## system resolver on every call, with no timeout beyond the resolver's own.
+## For a name, look it up once with `Dns.resolve_timeout!` and use the IP
+## address.
+##
 ## Sockets close automatically once nothing refers to them any more. Every
 ## operation fails with `UdpErr(IOErr)`.
 Udp := [].{

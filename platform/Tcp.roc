@@ -98,11 +98,17 @@ Tcp := [].{
 		}
 
 	## Connect to `address`, such as `"example.com:80"`, giving up after 30
-	## seconds.
+	## seconds; see `connect_timeout!`.
 	connect! : Str => Try(Stream, [TcpErr(IOErr)])
 	connect! = |address| connect_timeout!(address, Millis(30000))
 
 	## Connect to `address`, giving up with `TimedOut` after `timeout`.
+	##
+	## The timeout covers everything: looking up the name (see
+	## `Dns.resolve_timeout!`) and every connection attempt. If the name has
+	## several addresses, they're tried in turn, each with an equal share of
+	## the time left, so an unreachable first address can't use up the whole
+	## timeout. An IP address, such as `"127.0.0.1:8080"`, skips the lookup.
 	connect_timeout! : Str, [Millis(U64)] => Try(Stream, [TcpErr(IOErr)])
 	connect_timeout! = |address, Millis(ms)|
 		match Host.tcp_connect!(address, ms) {

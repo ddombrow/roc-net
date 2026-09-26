@@ -37,6 +37,10 @@ main! = |_args| {
 		check!("framing: length-prefixed frames", framing_frames!),
 		check!("framing: line longer than the limit", framing_too_long!),
 		check!("framing: stream ends mid-frame", framing_truncated!),
+		check!("framing: over-limit line in a single read is rejected", framing_limit_single_read!),
+		check!("framing: line of exactly the limit is accepted, however it arrives", framing_limit_boundary!),
+		check!("framing: read_exactly! past the limit is rejected", framing_limit_exactly!),
+		check!("framing: frames with a limit under the header size", framing_limit_small_frames!),
 		check!("framing: each_line! stops on Stop", framing_each_line!),
 		check!("framing: fold_lines! carries state", framing_fold_lines!),
 		check!("framing: each_frame! until end of stream", framing_each_frame!),
@@ -44,6 +48,7 @@ main! = |_args| {
 		check!("bytes: round trips and TooShort", bytes_round_trips!),
 		check!("time: sleep and elapsed", time_sleep!),
 		check!("time: durations", time_durations!),
+		check!("time: enormous timeouts don't crash", huge_timeouts!),
 		check!("dns: resolve", dns_resolve!),
 		check!("bytes: reading at offsets", bytes_offsets!),
 		check!("random: bytes differ", random_bytes!),
@@ -963,4 +968,92 @@ tls_server_starttls_stall! = || {
 	reported = outcome.receive_timeout!(Time.seconds(5))?
 	client.close!()
 	expect_server_timed_out(reported)
+}
+
+## Serve `writes` over TCP to a reader limited to 10 bytes, each as its own
+## write a moment apart (so they arrive as separate reads), and return the
+## reader.
+limited_reader! = |writes| {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream| {
+		for chunk in writes {
+			stream.write_str!(chunk)?
+			Time.sleep!(Time.millis(50))
+		}
+		Ok({})
+	})?
+	Ok(Framing.reader_with_max(Tcp.connect!(address)?, 10))
+}
+
+# The whole over-long line and its newline arrive together.
+framing_limit_single_read! = || {
+	reader = limited_reader!(["this line is way too long\nok\n"])?
+	match reader.read_line!() {
+		Err(TooLong) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+framing_limit_boundary! = || {
+	whole = limited_reader!(["0123456789\n"])?
+	(line, _) = whole.read_line!()?
+	expect_eq(line, "0123456789")?
+	# Ten bytes, then the newline in a later read.
+	split = limited_reader!(["0123456789", "\n"])?
+	(split_line, _) = split.read_line!()?
+	expect_eq(split_line, "0123456789")?
+	# Eleven bytes is too long either way.
+	over = limited_reader!(["01234567890", "\n"])?
+	match over.read_line!() {
+		Err(TooLong) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+framing_limit_exactly! = || {
+	reader = limited_reader!(["01234567890123456789"])?
+	match reader.read_exactly!(11) {
+		Err(TooLong) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# Timeouts too long to represent as a moment in time used to panic the host
+# (aborting the program). Now they cap, which works out as no limit.
+huge_timeouts! = || {
+	expect_eq(Time.seconds(U64.highest).to_nanos(), U64.highest)?
+	expect_eq(Time.millis(U64.highest).plus(Time.seconds(1)).to_nanos(), U64.highest)?
+
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream| stream.write_str!("hi"))?
+	_ = Tcp.connect_timeout!(address, Millis(U64.highest))?
+
+	(tls_listener, tls_address) = tls_listen_anywhere!()?
+	serve_length!(tls_listener)?
+	_ = Tls.connect_with!(tls_address, trusting_test_ca.with_timeout(Millis(U64.highest)))?
+
+	_ = Dns.resolve_timeout!("localhost", Millis(U64.highest))?
+
+	(tx, rx) = Channel.new!(1)?
+	tx.send!("queued")?
+	expect_eq(rx.receive_timeout!(Time.seconds(U64.highest)), Ok("queued"))
+}
+
+# The limit is on frame payloads, not the 4-byte header, so a reader limited
+# to 3 bytes still reads frames of 0 to 3 bytes, and rejects a 4-byte one.
+framing_limit_small_frames! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream| {
+		Framing.write_frame!(stream, [])?
+		Framing.write_frame!(stream, [1, 2, 3])?
+		Framing.write_frame!(stream, [1, 2, 3, 4])
+	})?
+	reader = Framing.reader_with_max(Tcp.connect!(address)?, 3)
+	(empty, r1) = reader.read_frame!()?
+	(three, r2) = r1.read_frame!()?
+	expect_eq((empty, three), ([], [1, 2, 3]))?
+	match r2.read_frame!() {
+		Err(TooLong) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
 }

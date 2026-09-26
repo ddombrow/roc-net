@@ -15,13 +15,14 @@ Host := [].{
 	Socket :: Box(U64)
 
 	tcp_listen! : Str => Try(Socket, IOErr)
-	## Connect, giving up after `timeout_ms` milliseconds (0 means no timeout).
+	## Look up the name and connect, all within `timeout_ms` milliseconds (0
+	## means no limit).
 	tcp_connect! : Str, U64 => Try(Socket, IOErr)
 	unix_listen! : Str => Try(Socket, IOErr)
 	unix_connect! : Str => Try(Socket, IOErr)
 	udp_bind! : Str => Try(Socket, IOErr)
-	## Connect and complete a TLS handshake, both within `timeout_ms` (0 means
-	## no limit). An empty `server_name` means the address's host; an empty
+	## Look up the name, connect, and complete a TLS handshake, all within
+	## `timeout_ms` (0 means no limit). An empty `server_name` means the address's host; an empty
 	## `ca_file` means Mozilla's root certificates.
 	tls_connect! : Str, Str, Str, U64 => Try(Socket, IOErr)
 	## Listen for TLS connections using the certificate chain and private key
@@ -66,8 +67,9 @@ Host := [].{
 	time_now_ns! : {} => U64
 	## Pause the calling task (thread) for `ns` nanoseconds.
 	time_sleep_ns! : U64 => {}
-	## Resolve a host name to IP addresses with the OS resolver.
-	dns_resolve! : Str => Try(List(Str), IOErr)
+	## Resolve a host name to IP addresses with the OS resolver, giving up
+	## after `timeout_ms` (0 means no limit).
+	dns_resolve! : Str, U64 => Try(List(Str), IOErr)
 
 	## `count` bytes from the OS's secure random source.
 	random_bytes! : U64 => List(U8)

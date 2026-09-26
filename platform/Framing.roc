@@ -22,7 +22,8 @@ Framing := [].{
 		##
 		## Fails with `EndOfStream` if the stream ended cleanly with nothing
 		## buffered, `UnexpectedEof` if it ended partway through a line,
-		## `TooLong` if no `\n` arrives within the reader's maximum length, and
+		## `TooLong` if the line (counting a `\r` before the `\n`) is longer
+		## than the reader's maximum length, and
 		## `BadUtf8` if the line isn't valid UTF-8.
 		read_line! = |reader| {
 			(bytes, next) = reader.read_until!(10)?
@@ -38,7 +39,9 @@ Framing := [].{
 		}
 
 		## Read up to (not including) the next `delimiter` byte, and consume the
-		## delimiter.
+		## delimiter. Fails with `TooLong` if the record (the bytes before the
+		## delimiter) is longer than the reader's maximum length, however the
+		## bytes arrive.
 		read_until! = |Reader.(r), delimiter| {
 			var $buffered = r.buffered
 			var $searched = 0
@@ -46,12 +49,19 @@ Framing := [].{
 				match List.find_first_index(List.drop_first($buffered, $searched), |byte| byte == delimiter) {
 					Ok(offset) => {
 						end = $searched + offset
+						# Check the record found, not just what was buffered
+						# before it: one read can bring a whole oversized record.
+						if end > r.max_len {
+							return Err(TooLong)
+						}
 						record = List.take_first($buffered, end)
 						rest = List.drop_first($buffered, end + 1)
 						return Ok((record, Reader.({ ..r, buffered: rest })))
 					}
 					Err(NotFound) => {
-						if List.len($buffered) >= r.max_len {
+						# No delimiter yet, so the record is at least this long.
+						# Exactly max_len is still fine if the delimiter is next.
+						if List.len($buffered) > r.max_len {
 							return Err(TooLong)
 						}
 						$searched = List.len($buffered)
@@ -67,18 +77,14 @@ Framing := [].{
 		}
 
 		## Read exactly `count` bytes, or fail with `UnexpectedEof` (or
-		## `EndOfStream` if the stream ended before any of them).
+		## `EndOfStream` if the stream ended before any of them). Fails with
+		## `TooLong` if `count` is more than the reader's maximum length.
 		read_exactly! = |Reader.(r), count| {
-			var $buffered = r.buffered
-			while List.len($buffered) < count {
-				chunk = r.stream.read!(4096)?
-				if List.is_empty(chunk) {
-					return if List.is_empty($buffered) Err(EndOfStream) else Err(UnexpectedEof)
-				}
-				$buffered = List.concat($buffered, chunk)
+			if count > r.max_len {
+				return Err(TooLong)
 			}
-			bytes = List.take_first($buffered, count)
-			Ok((bytes, Reader.({ ..r, buffered: List.drop_first($buffered, count) })))
+			(bytes, rest) = take_exactly!(r, count)?
+			Ok((bytes, Reader.(rest)))
 		}
 
 		## Read everything until the stream ends, including anything already
@@ -100,18 +106,21 @@ Framing := [].{
 
 		## Read one frame written by `write_frame!`: a 4-byte big-endian length,
 		## then that many bytes. Fails with `TooLong` if the length exceeds the
-		## reader's maximum.
-		read_frame! = |reader| {
-			(header, after_header) = reader.read_exactly!(4)?
+		## reader's maximum; the 4-byte header itself doesn't count toward it.
+		read_frame! = |Reader.(r)| {
+			# The header is framing, not payload, so the reader's limit (which
+			# is for payloads) doesn't apply to it: even a reader limited to
+			# fewer than 4 bytes can read small frames.
+			(header, after_header) = take_exactly!(r, 4)?
 			(len, _) =
 				match Bytes.take_u32_be(header) {
 					Ok(decoded) => decoded
 					Err(TooShort) => return Err(UnexpectedEof)
 				}
-			if len.to_u64() > after_header.max_len() {
+			if len.to_u64() > r.max_len {
 				return Err(TooLong)
 			}
-			after_header.read_exactly!(len.to_u64())
+			Reader.(after_header).read_exactly!(len.to_u64())
 		}
 
 		## Call `handle!` with each line until the stream ends or `handle!`
@@ -200,6 +209,23 @@ Framing := [].{
 			}
 		}
 		Ok($state)
+	}
+
+	## Take exactly `count` bytes from a reader's buffer and stream, without
+	## the length limit: `read_exactly!` applies that first, and `read_frame!`
+	## reads its fixed-size header here. It works on a `Reader`'s inner
+	## record, which only this module can get at, so it gives callers no way
+	## around a reader's limit.
+	take_exactly! = |r, count| {
+		var $buffered = r.buffered
+		while List.len($buffered) < count {
+			chunk = r.stream.read!(4096)?
+			if List.is_empty(chunk) {
+				return if List.is_empty($buffered) Err(EndOfStream) else Err(UnexpectedEof)
+			}
+			$buffered = List.concat($buffered, chunk)
+		}
+		Ok((List.take_first($buffered, count), { ..r, buffered: List.drop_first($buffered, count) }))
 	}
 
 	## Wrap `stream` in a reader that accepts lines, records, and frames of up

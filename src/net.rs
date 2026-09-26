@@ -3,7 +3,7 @@
 
 use std::io::{self, Read, Write};
 use std::mem::ManuallyDrop;
-use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Duration;
@@ -202,22 +202,38 @@ fn with_str<T>(text: RocStr, f: impl FnOnce(&str) -> T) -> T {
 
 // --- Creating sockets ---
 
-/// Try each address `address` resolves to, like `TcpStream::connect`, but with
-/// a timeout per attempt. A timeout of 0 means none.
-fn tcp_connect(address: &str, timeout_ms: u64) -> NetResult<TcpStream> {
-    if timeout_ms == 0 {
-        return Ok(TcpStream::connect(address)?);
-    }
-    let timeout = Duration::from_millis(timeout_ms);
+/// Connect to `address` ("host:port"), trying each address the name resolves
+/// to in turn, like `TcpStream::connect`, all before `deadline`: the name
+/// lookup and every connection attempt share it. Each attempt gets an equal
+/// share of the time left, so an unreachable first address (say, IPv6 on a
+/// network without it) can't use up the whole budget before the others get a
+/// turn. Without a deadline, nothing is bounded but the OS's own limits.
+fn tcp_connect(address: &str, deadline: Option<std::time::Instant>) -> NetResult<TcpStream> {
+    let addrs = crate::resolve::socket_addrs(address, deadline)?;
     let mut last_err = None;
-    for addr in address.to_socket_addrs()? {
-        match TcpStream::connect_timeout(&addr, timeout) {
+    for (i, addr) in addrs.iter().enumerate() {
+        let attempt = match deadline {
+            None => TcpStream::connect(addr),
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                let share = left / (addrs.len() - i) as u32;
+                TcpStream::connect_timeout(addr, share.max(Duration::from_millis(1)))
+            }
+        };
+        match attempt {
             Ok(stream) => return Ok(stream),
             Err(err) => last_err = Some(err),
         }
     }
     Err(NetErr::Io(last_err.unwrap_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound, format!("{address} did not resolve to any address"))
+        if addrs.is_empty() {
+            io::Error::new(io::ErrorKind::NotFound, format!("{address} did not resolve to any address"))
+        } else {
+            io::Error::new(io::ErrorKind::TimedOut, format!("connecting to {address} timed out"))
+        }
     })))
 }
 
@@ -256,7 +272,7 @@ pub extern "C" fn roc_tcp_listen(address: RocStr) -> HostSocketAcceptResult {
 #[no_mangle]
 pub extern "C" fn roc_tcp_connect(address: RocStr, timeout_ms: u64) -> HostSocketAcceptResult {
     handle_result(with_str(address, |address| {
-        open_socket(|| Ok(Socket::TcpStream(tcp_connect(address, timeout_ms)?)))
+        open_socket(|| Ok(Socket::TcpStream(tcp_connect(address, deadline_after(timeout_ms))?)))
     }))
 }
 
@@ -570,12 +586,12 @@ pub extern "C" fn roc_udp_leave_multicast(socket: *mut u64, group: RocStr) -> Ho
 
 // --- Name resolution ---
 
-/// Resolve `name` with the OS resolver, keeping each address once, in the
-/// order the resolver returned them.
-fn resolve(name: &str) -> NetResult<Vec<String>> {
+/// Resolve `name` with the OS resolver before `deadline`, keeping each
+/// address once, in the order the resolver returned them.
+fn resolve(name: &str, deadline: Option<std::time::Instant>) -> NetResult<Vec<String>> {
     let mut addresses: Vec<String> = Vec::new();
-    for addr in (name, 0).to_socket_addrs()? {
-        let ip = addr.ip().to_string();
+    for ip in crate::resolve::host_ips(name, deadline)? {
+        let ip = ip.to_string();
         if !addresses.contains(&ip) {
             addresses.push(ip);
         }
@@ -599,8 +615,9 @@ fn roc_str_list(items: &[String]) -> RocList<RocStr> {
 
 /// Hosted function: Host.dns_resolve!
 #[no_mangle]
-pub extern "C" fn roc_dns_resolve(name: RocStr) -> HostDnsResolveResult {
-    let result = with_str(name, resolve);
+pub extern "C" fn roc_dns_resolve(name: RocStr, timeout_ms: u64) -> HostDnsResolveResult {
+    let deadline = deadline_after(timeout_ms);
+    let result = with_str(name, |name| resolve(name, deadline));
     roc_result!(
         HostDnsResolveResult,
         HostDnsResolveResultPayload,
@@ -612,9 +629,17 @@ pub extern "C" fn roc_dns_resolve(name: RocStr) -> HostDnsResolveResult {
 
 // --- TLS ---
 
-/// The moment `timeout_ms` from now; 0 means no deadline.
+/// The moment `timeout_ms` from now; 0 means no deadline. So does a timeout
+/// too long to represent as a moment, which could never be reached anyway.
+/// (On macOS and Linux, `Instant` counts whole seconds in an i64, which even
+/// `U64.highest` milliseconds can't overflow; `checked_add` keeps that from
+/// mattering elsewhere, where `Instant + ...` would panic and, with
+/// `panic = "abort"`, end the program.)
 fn deadline_after(timeout_ms: u64) -> Option<std::time::Instant> {
-    (timeout_ms > 0).then(|| std::time::Instant::now() + Duration::from_millis(timeout_ms))
+    if timeout_ms == 0 {
+        return None;
+    }
+    std::time::Instant::now().checked_add(Duration::from_millis(timeout_ms))
 }
 
 /// Hosted function: Host.tls_connect!
@@ -629,9 +654,10 @@ pub extern "C" fn roc_tls_connect(
         with_str(server_name, |server_name| {
             with_str(ca_file, |ca_file| {
                 open_socket(|| {
-                    // One deadline for connecting and the handshake together.
+                    // One deadline for the name lookup, connecting, and the
+                    // handshake together.
                     let deadline = deadline_after(timeout_ms);
-                    let tcp = tcp_connect(address, timeout_ms)?;
+                    let tcp = tcp_connect(address, deadline)?;
                     let name = if server_name.is_empty() { crate::tls::host_of(address) } else { server_name };
                     Ok(Socket::Tls(crate::tls::client(tcp, name, ca_file, deadline)?))
                 })

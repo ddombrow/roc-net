@@ -128,8 +128,9 @@ Tls := [].{
 		with_server_name : ClientConfig, Str -> ClientConfig
 		with_server_name = |ClientConfig.(config), name| ClientConfig.({ ..config, server_name: name })
 
-		## Give up with `TimedOut` if connecting and the handshake together (or,
-		## for `wrap_client!`, the handshake) take longer than this. It bounds
+		## Give up with `TimedOut` if looking up the name, connecting, and the
+		## handshake together (or, for `wrap_client!`, the handshake) take
+		## longer than this; see `Tcp.connect_timeout!`. It bounds
 		## the whole handshake, so a peer that trickles bytes to keep each read
 		## alive still times out.
 		with_timeout : ClientConfig, [Millis(U64)] -> ClientConfig

@@ -24,7 +24,10 @@ Time := [].{
 		elapsed! = |instant| now!().since(instant)
 	}
 
-	## A length of time, with nanosecond precision.
+	## A length of time, with nanosecond precision, up to about 584 years:
+	## longer durations (`Time.seconds(U64.highest)`, or adding up to more)
+	## are capped there rather than overflowing, which a timeout treats as no
+	## limit.
 	Duration :: U64.{
 
 		to_nanos : Duration -> U64
@@ -43,7 +46,7 @@ Time := [].{
 		minus = |Duration.(a), Duration.(b)| Duration.(if a > b a - b else 0)
 
 		plus : Duration, Duration -> Duration
-		plus = |Duration.(a), Duration.(b)| Duration.(a + b)
+		plus = |Duration.(a), Duration.(b)| Duration.(a.plus_saturated(b))
 
 		is_lt : Duration, Duration -> Bool
 		is_lt = |Duration.(a), Duration.(b)| a < b
@@ -53,13 +56,13 @@ Time := [].{
 	nanos = |n| Duration.(n)
 
 	micros : U64 -> Duration
-	micros = |n| Duration.(n * 1000)
+	micros = |n| Duration.(n.times_saturated(1000))
 
 	millis : U64 -> Duration
-	millis = |n| Duration.(n * 1000000)
+	millis = |n| Duration.(n.times_saturated(1000000))
 
 	seconds : U64 -> Duration
-	seconds = |n| Duration.(n * 1000000000)
+	seconds = |n| Duration.(n.times_saturated(1000000000))
 
 	## The current moment on the monotonic clock.
 	now! : () => Instant

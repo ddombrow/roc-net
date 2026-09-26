@@ -2745,12 +2745,13 @@ pub struct HostChannelSendArgs {
 }
 
 /// Arguments for Host.dns_resolve!
-/// Roc signature: Str => Try(List(Str), IOErr)
+/// Roc signature: Str, U64 => Try(List(Str), IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HostDnsResolveArgs {
     pub arg0: RocStr,
+    pub arg1: u64,
 }
 
 /// Arguments for Host.random_bytes!
@@ -3982,12 +3983,12 @@ unsafe extern "C" {
     pub fn roc_channel_send(arg0: *mut u64, arg1: RocErasedCallable, arg2: bool) -> ClosedOrFullOrSent;
 
     /// Hosted symbol for Host.dns_resolve!
-    /// Roc signature: Str => Try(List(Str), IOErr)
+    /// Roc signature: Str, U64 => Try(List(Str), IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_dns_resolve(arg0: RocStr) -> HostDnsResolveResult;
+    pub fn roc_dns_resolve(arg0: RocStr, arg1: u64) -> HostDnsResolveResult;
 
     /// Hosted symbol for Host.random_bytes!
     /// Roc signature: U64 => List(U8)

@@ -28,7 +28,7 @@ variables:
   # checks talk to, and the e2e client.
   LINUX_PROGRAMS: >-
     examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server
-    examples/line_server examples/chat_server tests/e2e
+    examples/line_server examples/chat_server tests/e2e tests/resolve_deadline
   # Keep Cargo's downloads inside the project directory so `cache` can save them.
   CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
 
@@ -138,7 +138,8 @@ suite-glibc:
   script:
     - target/linux/${ARCH}glibc/net_tests
 
-# The e2e checks, with the example servers in the background of the same job
+# The e2e checks (then the resolver-deadline checks), with the example
+# servers in the background of the same job
 # container. /etc/hosts gives the servers the service names the client uses
 # (echo, udp, lines, chat), so it runs unchanged. Locally, `just linux-test`
 # runs each server in its own container instead (tests/e2e/compose.yaml).
@@ -170,3 +171,9 @@ e2e:
     - $bin/tcp_echo_concurrent 0.0.0.0:8080 & $bin/udp_echo_server 0.0.0.0:8081 &
     - $bin/line_server 0.0.0.0:8082 & $bin/chat_server 0.0.0.0:8083 &
     - $bin/e2e
+    # Resolver deadlines, in the same job to save a job's startup time. The
+    # program is its own never-answering DNS server; point the resolver at
+    # it, and give a name three unreachable addresses.
+    - printf 'nameserver 127.0.0.1\noptions timeout:30 attempts:1\n' > /etc/resolv.conf
+    - printf '10.255.255.1 multi.roc-net.test\n10.255.255.2 multi.roc-net.test\n10.255.255.3 multi.roc-net.test\n' >> /etc/hosts
+    - $bin/resolve_deadline

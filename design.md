@@ -186,6 +186,32 @@ Addresses are strings at the API edge (`"127.0.0.1:8080"`, `"[::1]:53"`,
 port. A structured `SocketAddr` type can be added later if parsing in Roc
 proves common.
 
+## Name lookups and connect deadlines
+
+A timeout on connecting (`Tcp.connect_timeout!`, `Tls` `with_timeout`, whose
+defaults are 30 s) is one deadline for everything: the name lookup, every
+connection attempt, and for TLS the handshake. The system resolver
+(getaddrinfo) blocks and can't be cancelled, so with a deadline the lookup
+runs on a helper thread and the caller stops waiting at the deadline; an
+abandoned lookup finishes in the background when the resolver gives up. At
+most 64 lookups can be pending, so a dead DNS server can't pile up threads;
+past that, lookups with a deadline fail with `TimedOut` at once. IP-address
+literals skip the resolver. When a name has several addresses, each attempt
+gets an equal share of the time left, so an unreachable first address (IPv6
+on a network without it) can't use up the budget; a real Happy Eyeballs
+(RFC 8305, racing attempts) would do better and could come later.
+`Dns.resolve!` has a 30 s default and `resolve_timeout!` takes one. UDP's
+`send_to!`/`connect!` still resolve names with only the resolver's own
+timeouts, which the `Udp` docs point out.
+
+(Found in a red-team review: lookups weren't bounded at all, and each address
+got the full timeout.) `tests/resolve_deadline` checks this on Linux, with a
+DNS server that never answers, in `just linux-test` and CI.
+
+Very long timeouts: `Time` saturates (`Time.seconds(U64.highest)` used to
+crash with an integer overflow in Roc) and caps at about 584 years, and the
+host treats a deadline too far off to represent as none.
+
 ## Limits and timeouts
 
 | Limit | Default | Set with |
@@ -242,7 +268,13 @@ linker inputs don't cover it.
    `each_frame!` run the usual loop and treat a clean end of stream as
    success; `fold_lines!` / `fold_frames!` carry state between messages,
    since a closure can't reassign a `var` outside it. Readers have a length
-   limit (1 MiB by default). `Bytes` encodes and decodes 16/32/64-bit
+   limit (1 MiB by default), applied to the record itself however the bytes
+   arrive (a red-team review found an oversized record arriving in one read
+   slipped past it, and one of exactly the limit was rejected if its
+   delimiter came in a later read); `read_exactly!` honors it too. For
+   frames the limit is on the payload: `read_frame!` reads its 4-byte header
+   through an internal, unlimited path, so small limits still read small
+   frames. `Bytes` encodes and decodes 16/32/64-bit
    integers in both byte orders. Example: `examples/line_server`. Moving
    `Bytes` and `Framing` into a separate package that other platforms could
    share is possible later.

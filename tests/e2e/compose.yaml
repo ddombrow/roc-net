@@ -26,6 +26,23 @@ services:
     command: ["target/linux/${ROC_TARGET:-arm64musl}/net_tests"]
     profiles: ["suite"]
 
+  # Checks that timeouts bound name lookups (tests/resolve_deadline). The
+  # program is its own never-answering DNS server, so point the resolver at
+  # it, and give a name three unreachable addresses.
+  resolve-deadline:
+    image: ${ROC_IMAGE:-alpine:3}
+    platform: ${ROC_PLATFORM:-linux/arm64}
+    volumes:
+      - ../../target/linux/${ROC_TARGET:-arm64musl}:/roc:ro
+    command:
+      - sh
+      - -c
+      - |
+        printf 'nameserver 127.0.0.1\noptions timeout:30 attempts:1\n' > /etc/resolv.conf
+        printf '10.255.255.1 multi.roc-net.test\n10.255.255.2 multi.roc-net.test\n10.255.255.3 multi.roc-net.test\n' >> /etc/hosts
+        exec /roc/resolve_deadline
+    profiles: ["suite"]
+
   # Example servers, each in its own container.
   echo:
     <<: *roc

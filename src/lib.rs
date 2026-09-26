@@ -16,6 +16,7 @@ mod time;
 mod tls;
 mod net;
 mod random;
+mod resolve;
 
 use crate::roc_platform_abi::{
     make_roc_host, roc_main, DefaultAllocators, DefaultHandlers, HostStderrLineResult,

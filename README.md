@@ -86,7 +86,8 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   cryptographically secure
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
   `Duration`s (`Time.millis(500)`, `.to_micros()`, ...)
-- `Dns.resolve!`: a host name's IP addresses, from the OS resolver
+- `Dns.resolve!`, `Dns.resolve_timeout!`: a host name's IP addresses, from the
+  OS resolver. Connect timeouts include the name lookup.
 - `Task.spawn!`: run a closure concurrently on its own thread
 - `Channel.new!(capacity)`: a bounded queue between tasks, returning
   `(sender, receiver)`: `send!`, `try_send!`, `close!`; `receive!`,

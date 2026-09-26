@@ -95,7 +95,7 @@ test: (build-example "net_tests") smoke
     {{bin_dir}}/net_tests
     for f in $(grep -lE '^expect' examples/*/*.roc | xargs -n1 dirname | sort -u); do roc test "$f/main.roc" || exit 1; done
 
-linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e"
+linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline"
 compose := "docker compose -f tests/e2e/compose.yaml"
 roc_linux := ".tools/linux-arm64/roc_nightly-linux_arm64-" + nightly_suffix + "/roc"
 
@@ -143,6 +143,12 @@ linux-test: (build-linux "arm64musl") (build-linux "arm64glibc") (build-linux "x
         [ "${PIPESTATUS[0]}" = 0 ] || { status=1; echo "FAILED (exit ${PIPESTATUS[0]}; 124 means it timed out)"; }
         {{compose}} down -t 1 >/dev/null 2>&1
     }
+    resolver() {
+        echo "== resolver deadlines: $1 on $2"
+        ROC_TARGET=$1 ROC_IMAGE=$2 ROC_PLATFORM=$(platform_of "$1") timeout 600 {{compose}} run --rm -T resolve-deadline </dev/null | tail -1
+        [ "${PIPESTATUS[0]}" = 0 ] || { status=1; echo "FAILED (exit ${PIPESTATUS[0]}; 124 means it timed out)"; }
+        {{compose}} down -t 1 >/dev/null 2>&1
+    }
     e2e() {
         echo "== e2e: $1 on $2"
         # Fresh containers every run, so none keep running an older binary.
@@ -156,6 +162,8 @@ linux-test: (build-linux "arm64musl") (build-linux "arm64glibc") (build-linux "x
         suite ${arch}musl alpine:3
         suite ${arch}glibc rockylinux/rockylinux:8-minimal
         suite ${arch}glibc rockylinux/rockylinux:9-minimal
+        resolver ${arch}musl alpine:3
+        resolver ${arch}glibc rockylinux/rockylinux:9-minimal
         e2e ${arch}musl alpine:3
         e2e ${arch}glibc rockylinux/rockylinux:9-minimal
     done
