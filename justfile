@@ -9,11 +9,6 @@ export PATH := justfile_directory() / ".tools" + ":" + env("PATH")
 # The Roc nightly pinned in the platform header.
 nightly := `sed -n 's/.*roc: "\(nightly-[^"]*\)".*/\1/p' platform/main.roc`
 nightly_suffix := trim_start_match(nightly, "nightly-")
-nightly_os := if os() == "macos" {
-    if arch() == "aarch64" { "macos_apple_silicon" } else { "macos_x86_64" }
-} else {
-    if arch() == "aarch64" { "linux_arm64" } else { "linux_x86_64" }
-}
 glue := ".tools/roc_nightly-source-" + nightly_suffix + "/src/glue/src/RustGlue.roc"
 bin_dir := "target/examples"
 
@@ -22,20 +17,7 @@ default:
 
 # Download the pinned Roc nightly (and its source, for glue) into .tools/
 setup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p .tools && cd .tools
-    if [ -x roc ] && roc version | grep -q "{{nightly}}"; then
-        echo "roc {{nightly}} already installed"
-        exit 0
-    fi
-    gh release download "{{nightly}}" -R roc-lang/nightlies --clobber \
-        -p "roc_nightly-{{nightly_os}}-{{nightly_suffix}}.tar.gz" \
-        -p "roc_nightly-source-{{nightly_suffix}}.tar.gz"
-    tar xzf "roc_nightly-{{nightly_os}}-{{nightly_suffix}}.tar.gz"
-    tar xzf "roc_nightly-source-{{nightly_suffix}}.tar.gz"
-    ln -sf "roc_nightly-{{nightly_os}}-{{nightly_suffix}}/roc" roc
-    roc version
+    scripts/install_roc.sh --with-source
 
 # Build the Rust host for the native target
 build:
@@ -129,9 +111,8 @@ build-linux target="arm64musl":
         [ -f platform/targets/{{target}}/libc.so.6 ] || scripts/fetch_glibc_inputs.sh {{target}}
         if [ ! -x "{{roc_linux}}" ]; then
             mkdir -p .tools/linux-arm64
-            gh release download "{{nightly}}" -R roc-lang/nightlies -D .tools/linux-arm64 --clobber \
-                -p "roc_nightly-linux_arm64-{{nightly_suffix}}.tar.gz"
-            tar xzf .tools/linux-arm64/roc_nightly-linux_arm64-{{nightly_suffix}}.tar.gz -C .tools/linux-arm64
+            curl -fsSL --proto =https "https://github.com/roc-lang/nightlies/releases/download/{{nightly}}/roc_nightly-linux_arm64-{{nightly_suffix}}.tar.gz" \
+                | tar xz -C .tools/linux-arm64
         fi
         ./build.sh --target {{target}}
         docker run --rm --platform linux/arm64 -v "$PWD:/work" -w /work rockylinux/rockylinux:8-minimal sh -euc '

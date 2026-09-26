@@ -1,0 +1,172 @@
+# GitLab CI for roc-net: build and test every Linux target on native runners.
+#
+#   build:  check  - type-check every example
+#           host   - per CPU: build the host library, link the musl programs
+#   link:   glibc-link - per CPU: link the glibc programs on Rocky 8
+#   test:   suite-musl, suite-glibc, e2e - run them on Alpine and Rocky
+#
+# macOS isn't covered here (gitlab.com's free tier has no macOS runners);
+# run `just test` locally for that.
+
+# `workflow:rules` decides whether a pipeline runs at all. Here: for merge
+# requests, pushes to the default branch, and runs started from the web UI
+# (Build > Pipelines > Run pipeline). Pushes to other branches don't use
+# compute minutes until they're in a merge request.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# Stages run in order; jobs within a stage run in parallel. A job gets the
+# artifacts of every job in earlier stages.
+stages: [build, link, test]
+
+# Variables available to every job (and to the shell as environment variables).
+variables:
+  # The programs built for Linux: the test suite, the example servers the e2e
+  # checks talk to, and the e2e client.
+  LINUX_PROGRAMS: >-
+    examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server
+    examples/line_server examples/chat_server tests/e2e
+  # Keep Cargo's downloads inside the project directory so `cache` can save them.
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
+
+# Keys starting with "." are hidden: not jobs, just reusable config that jobs
+# pull in with `extends`.
+#
+# `parallel:matrix` turns one job definition into several, one per set of
+# variables. Each CPU architecture runs on GitLab's hosted runner for that
+# CPU, picked by its `tags`, so nothing is emulated.
+.per-cpu:
+  parallel:
+    matrix:
+      - ARCH: arm64
+        RUNNER: saas-linux-small-arm64
+      - ARCH: x64
+        RUNNER: saas-linux-small-amd64
+  tags: [$RUNNER]
+
+# Install the pinned Roc nightly into .tools and put it on PATH.
+.with-roc:
+  before_script:
+    - scripts/install_roc.sh
+    - export PATH="$CI_PROJECT_DIR/.tools:$PATH"
+
+check:
+  stage: build
+  extends: .with-roc
+  image: alpine:3
+  before_script:
+    - apk add --no-cache curl >/dev/null
+    - !reference [.with-roc, before_script]
+  script:
+    - for main in examples/*/main.roc tests/*/main.roc; do roc check "$main" >/dev/null || { roc check "$main"; exit 1; }; echo "ok $main"; done
+
+host:
+  stage: build
+  extends: .per-cpu
+  image: rust:1.95-bookworm
+  # `cache` keeps files between pipelines (best effort, unlike artifacts).
+  # Here: Cargo's downloaded crates, per CPU, refreshed when Cargo.lock changes.
+  cache:
+    key:
+      files: [Cargo.lock]
+      prefix: cargo-$ARCH
+    paths: [.cargo-home/registry/]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq python3 xz-utils >/dev/null
+    - scripts/install_zig.sh && export PATH="$CI_PROJECT_DIR/.tools/zig:$PATH"
+    - !reference [.with-roc, before_script]
+  script:
+    # The host library for both C libraries. build.sh fetches the verified
+    # musl runtime and uses Zig to compile AWS-LC.
+    - ./build.sh --target ${ARCH}musl
+    - ./build.sh --target ${ARCH}glibc
+    # Roc links static musl programs on any Linux, so link those here too.
+    - mkdir -p target/linux/${ARCH}musl
+    - for p in $LINUX_PROGRAMS; do roc build --target=${ARCH}musl "$p/main.roc" --output="target/linux/${ARCH}musl/$(basename "$p")" >/dev/null; done
+  # `artifacts` are files handed to later stages (and downloadable from the
+  # job page). The glibc host library goes to glibc-link; the musl programs
+  # go straight to the tests.
+  artifacts:
+    paths:
+      - target/linux/*musl/
+      - platform/targets/*glibc/libhost.a
+    expire_in: 1 week
+
+glibc-link:
+  stage: link
+  extends: [.per-cpu, .with-roc]
+  # Linking against Rocky 8's glibc (2.28) makes the programs run on Rocky/RHEL
+  # 8 and newer. On a Linux runner, Roc can link glibc programs directly.
+  image: rockylinux/rockylinux:8
+  before_script:
+    - dnf install -y -q tar gzip >/dev/null
+    - !reference [.with-roc, before_script]
+  script:
+    - scripts/fetch_glibc_inputs.sh ${ARCH}glibc
+    - mkdir -p target/linux/${ARCH}glibc
+    - for p in $LINUX_PROGRAMS; do roc build --target=${ARCH}glibc "$p/main.roc" --output="target/linux/${ARCH}glibc/$(basename "$p")" >/dev/null; done
+  artifacts:
+    paths: [target/linux/*glibc/]
+    expire_in: 1 week
+
+# The test suite. It reads TLS certificates from the repository, which every
+# job has checked out, so it runs from the project directory.
+suite-musl:
+  stage: test
+  extends: .per-cpu
+  image: alpine:3
+  script:
+    - target/linux/${ARCH}musl/net_tests
+
+suite-glibc:
+  stage: test
+  # Matrix values can be lists: this is every CPU crossed with both Rocky
+  # releases, four jobs.
+  parallel:
+    matrix:
+      - ARCH: arm64
+        RUNNER: saas-linux-small-arm64
+        IMAGE: [rockylinux/rockylinux:8-minimal, rockylinux/rockylinux:9-minimal]
+      - ARCH: x64
+        RUNNER: saas-linux-small-amd64
+        IMAGE: [rockylinux/rockylinux:8-minimal, rockylinux/rockylinux:9-minimal]
+  tags: [$RUNNER]
+  image: $IMAGE
+  script:
+    - target/linux/${ARCH}glibc/net_tests
+
+# The e2e checks, with the example servers in the background of the same job
+# container. /etc/hosts gives the servers the service names the client uses
+# (echo, udp, lines, chat), so it runs unchanged. Locally, `just linux-test`
+# runs each server in its own container instead (tests/e2e/compose.yaml).
+e2e:
+  stage: test
+  parallel:
+    matrix:
+      - ARCH: arm64
+        RUNNER: saas-linux-small-arm64
+        LIBC: musl
+        IMAGE: alpine:3
+      - ARCH: arm64
+        RUNNER: saas-linux-small-arm64
+        LIBC: glibc
+        IMAGE: rockylinux/rockylinux:9-minimal
+      - ARCH: x64
+        RUNNER: saas-linux-small-amd64
+        LIBC: musl
+        IMAGE: alpine:3
+      - ARCH: x64
+        RUNNER: saas-linux-small-amd64
+        LIBC: glibc
+        IMAGE: rockylinux/rockylinux:9-minimal
+  tags: [$RUNNER]
+  image: $IMAGE
+  script:
+    - echo "127.0.0.1 echo udp lines chat" >> /etc/hosts
+    - bin=target/linux/${ARCH}${LIBC}
+    - $bin/tcp_echo_concurrent 0.0.0.0:8080 & $bin/udp_echo_server 0.0.0.0:8081 &
+    - $bin/line_server 0.0.0.0:8082 & $bin/chat_server 0.0.0.0:8083 &
+    - $bin/e2e

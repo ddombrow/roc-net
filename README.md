@@ -28,6 +28,18 @@ just docs                  # API reference in target/docs/index.html
 just linux-test            # suite + e2e for arm64/x64 Linux: musl on Alpine, glibc on Rocky 8/9 (needs docker)
 ```
 
+`scripts/install_roc.sh` (what `just setup` runs) and `scripts/install_zig.sh`
+install tools from public downloads, so CI needs no credentials.
+
+## CI
+
+`.gitlab-ci.yml` builds and tests every Linux target on GitLab's native arm64
+and x86-64 runners: type-check the examples; build the host and link the musl
+programs; link the glibc programs on Rocky 8; then run the test suite (musl on
+Alpine, glibc on Rocky 8 and 9) and the e2e checks. Pipelines run for merge
+requests, pushes to the default branch, and manual runs. macOS isn't covered
+(no free macOS runners); `just test` covers it locally.
+
 Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
 `export PATH=$PWD/.tools:$PATH`.
 
