@@ -1125,6 +1125,33 @@ const _: () = assert!(core::mem::size_of::<AnonStruct4f4f23a245dfe10a>() == 24, 
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<AnonStruct4f4f23a245dfe10a>() == 4, "AnonStruct4f4f23a245dfe10a alignment mismatch");
 
+/// Element type for __AnonStruct_dfa5943259877aa7
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStructDfa5943259877aa7 {
+    pub receiver: *mut u64,
+    pub sender: *mut u64,
+}
+
+/// Element type for __AnonStruct_dfa5943259877aa7
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStructDfa5943259877aa7 {
+    pub receiver: *mut u64,
+    pub sender: *mut u64,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<AnonStructDfa5943259877aa7>() == 16, "AnonStructDfa5943259877aa7 size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<AnonStructDfa5943259877aa7>() == 8, "AnonStructDfa5943259877aa7 alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<AnonStructDfa5943259877aa7>() == 8, "AnonStructDfa5943259877aa7 size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<AnonStructDfa5943259877aa7>() == 4, "AnonStructDfa5943259877aa7 alignment mismatch");
+
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2398,6 +2425,259 @@ const _: () = assert!(core::mem::align_of::<HostIOErr>() == 4, "HostIOErr alignm
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostIOErr, tag) == 12, "HostIOErr tag offset mismatch");
 
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostChannelNewResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostChannelNewResultPayload {
+    pub err: [u8; 0],
+    pub ok: core::mem::ManuallyDrop<AnonStructDfa5943259877aa7>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostChannelNewResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostChannelNewResult {
+    pub _payload_alignment: [HostChannelNewResultPayloadAlignment; 0],
+    pub payload: [u8; 8],
+    pub tag: HostChannelNewResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostChannelNewResult {
+    pub payload: HostChannelNewResultPayload,
+    pub tag: HostChannelNewResultTag,
+}
+
+impl HostChannelNewResult {
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelNewResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &AnonStructDfa5943259877aa7 {
+        unsafe { &*(self.payload.as_ptr() as *const AnonStructDfa5943259877aa7) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelNewResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &AnonStructDfa5943259877aa7 {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<AnonStructDfa5943259877aa7> as *const AnonStructDfa5943259877aa7) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelNewResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> AnonStructDfa5943259877aa7 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const AnonStructDfa5943259877aa7) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelNewResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> AnonStructDfa5943259877aa7 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostChannelNewResult>() == 24, "HostChannelNewResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostChannelNewResult>() == 8, "HostChannelNewResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostChannelNewResult, tag) == 16, "HostChannelNewResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostChannelNewResult>() == 12, "HostChannelNewResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostChannelNewResult>() == 4, "HostChannelNewResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostChannelNewResult, tag) == 8, "HostChannelNewResult tag offset mismatch");
+
+/// Tag union: ClosedOrFullOrSent
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClosedOrFullOrSent {
+    Closed = 0,
+    Full = 1,
+    Sent = 2,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ClosedOrFullOrSent>() == 1, "ClosedOrFullOrSent size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ClosedOrFullOrSent>() == 1, "ClosedOrFullOrSent alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ClosedOrFullOrSent>() == 1, "ClosedOrFullOrSent size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ClosedOrFullOrSent>() == 1, "ClosedOrFullOrSent alignment mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostChannelReceiveResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostChannelReceiveResultPayload {
+    pub err: core::mem::ManuallyDrop<ClosedOrTimedOut>,
+    pub ok: core::mem::ManuallyDrop<RocErasedCallable>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostChannelReceiveResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostChannelReceiveResult {
+    pub _payload_alignment: [HostChannelReceiveResultPayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: HostChannelReceiveResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostChannelReceiveResult {
+    pub payload: HostChannelReceiveResultPayload,
+    pub tag: HostChannelReceiveResultTag,
+}
+
+impl HostChannelReceiveResult {
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelReceiveResultTag::Err` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &ClosedOrTimedOut {
+        unsafe { &*(self.payload.as_ptr() as *const ClosedOrTimedOut) }
+    }
+
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelReceiveResultTag::Err` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &ClosedOrTimedOut {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<ClosedOrTimedOut> as *const ClosedOrTimedOut) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelReceiveResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> ClosedOrTimedOut {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const ClosedOrTimedOut) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelReceiveResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> ClosedOrTimedOut {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelReceiveResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocErasedCallable {
+        unsafe { &*(self.payload.as_ptr() as *const RocErasedCallable) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelReceiveResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocErasedCallable {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<RocErasedCallable> as *const RocErasedCallable) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelReceiveResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocErasedCallable {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocErasedCallable) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostChannelReceiveResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocErasedCallable {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostChannelReceiveResult>() == 16, "HostChannelReceiveResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostChannelReceiveResult>() == 8, "HostChannelReceiveResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostChannelReceiveResult, tag) == 8, "HostChannelReceiveResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostChannelReceiveResult>() == 8, "HostChannelReceiveResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostChannelReceiveResult>() == 4, "HostChannelReceiveResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostChannelReceiveResult, tag) == 4, "HostChannelReceiveResult tag offset mismatch");
+
+/// Tag union: ClosedOrTimedOut
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClosedOrTimedOut {
+    Closed = 0,
+    TimedOut = 1,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ClosedOrTimedOut>() == 1, "ClosedOrTimedOut size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ClosedOrTimedOut>() == 1, "ClosedOrTimedOut alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ClosedOrTimedOut>() == 1, "ClosedOrTimedOut size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ClosedOrTimedOut>() == 1, "ClosedOrTimedOut alignment mismatch");
+
 /// Arguments for Host.stderr_line!
 /// Roc signature: Str => Try({}, [StderrErr(Str)])
 /// Refcounted fields are owned by the hosted function.
@@ -2423,6 +2703,45 @@ pub struct HostStdoutLineArgs {
 #[derive(Clone, Copy)]
 pub struct HostTaskSpawnArgs {
     pub arg0: RocErasedCallable,
+}
+
+/// Arguments for Host.channel_close!
+/// Roc signature: Host.ChannelEnd => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostChannelCloseArgs {
+    pub arg0: *mut u64,
+}
+
+/// Arguments for Host.channel_new!
+/// Roc signature: U64 => Try({ receiver : Host.ChannelEnd, sender : Host.ChannelEnd }, [TooManyChannels])
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostChannelNewArgs {
+    pub arg0: u64,
+}
+
+/// Arguments for Host.channel_receive!
+/// Roc signature: Host.ChannelEnd, U64 => Try(Box({} -> rigid), [Closed, TimedOut])
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostChannelReceiveArgs {
+    pub arg0: *mut u64,
+    pub arg1: u64,
+}
+
+/// Arguments for Host.channel_send!
+/// Roc signature: Host.ChannelEnd, Box({} -> rigid), Bool => [Closed, Full, Sent]
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostChannelSendArgs {
+    pub arg0: *mut u64,
+    pub arg1: RocErasedCallable,
+    pub arg2: bool,
 }
 
 /// Arguments for Host.dns_resolve!
@@ -2639,6 +2958,8 @@ pub struct HostUnixListenArgs {
 
 // Platform Type Aliases
 
+pub type HostChannelNewOk = AnonStructDfa5943259877aa7;
+pub type HostChannelReceiveErr = ClosedOrTimedOut;
 pub type HostSocketPeerAddrResult = HostSocketLocalAddrResult;
 pub type HostSocketPeerAddrResultPayload = HostSocketLocalAddrResultPayload;
 pub type HostSocketPeerAddrResultTag = HostSocketLocalAddrResultTag;
@@ -3281,6 +3602,187 @@ unsafe impl RocRelease<HostIOErr> for HostIOErrRelease {
     }
 }
 
+impl HostChannelNewResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostChannelNewResultTag::Err => {},
+            HostChannelNewResultTag::Ok => {
+                let payload = unsafe { value.take_payload_ok_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostChannelNewResultTag::Err => {},
+            HostChannelNewResultTag::Ok => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct HostChannelNewResultRelease;
+
+unsafe impl RocRelease<HostChannelNewResult> for HostChannelNewResultRelease {
+    unsafe fn release(value: HostChannelNewResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl AnonStructDfa5943259877aa7 {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_box_with(value.receiver as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+        unsafe { decref_box_with(value.sender as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { incref_box(value.receiver as RocBox, amount); }
+        unsafe { incref_box(value.sender as RocBox, amount); }
+    }
+}
+
+pub struct AnonStructDfa5943259877aa7Release;
+
+unsafe impl RocRelease<AnonStructDfa5943259877aa7> for AnonStructDfa5943259877aa7Release {
+    unsafe fn release(value: AnonStructDfa5943259877aa7, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ClosedOrFullOrSent {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct ClosedOrFullOrSentRelease;
+
+unsafe impl RocRelease<ClosedOrFullOrSent> for ClosedOrFullOrSentRelease {
+    unsafe fn release(value: ClosedOrFullOrSent, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostChannelReceiveResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostChannelReceiveResultTag::Err => {
+                let payload = unsafe { value.take_payload_err_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            HostChannelReceiveResultTag::Ok => {
+                let payload = unsafe { value.take_payload_ok_unchecked() };
+                unsafe { decref_erased_callable(payload, roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostChannelReceiveResultTag::Err => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostChannelReceiveResultTag::Ok => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
+                unsafe { incref_erased_callable(payload, amount); }
+            },
+        }
+    }
+}
+
+pub struct HostChannelReceiveResultRelease;
+
+unsafe impl RocRelease<HostChannelReceiveResult> for HostChannelReceiveResultRelease {
+    unsafe fn release(value: HostChannelReceiveResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ClosedOrTimedOut {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct ClosedOrTimedOutRelease;
+
+unsafe impl RocRelease<ClosedOrTimedOut> for ClosedOrTimedOutRelease {
+    unsafe fn release(value: ClosedOrTimedOut, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 /// Release one owned reference to a `RocList<RocStr>`.
 ///
 /// The allocation's final reference is claimed atomically before any element
@@ -3377,6 +3879,34 @@ unsafe extern "C" {
     /// moved into storage or into the result:
     ///     unsafe { decref_erased_callable(arg0, roc_host); }
     pub fn roc_task_spawn(arg0: RocErasedCallable) -> bool;
+
+    /// Hosted symbol for Host.channel_close!
+    /// Roc signature: Host.ChannelEnd => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    pub fn roc_channel_close(arg0: *mut u64);
+
+    /// Hosted symbol for Host.channel_new!
+    /// Roc signature: U64 => Try({ receiver : Host.ChannelEnd, sender : Host.ChannelEnd }, [TooManyChannels])
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_channel_new(arg0: u64) -> HostChannelNewResult;
+
+    /// Hosted symbol for Host.channel_receive!
+    /// Roc signature: Host.ChannelEnd, U64 => Try(Box({} -> rigid), [Closed, TimedOut])
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_channel_receive(arg0: *mut u64, arg1: u64) -> HostChannelReceiveResult;
+
+    /// Hosted symbol for Host.channel_send!
+    /// Roc signature: Host.ChannelEnd, Box({} -> rigid), Bool => [Closed, Full, Sent]
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    ///     unsafe { decref_erased_callable(arg1, roc_host); }
+    pub fn roc_channel_send(arg0: *mut u64, arg1: RocErasedCallable, arg2: bool) -> ClosedOrFullOrSent;
 
     /// Hosted symbol for Host.dns_resolve!
     /// Roc signature: Str => Try(List(Str), IOErr)

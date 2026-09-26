@@ -55,6 +55,20 @@ Host := [].{
 	## `count` bytes from the OS's secure random source.
 	random_bytes! : U64 => List(U8)
 
+	## One end of a channel (sender or receiver), closed when Roc releases it.
+	ChannelEnd :: Box(U64)
+
+	## A channel holding up to `capacity` values.
+	channel_new! : U64 => Try({ sender : ChannelEnd, receiver : ChannelEnd }, [TooManyChannels])
+	## Queue a value, wrapped as a thunk so the host can hold it without knowing
+	## its type. With `wait` false, return `Full` instead of waiting for room.
+	channel_send! : ChannelEnd, Box(() -> a), Bool => [Sent, Full, Closed]
+	## Take the next value, waiting up to `timeout_ns` nanoseconds: 0 means
+	## don't wait, and `U64.highest` means wait as long as it takes.
+	channel_receive! : ChannelEnd, U64 => Try(Box(() -> a), [Closed, TimedOut])
+	## Stop accepting values; receivers still get the queued ones.
+	channel_close! : ChannelEnd => {}
+
 	## Start running a task on a new thread. Returns False at the task limit.
 	task_spawn! : Box(() => {}) => Bool
 }

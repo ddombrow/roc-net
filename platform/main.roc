@@ -39,7 +39,7 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Dns, Framing, IOErr, Random, Stdout, Stderr, Stdin, Task, Tcp, Time, Udp, Unix]
+	exposes [Bytes, Channel, Dns, Framing, IOErr, Random, Stdout, Stderr, Stdin, Task, Tcp, Time, Udp, Unix]
 	packages { roc: "nightly-2026-09-24-f45bfbe" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
@@ -47,6 +47,10 @@ platform ""
 		"roc_stdin_line": Host.stdin_line!,
 		"roc_stdout_line": Host.stdout_line!,
 		"roc_task_spawn": Host.task_spawn!,
+		"roc_channel_close": Host.channel_close!,
+		"roc_channel_new": Host.channel_new!,
+		"roc_channel_receive": Host.channel_receive!,
+		"roc_channel_send": Host.channel_send!,
 		"roc_dns_resolve": Host.dns_resolve!,
 		"roc_random_bytes": Host.random_bytes!,
 		"roc_time_now_ns": Host.time_now_ns!,
@@ -84,6 +88,7 @@ import Stderr
 import Stdin
 import Task
 import Bytes
+import Channel
 import Dns
 import Framing
 import Tcp

@@ -28,8 +28,9 @@ impl Drop for OwnedUnixListener {
     }
 }
 
+static HEAP: OnceLock<ResourceHeap<Socket>> = OnceLock::new();
+
 fn heap() -> &'static ResourceHeap<Socket> {
-    static HEAP: OnceLock<ResourceHeap<Socket>> = OnceLock::new();
     HEAP.get_or_init(|| ResourceHeap::new(crate::limits::max_sockets()))
 }
 
@@ -52,5 +53,6 @@ pub unsafe fn get<'a>(handle: *mut u64) -> Option<&'a Socket> {
 /// Called by `roc_dealloc`. Returns true if `ptr` was a socket slot, which is
 /// now closed and must not be freed as ordinary memory.
 pub fn release(ptr: *mut std::ffi::c_void) -> bool {
-    heap().release(ptr)
+    // Don't create the heap just to learn a pointer isn't in it.
+    HEAP.get().is_some_and(|heap| heap.release(ptr))
 }

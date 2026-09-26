@@ -6,6 +6,7 @@ use std::ffi::c_void;
 use std::io::{self, BufRead, Write};
 use std::mem::ManuallyDrop;
 
+mod channels;
 mod limits;
 mod resource;
 mod roc_platform_abi;
@@ -186,7 +187,7 @@ pub extern "C" fn roc_dealloc(ptr: *mut c_void, alignment: usize) {
 /// glue helpers (via `RocHost`), comes through here. Socket handles are routed
 /// to the socket heap, which closes them; everything else is ordinary memory.
 extern "C" fn host_dealloc(roc_host: *mut RocHost, ptr: *mut c_void, alignment: usize) {
-    if !sockets::release(ptr) {
+    if !sockets::release(ptr) && !channels::release(ptr) {
         DefaultAllocators::roc_dealloc(roc_host, ptr, alignment);
     }
 }
@@ -247,6 +248,7 @@ pub fn rust_main() -> i32 {
     // Read the limits now so a bad setting is reported at startup.
     limits::max_tasks();
     limits::max_sockets();
+    limits::max_channels();
 
     // Leaked so it stays valid for tasks that are still running when `main!` returns.
     let roc_host: &'static mut RocHost = Box::leak(Box::new(RocHost {

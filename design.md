@@ -76,10 +76,24 @@ as roc-ray does with `zio`. This allows many more connections per process. It
 changes no Roc API, which is why the API promises only "may run in parallel",
 a property that both implementations satisfy.
 
-**Communication between tasks** (for chat servers, pub/sub, proxies): a
-bounded host `Channel` carrying boxed Roc values, with `send!`, `receive!`,
-and timeouts. It is designed after spawn works, since it depends on the same
-cross-thread closure and value handling.
+**Communication between tasks** goes through `Channel`: bounded,
+multi-producer, multi-consumer queues. `send!` waits while full and
+`receive!` while empty; `try_send!`, `try_receive!`, and `receive_timeout!`
+don't wait (or wait a bounded time). Values cross the host as thunks,
+`Box(() -> a)`: a boxed closure has a fixed shape whatever `a` is, and carries
+its own drop callback, so the host can queue values of any type and free the
+ones never received. Each channel has one sender end and one receiver end,
+Roc-owned handles in their own resource heap (`ROC_NET_MAX_CHANNELS`, default
+8,192). Releasing the sender (or `close!`) lets receivers drain the queue and
+then get `ChannelClosed`; releasing the receiver makes sends fail instead of
+waiting forever. The host never frees a queued value while holding a
+channel's lock, since freeing can run Roc drop code that releases other
+handles, including that channel's.
+
+A value is released after its last use, but the exact moment within a
+function isn't guaranteed (a value discarded with `_` may live until the
+function returns); returning from the function or task that holds it is the
+reliable point, and `close!` closes at a specific one.
 
 ## Resources and lifetime
 
@@ -233,7 +247,10 @@ linker inputs don't cover it.
    `Bytes` and `Framing` into a separate package that other platforms could
    share is possible later.
 6. **ARC handles (done).** Automatic close, bounded socket heap.
-7. **Channels, TLS, coroutine scheduler**, in whatever order use cases demand.
+7. **Channels (done)**, with `examples/chat_server`. Stress-tested with 8
+   producers and 4 consumers moving 4 million heap strings: every byte
+   accounted for, peak memory 3.9 MB, about a million messages per second.
+8. **TLS, coroutine scheduler**, in whatever order use cases demand.
 
 `Dns.resolve!` and `Time` (done) were not milestones of their own; they were
 added for `examples/tcp_ping`, which resolves once and then times TCP
@@ -254,7 +271,11 @@ features. They test whether roc-net is pleasant to use.
   (`Time`), and `Bytes` readers at arbitrary offsets (`u16_be_at`, ...),
   which DNS name compression needs. Switching the parser to the offset
   readers removed its private byte helpers and error-conversion blocks.
-- **Chat server.** A line protocol with broadcast. Needs milestone 5 and channels.
+- **Chat server (done: `examples/chat_server`).** A hub task owns the user
+  list and does all broadcasting; each connection has a reader task sending
+  events to the hub and a writer task draining its own outbox. The hub uses
+  `try_send!`, so a user who stops reading misses messages instead of
+  stalling the room.
 
 ## Risks and open questions
 

@@ -62,6 +62,9 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   `Duration`s (`Time.millis(500)`, `.to_micros()`, ...)
 - `Dns.resolve!`: a host name's IP addresses, from the OS resolver
 - `Task.spawn!`: run a closure concurrently on its own thread
+- `Channel.new!(capacity)`: a bounded queue between tasks, returning
+  `(sender, receiver)`: `send!`, `try_send!`, `close!`; `receive!`,
+  `try_receive!`, `receive_timeout!`. Closes when an end is released.
 
 Sockets close automatically when Roc drops the last reference to them, including
 when a task ends early on an error. `Stream.close!` is only for closing early,
@@ -92,6 +95,7 @@ just run udp_client 127.0.0.1:8081 "hello"
 
 just run line_server 127.0.0.1:8082                   # then: nc 127.0.0.1 8082, type "ADD 2 40"
 
+just run chat_server 127.0.0.1:8083                   # then nc 127.0.0.1 8083 from a few terminals
 just run dns_client gmail.com MX                      # a small dig: any record type, any server
 just run tcp_ping example.com 443 -c 4                # ping, timing TCP handshakes instead of ICMP
 

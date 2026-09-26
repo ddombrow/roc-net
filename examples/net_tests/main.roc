@@ -1,6 +1,7 @@
 app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/main.roc" }
 
 import pf.Bytes
+import pf.Channel
 import pf.Dns
 import pf.Framing
 import pf.Random
@@ -46,6 +47,15 @@ main! = |_args| {
 		check!("bytes: reading at offsets", bytes_offsets!),
 		check!("random: bytes differ", random_bytes!),
 		check!("random: between! stays in range and covers it", random_between!),
+		check!("channel: values arrive in order", channel_order!),
+		check!("channel: closes when the producer task ends", channel_producer_ends!),
+		check!("channel: many producers, closes after the last", channel_many_producers!),
+		check!("channel: capacity 1 applies backpressure, loses nothing", channel_backpressure!),
+		check!("channel: try_send!, try_receive!, receive_timeout!", channel_non_blocking!),
+		check!("channel: close! delivers what's queued", channel_close!),
+		check!("channel: send fails once the receiver is gone", channel_receiver_gone!),
+		check!("channel: reply channels sent through a channel", channel_reply!),
+		check!("channel: undelivered values are freed", channel_frees_values!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -501,4 +511,158 @@ random_between! = || {
 	# The full range must not loop forever.
 	_ = Random.between!(0, U64.highest)
 	Ok({})
+}
+
+channel_order! = || {
+	(tx, rx) = Channel.new!(4)?
+	tx.send!("one")?
+	tx.send!("two")?
+	tx.send!(Str.repeat("three ", 1000))?
+	expect_eq([rx.receive!()?, rx.receive!()?, Str.trim(rx.receive!()?)], ["one", "two", Str.trim(Str.repeat("three ", 1000))])
+}
+
+## Receive until the channel closes, adding up what arrives.
+sum_until_closed! = |rx| {
+	var $sum = 0.U64
+	var $count = 0.U64
+	while True {
+		match rx.receive!() {
+			Ok(n) => {
+				$sum = $sum + n
+				$count = $count + 1
+			}
+			Err(ChannelClosed) => break
+		}
+	}
+	($count, $sum)
+}
+
+# The producer's task owns the only sender; when it finishes, the sender is
+# released and the consumer's loop ends.
+channel_producer_ends! = || {
+	(tx, rx) = Channel.new!(8)?
+	Task.spawn!(|| {
+		for n in U64.until(1, 1001) {
+			tx.send!(n)?
+		}
+		Ok({})
+	})?
+	expect_eq(sum_until_closed!(rx), (1000, 500500))
+}
+
+channel_many_producers! = || {
+	(tx, rx) = Channel.new!(8)?
+	for producer in U64.until(0, 4) {
+		Task.spawn!(|| {
+			for n in U64.until(0, 250) {
+				tx.send!(producer * 250 + n)?
+			}
+			Ok({})
+		})?
+	}
+	expect_eq(sum_until_closed!(rx), (1000, 499500))
+}
+
+# With room for one value, the producer has to wait for the consumer for
+# every value but the first.
+channel_backpressure! = || {
+	(tx, rx) = Channel.new!(1)?
+	Task.spawn!(|| {
+		for n in U64.until(0, 200) {
+			tx.send!(n)?
+		}
+		Ok({})
+	})?
+	var $expected = 0.U64
+	while True {
+		match rx.receive!() {
+			Ok(n) => {
+				if n != $expected {
+					return Err(Unexpected("got ${n.to_str()}, expected ${$expected.to_str()}"))
+				}
+				$expected = $expected + 1
+			}
+			Err(ChannelClosed) => break
+		}
+	}
+	expect_eq($expected, 200)
+}
+
+channel_non_blocking! = || {
+	(tx, rx) = Channel.new!(2)?
+	expect_eq(rx.try_receive!(), Err(ChannelEmpty))?
+	tx.try_send!(1)?
+	tx.try_send!(2)?
+	expect_eq(tx.try_send!(3), Err(ChannelFull))?
+	expect_eq(rx.try_receive!(), Ok(1))?
+	expect_eq(rx.receive_timeout!(Time.millis(50)), Ok(2))?
+	start = Time.now!()
+	expect_eq(rx.receive_timeout!(Time.millis(50)), Err(TimedOut))?
+	waited = start.elapsed!().to_millis()
+	# Using the sender here keeps it alive until now. Released earlier, it
+	# would close the channel, and the receive above would rightly report
+	# ChannelClosed instead of waiting out the timeout.
+	tx.close!()
+	if waited >= 50 and waited < 1000 Ok({}) else Err(Unexpected("timed out after ${waited.to_str()} ms"))
+}
+
+channel_close! = || {
+	(tx, rx) = Channel.new!(4)?
+	tx.send!("queued")?
+	tx.close!()
+	expect_eq(tx.send!("too late"), Err(ChannelClosed))?
+	expect_eq(rx.receive!(), Ok("queued"))?
+	expect_eq(rx.receive!(), Err(ChannelClosed))
+}
+
+channel_receiver_gone! = || {
+	tx = sender_only!()?
+	expect_eq(tx.send!(1), Err(ChannelClosed))
+}
+
+## A channel's sender, with its receiver released when this returns.
+sender_only! = || {
+	(tx, _) = Channel.new!(4)?
+	Ok(tx)
+}
+
+# A server task answers each request on the reply channel sent with it.
+channel_reply! = || {
+	(requests, incoming) = Channel.new!(4)?
+	Task.spawn!(|| {
+		while True {
+			match incoming.receive!() {
+				Ok((n, reply)) => reply.send!(n * 2)?
+				Err(ChannelClosed) => break
+			}
+		}
+		Ok({})
+	})?
+	(reply_tx, reply_rx) = Channel.new!(1)?
+	requests.send!((21, reply_tx))?
+	expect_eq(reply_rx.receive!(), Ok(42))
+}
+
+# A connection left queued in a channel is closed when the channel goes away,
+# so the other end sees the end of the stream instead of waiting forever.
+channel_frees_values! = || {
+	(listener, address) = listen_anywhere!()?
+	client = Tcp.connect!(address)?
+	client.set_read_timeout!(Millis(2000))?
+	strand!(listener.accept!()?)?
+	match client.read!(16) {
+		Ok([]) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+## Queue `stream` behind a marker, take only the marker, and let both ends go.
+strand! = |stream| {
+	(tx, rx) = Channel.new!(2)?
+	tx.send!(Marker)?
+	tx.send!(Conn(stream))?
+	match rx.receive!()? {
+		Marker => Ok({})
+		Conn(_) => Err(Unexpected("received the stream before the marker"))
+	}
 }

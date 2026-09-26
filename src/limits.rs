@@ -16,6 +16,14 @@ pub fn max_sockets() -> usize {
     *VALUE.get_or_init(|| from_env("ROC_NET_MAX_SOCKETS", 16_384, 1, 65_535))
 }
 
+/// `ROC_NET_MAX_CHANNELS`: how many channels may exist at once.
+pub fn max_channels() -> usize {
+    static VALUE: OnceLock<usize> = OnceLock::new();
+    // Each channel uses two handle slots (sender, receiver), and slot indexes
+    // use 16 bits of the handle token.
+    *VALUE.get_or_init(|| from_env("ROC_NET_MAX_CHANNELS", 8_192, 1, 32_767))
+}
+
 fn from_env(name: &str, default: usize, min: usize, max: usize) -> usize {
     let Ok(raw) = std::env::var(name) else {
         return default;
