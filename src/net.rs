@@ -10,13 +10,14 @@ use std::time::Duration;
 
 use crate::roc_host;
 use crate::roc_platform_abi::{
-    decref_box_with, AnonStruct4f4f23a245dfe10a as RocRecvFrom, HostIOErr, HostIOErrPayload,
+    decref_box_with, AnonStruct4f4f23a245dfe10a as RocRecvFrom, HostDnsResolveResult,
+    HostDnsResolveResultPayload, HostDnsResolveResultTag, HostIOErr, HostIOErrPayload,
     HostIOErrTag, HostSocketAcceptResult, HostSocketAcceptResultPayload,
     HostSocketAcceptResultTag, HostSocketLocalAddrResult, HostSocketLocalAddrResultPayload,
     HostSocketLocalAddrResultTag, HostSocketReadResult, HostSocketReadResultPayload,
     HostSocketReadResultTag, HostSocketSetTimeoutResult, HostSocketSetTimeoutResultPayload,
     HostSocketSetTimeoutResultTag, HostUdpRecvFromResult, HostUdpRecvFromResultPayload,
-    HostUdpRecvFromResultTag, IOErr, IOErrPayload, IOErrTag, RocBox, RocListWith, RocStr,
+    HostUdpRecvFromResultTag, IOErr, IOErrPayload, IOErrTag, RocBox, RocList, RocListWith, RocStr,
 };
 use crate::sockets::{self, OwnedUnixListener, Socket};
 
@@ -73,13 +74,30 @@ macro_rules! io_err {
     }};
 }
 
+/// Conversion into whichever copy of Roc's `IOErr` a result uses. The glue
+/// emits identical copies (`IOErr`, `HostIOErr`) and which result gets which
+/// can change when it's regenerated, so results name neither: the payload's
+/// field type picks the implementation.
+trait FromNetErr {
+    fn from_net_err(err: NetErr) -> Self;
+}
+
+macro_rules! impl_from_net_err {
+    ($ty:ident, $payload:ident, $tag:ident) => {
+        impl FromNetErr for $ty {
+            fn from_net_err(err: NetErr) -> Self {
+                io_err!($ty, $payload, $tag, err)
+            }
+        }
+    };
+}
+
+impl_from_net_err!(IOErr, IOErrPayload, IOErrTag);
+impl_from_net_err!(HostIOErr, HostIOErrPayload, HostIOErrTag);
+
 /// Builds a Roc `Try(ok, IOErr)` result from a Rust `Result`.
 macro_rules! roc_result {
-    (
-        $result:ident, $payload:ident, $tag:ident,
-        $err_ty:ident, $err_payload:ident, $err_tag:ident,
-        $value:expr, |$ok:ident| $ok_value:expr
-    ) => {
+    ($result:ident, $payload:ident, $tag:ident, $value:expr, |$ok:ident| $ok_value:expr) => {
         match $value {
             Ok($ok) => $result {
                 payload: $payload { ok: $ok_value },
@@ -87,7 +105,7 @@ macro_rules! roc_result {
             },
             Err(err) => $result {
                 payload: $payload {
-                    err: ManuallyDrop::new(io_err!($err_ty, $err_payload, $err_tag, err)),
+                    err: ManuallyDrop::new(FromNetErr::from_net_err(err)),
                 },
                 tag: $tag::Err,
             },
@@ -102,9 +120,6 @@ fn handle_result(value: NetResult<*mut u64>) -> HostSocketAcceptResult {
         HostSocketAcceptResult,
         HostSocketAcceptResultPayload,
         HostSocketAcceptResultTag,
-        HostIOErr,
-        HostIOErrPayload,
-        HostIOErrTag,
         value,
         |handle| ManuallyDrop::new(handle)
     )
@@ -115,9 +130,6 @@ fn str_result(value: NetResult<String>) -> HostSocketLocalAddrResult {
         HostSocketLocalAddrResult,
         HostSocketLocalAddrResultPayload,
         HostSocketLocalAddrResultTag,
-        IOErr,
-        IOErrPayload,
-        IOErrTag,
         value,
         |text| ManuallyDrop::new(RocStr::from_str(&text, roc_host()))
     )
@@ -128,9 +140,6 @@ fn bytes_result(value: NetResult<RocListWith<u8, false>>) -> HostSocketReadResul
         HostSocketReadResult,
         HostSocketReadResultPayload,
         HostSocketReadResultTag,
-        IOErr,
-        IOErrPayload,
-        IOErrTag,
         value,
         |bytes| ManuallyDrop::new(bytes)
     )
@@ -141,9 +150,6 @@ fn unit_result(value: NetResult<()>) -> HostSocketSetTimeoutResult {
         HostSocketSetTimeoutResult,
         HostSocketSetTimeoutResultPayload,
         HostSocketSetTimeoutResultTag,
-        IOErr,
-        IOErrPayload,
-        IOErrTag,
         value,
         |_unit| []
     )
@@ -499,9 +505,6 @@ pub extern "C" fn roc_udp_recv_from(socket: *mut u64, max: u64) -> HostUdpRecvFr
         HostUdpRecvFromResult,
         HostUdpRecvFromResultPayload,
         HostUdpRecvFromResultTag,
-        IOErr,
-        IOErrPayload,
-        IOErrTag,
         result,
         |received| ManuallyDrop::new(received)
     )
@@ -548,4 +551,46 @@ pub extern "C" fn roc_udp_leave_multicast(socket: *mut u64, group: RocStr) -> Ho
             Ok(())
         })
     }))
+}
+
+// --- Name resolution ---
+
+/// Resolve `name` with the OS resolver, keeping each address once, in the
+/// order the resolver returned them.
+fn resolve(name: &str) -> NetResult<Vec<String>> {
+    let mut addresses: Vec<String> = Vec::new();
+    for addr in (name, 0).to_socket_addrs()? {
+        let ip = addr.ip().to_string();
+        if !addresses.contains(&ip) {
+            addresses.push(ip);
+        }
+    }
+    if addresses.is_empty() {
+        return Err(NetErr::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{name} has no addresses"),
+        )));
+    }
+    Ok(addresses)
+}
+
+fn roc_str_list(items: &[String]) -> RocList<RocStr> {
+    let list = unsafe { RocList::<RocStr>::allocate(items.len(), roc_host()) };
+    for (i, item) in items.iter().enumerate() {
+        unsafe { list.elements.add(i).write(RocStr::from_str(item, roc_host())) };
+    }
+    list
+}
+
+/// Hosted function: Host.dns_resolve!
+#[no_mangle]
+pub extern "C" fn roc_dns_resolve(name: RocStr) -> HostDnsResolveResult {
+    let result = with_str(name, resolve);
+    roc_result!(
+        HostDnsResolveResult,
+        HostDnsResolveResultPayload,
+        HostDnsResolveResultTag,
+        result,
+        |addresses| ManuallyDrop::new(roc_str_list(&addresses))
+    )
 }

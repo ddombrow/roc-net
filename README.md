@@ -55,6 +55,9 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   - `write_frame!`: write a 4-byte big-endian length, then the bytes
 - `Bytes`: encode and decode `U16`/`U32`/`U64`, big- and little-endian
   (`u32_be`, `take_u32_be`, ...), plus `take` and `take_u8`
+- `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
+  `Duration`s (`Time.millis(500)`, `.to_micros()`, ...)
+- `Dns.resolve!`: a host name's IP addresses, from the OS resolver
 - `Task.spawn!`: run a closure concurrently on its own thread
 
 Sockets close automatically when Roc drops the last reference to them, including
@@ -86,6 +89,9 @@ just run udp_client 127.0.0.1:8081 "hello"
 
 just run line_server 127.0.0.1:8082                   # then: nc 127.0.0.1 8082, type "ADD 2 40"
 
+just run dns_client gmail.com MX                      # a small dig: any record type, any server
+just run tcp_ping example.com 443 -c 4                # ping, timing TCP handshakes instead of ICMP
+
 just run unix_echo_server /tmp/echo.sock
 just run unix_client /tmp/echo.sock "hello"
 ```
@@ -102,9 +108,11 @@ just run unix_client /tmp/echo.sock "hello"
 
 ## Notes
 
-- The host calls `signal(SIGPIPE, SIG_IGN)` at startup. Roc links this library
-  behind its own `main`, so Rust's usual startup (which does this) never runs,
-  and a write to a disconnected peer would otherwise kill the process.
+- Writing to a peer that has disconnected returns `BrokenPipe` rather than
+  killing the process with SIGPIPE. Rust's standard library arranges this for
+  every socket it creates (`SO_NOSIGPIPE` on macOS, `MSG_NOSIGNAL` on Linux),
+  so the host doesn't touch signal handling. Stdout and stderr keep the
+  default, so `app | head` exits quietly like other command-line tools.
 - Platform Roc code must never `Box.unbox` or re-box a socket handle. The
   compiler can reuse an unboxed box's memory in place, which would bypass
   `roc_dealloc` and leak the socket.

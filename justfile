@@ -108,9 +108,10 @@ smoke: build (build-example "tcp_echo_concurrent") (build-example "tcp_client")
     echo "$reply"
     [ "$reply" = "Received: smoke test" ]
 
-# Run the test examples, then the smoke test
+# Run the network tests, every example's `expect`s, then the smoke test
 test: (build-example "net_tests") smoke
     {{bin_dir}}/net_tests
+    for f in $(grep -lE '^expect' examples/*/*.roc | xargs -n1 dirname | sort -u); do roc test "$f/main.roc" || exit 1; done
 
 # Benchmark against Rust baselines and record results: just bench --label "what changed"
 bench *args:

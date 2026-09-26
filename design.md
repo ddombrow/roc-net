@@ -117,7 +117,7 @@ chosen per operation and documented.
 | `Unix` | stream `listen!`/`connect!` (same `Stream` methods as `Tcp`) on filesystem paths; datagram sockets and Linux abstract names later |
 | `Dns` | `resolve!` a host name to a list of addresses, via the OS resolver |
 | `Task` | `spawn!`, and later `Channel` |
-| `Time` | `sleep!`, monotonic `now!`, deadlines |
+| `Time` | monotonic `now!` / `Instant`, `Duration`, `sleep!` (deadlines later) |
 | `Bytes` (pure) | big/little-endian `U16`/`U32`/`U64` encoding and decoding, `take`, `take_u8` |
 | `Framing` (Roc) | a buffered reader over any stream: `read_line!`, `read_until!`, `read_exactly!`, length-prefixed frames; `each_`/`fold_` loops |
 | `Tls` (later) | rustls client and server, producing a stream with the shared methods |
@@ -197,8 +197,15 @@ linker inputs don't cover it.
 - An HTTP server framework (use basic-webserver) or a routing/middleware stack.
 - A global mutable application state service. Shared state goes through
   channels or an external store.
-- Raw IP/ICMP sockets and packet capture. These need privileges and
+- Raw IP sockets and packet capture. These need privileges and
   platform-specific APIs; reconsider on demand.
+- ICMP, for now. Unprivileged "datagram" ICMP sockets make a real ping
+  possible without root (macOS allows them; Linux does if
+  `net.ipv4.ping_group_range` includes the user's group), but Rust's standard
+  library can't create them, so they need libc (the `libc` crate, `socket2`,
+  or hand-written declarations). The host currently depends on nothing but
+  `std` and declares no libc functions; adding ICMP means deciding to give
+  that up. `examples/tcp_ping` covers most uses meanwhile.
 
 ## Milestones
 
@@ -227,10 +234,9 @@ linker inputs don't cover it.
 6. **ARC handles (done).** Automatic close, bounded socket heap.
 7. **Channels, TLS, coroutine scheduler**, in whatever order use cases demand.
 
-`Dns.resolve!` is not a milestone of its own. It is one hosted function with
-no handle, so it can be added whenever an app first needs addresses rather
-than a connection (choosing IPv4 or IPv6, trying several addresses, caching).
-`connect!` and `listen!` already resolve names implicitly, and UDP's
+`Dns.resolve!` and `Time` (done) were not milestones of their own; they were
+added for `examples/tcp_ping`, which resolves once and then times TCP
+handshakes. `connect!` and `listen!` also resolve names implicitly, and UDP's
 `send_to!` can too.
 
 ### Example apps
@@ -238,10 +244,14 @@ than a connection (choosing IPv4 or IPv6, trying several addresses, caching).
 These are protocols written in Roc on top of the platform, not platform
 features. They test whether roc-net is pleasant to use.
 
-- **DNS client.** Queries any record type (MX, TXT, SRV, ...) against a chosen
-  server, which the OS resolver behind `Dns.resolve!` cannot do. Builds query
-  packets, sends them over UDP, and parses binary replies. Needs milestones 4
-  and 5.
+- **DNS client (done: `examples/dns_client`).** Queries any record type
+  against a chosen server, which the OS resolver behind `Dns.resolve!` cannot
+  do. Pure encoding and decoding (`Dns.roc`, with name compression and loop
+  protection, tested by `expect`) plus UDP with retries, reply validation, and
+  fallback to TCP for truncated replies. It surfaced three platform gaps:
+  no random numbers (the query ID should be random), no clock, and `Bytes`
+  decoders that only read from the front of a list, while DNS compression
+  needs reads at arbitrary offsets.
 - **Chat server.** A line protocol with broadcast. Needs milestone 5 and channels.
 
 ## Risks and open questions

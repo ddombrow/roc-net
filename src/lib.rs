@@ -11,6 +11,7 @@ mod resource;
 mod roc_platform_abi;
 mod sockets;
 mod tasks;
+mod time;
 mod net;
 
 use crate::roc_platform_abi::{
@@ -232,23 +233,6 @@ fn build_args_list(roc_host: &RocHost) -> RocList<RocStr> {
     list
 }
 
-/// Ignore SIGPIPE so writing to a disconnected peer returns an error instead
-/// of killing the process. Rust's own startup does this for Rust binaries, but
-/// Roc links this library behind the `main` below, so that startup never runs.
-fn ignore_sigpipe() {
-    #[cfg(unix)]
-    {
-        const SIGPIPE: i32 = 13;
-        const SIG_IGN: usize = 1;
-        extern "C" {
-            fn signal(signum: i32, handler: usize) -> usize;
-        }
-        unsafe {
-            signal(SIGPIPE, SIG_IGN);
-        }
-    }
-}
-
 /// C-compatible main entry point for the Roc program.
 /// This is exported so the linker can find it.
 #[no_mangle]
@@ -258,7 +242,7 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const i8) -> i32 {
 
 /// Main entry point for the Roc program.
 pub fn rust_main() -> i32 {
-    ignore_sigpipe();
+    time::init();
     // Read the limits now so a bad setting is reported at startup.
     limits::max_tasks();
     limits::max_sockets();

@@ -45,6 +45,13 @@ Host := [].{
 	udp_join_multicast! : Socket, Str => Try({}, IOErr)
 	udp_leave_multicast! : Socket, Str => Try({}, IOErr)
 
+	## Nanoseconds on a monotonic clock, counted from when the program started.
+	time_now_ns! : {} => U64
+	## Pause the calling task (thread) for `ns` nanoseconds.
+	time_sleep_ns! : U64 => {}
+	## Resolve a host name to IP addresses with the OS resolver.
+	dns_resolve! : Str => Try(List(Str), IOErr)
+
 	## Start running a task on a new thread. Returns False at the task limit.
 	task_spawn! : Box(() => {}) => Bool
 }

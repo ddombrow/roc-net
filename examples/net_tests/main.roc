@@ -1,10 +1,12 @@
 app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/main.roc" }
 
 import pf.Bytes
+import pf.Dns
 import pf.Framing
 import pf.Stdout
 import pf.Task
 import pf.Tcp
+import pf.Time
 import pf.Udp
 import pf.Unix
 
@@ -37,6 +39,9 @@ main! = |_args| {
 		check!("framing: each_frame! until end of stream", framing_each_frame!),
 		check!("bytes: known encodings", bytes_encodings!),
 		check!("bytes: round trips and TooShort", bytes_round_trips!),
+		check!("time: sleep and elapsed", time_sleep!),
+		check!("time: durations", time_durations!),
+		check!("dns: resolve", dns_resolve!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -417,4 +422,37 @@ bytes_round_trips! = || {
 	expect_eq(Bytes.take([1, 2, 3], 2), Ok(([1, 2], [3])))?
 	expect_eq(Bytes.take_u32_be([1, 2, 3]), Err(TooShort))?
 	expect_eq(Bytes.take([1], 2), Err(TooShort))
+}
+
+time_sleep! = || {
+	start = Time.now!()
+	Time.sleep!(Time.millis(50))
+	took = start.elapsed!().to_millis()
+	if took >= 50 and took < 500 {
+		Ok({})
+	} else {
+		Err(Unexpected("slept 50 ms but measured ${took.to_str()} ms"))
+	}
+}
+
+time_durations! = || {
+	expect_eq(Time.seconds(2).to_millis(), 2000)?
+	expect_eq(Time.millis(3).to_micros(), 3000)?
+	expect_eq(Time.micros(5).to_nanos(), 5000)?
+	expect_eq(Time.millis(5).minus(Time.millis(2)).to_millis(), 3)?
+	# Subtracting a longer duration gives zero rather than wrapping around.
+	expect_eq(Time.millis(2).minus(Time.millis(5)).to_nanos(), 0)?
+	expect_eq(Time.millis(1).plus(Time.micros(500)).to_micros(), 1500)
+}
+
+dns_resolve! = || {
+	expect_eq(Dns.resolve!("127.0.0.1")?, ["127.0.0.1"])?
+	localhost = Dns.resolve!("localhost")?
+	if !(List.contains(localhost, "127.0.0.1") or List.contains(localhost, "::1")) {
+		return Err(Unexpected("localhost resolved to ${Str.inspect(localhost)}"))
+	}
+	match Dns.resolve!("no-such-host.invalid") {
+		Err(DnsErr(_)) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
 }
