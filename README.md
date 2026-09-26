@@ -45,6 +45,16 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     `set_read_timeout!`, `set_write_timeout!`, `set_broadcast!`,
     `join_multicast!`, `leave_multicast!`, `local_addr!`, `peer_addr!`
   - Errors are `UdpErr(IOErr)`.
+- `Framing`: split a stream into messages
+  - `each_line!`, `each_frame!`: handle every line or length-prefixed frame
+    until the peer hangs up; `fold_lines!`, `fold_frames!` also carry state
+    from one message to the next
+  - `reader` / `reader_with_max`, then `read_line!`, `read_until!`,
+    `read_exactly!`, `read_frame!`, each returning the result and the updated
+    reader: `(line, $reader) = $reader.read_line!()?`
+  - `write_frame!`: write a 4-byte big-endian length, then the bytes
+- `Bytes`: encode and decode `U16`/`U32`/`U64`, big- and little-endian
+  (`u32_be`, `take_u32_be`, ...), plus `take` and `take_u8`
 - `Task.spawn!`: run a closure concurrently on its own thread
 
 Sockets close automatically when Roc drops the last reference to them, including
@@ -73,6 +83,8 @@ just run tcp_proxy 127.0.0.1:9000 127.0.0.1:8080     # proxy in front of the ech
 
 just run udp_echo_server 127.0.0.1:8081
 just run udp_client 127.0.0.1:8081 "hello"
+
+just run line_server 127.0.0.1:8082                   # then: nc 127.0.0.1 8082, type "ADD 2 40"
 
 just run unix_echo_server /tmp/echo.sock
 just run unix_client /tmp/echo.sock "hello"

@@ -1,5 +1,7 @@
 app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/main.roc" }
 
+import pf.Bytes
+import pf.Framing
 import pf.Stdout
 import pf.Task
 import pf.Tcp
@@ -26,6 +28,15 @@ main! = |_args| {
 		check!("udp read timeout", udp_read_timeout!),
 		check!("udp truncates long datagrams", udp_truncate!),
 		check!("udp connected to closed port", udp_refused!),
+		check!("framing: lines split across writes", framing_lines!),
+		check!("framing: length-prefixed frames", framing_frames!),
+		check!("framing: line longer than the limit", framing_too_long!),
+		check!("framing: stream ends mid-frame", framing_truncated!),
+		check!("framing: each_line! stops on Stop", framing_each_line!),
+		check!("framing: fold_lines! carries state", framing_fold_lines!),
+		check!("framing: each_frame! until end of stream", framing_each_frame!),
+		check!("bytes: known encodings", bytes_encodings!),
+		check!("bytes: round trips and TooShort", bytes_round_trips!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -49,11 +60,13 @@ check! = |name, test!|
 		}
 	}
 
+## Values are shown as text in the error, so one test can compare values of
+## different types.
 expect_eq = |actual, expected|
 	if actual == expected {
 		Ok({})
 	} else {
-		Err(Mismatch({ expected, actual }))
+		Err(Mismatch({ expected: Str.inspect(expected), actual: Str.inspect(actual) }))
 	}
 
 ## Send `message`, say we're done sending, and read the whole reply.
@@ -273,4 +286,135 @@ udp_refused! = || {
 		Err(UdpErr(ConnectionRefused)) => Ok({})
 		other => Err(Unexpected(Str.inspect(other)))
 	}
+}
+
+## Accept one connection and run `send!` on it, then hang up.
+serve_once! = |listener, send!|
+	Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.set_nodelay!(True)?
+		send!(stream)
+	})
+
+framing_lines! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream| {
+		stream.write_str!("first li")?
+		stream.write_str!("ne\r\nsecond\nthi")?
+		stream.write_str!("rd\n")
+	})?
+
+	reader = Framing.reader(Tcp.connect!(address)?)
+	(a, r1) = reader.read_line!()?
+	(b, r2) = r1.read_line!()?
+	(c, r3) = r2.read_line!()?
+	expect_eq([a, b, c], ["first line", "second", "third"])?
+	match r3.read_line!() {
+		Err(EndOfStream) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+framing_frames! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream| {
+		Framing.write_frame!(stream, Str.to_utf8("hello"))?
+		Framing.write_frame!(stream, [])?
+		Framing.write_frame!(stream, List.repeat(7, 100000))
+	})?
+
+	reader = Framing.reader(Tcp.connect!(address)?)
+	(hello, r1) = reader.read_frame!()?
+	(empty, r2) = r1.read_frame!()?
+	(big, _) = r2.read_frame!()?
+	expect_eq((Str.from_utf8_lossy(hello), List.len(empty), List.len(big)), ("hello", 0, 100000))
+}
+
+framing_too_long! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream| stream.write!(List.repeat(65, 5000)))?
+
+	reader = Framing.reader_with_max(Tcp.connect!(address)?, 1000)
+	match reader.read_line!() {
+		Err(TooLong) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+framing_truncated! = || {
+	(listener, address) = listen_anywhere!()?
+	# Promise 10 bytes, send 3, hang up.
+	serve_once!(listener, |stream| stream.write!([0, 0, 0, 10, 1, 2, 3]))?
+
+	reader = Framing.reader(Tcp.connect!(address)?)
+	match reader.read_frame!() {
+		Err(UnexpectedEof) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# The server echoes lines wrapped in <> until a line says "stop".
+framing_each_line! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream|
+		Framing.each_line!(stream, |line|
+			if line == "stop" {
+				Ok(Stop)
+			} else {
+				stream.write_str!("<${line}>").map_ok(|_| Continue)
+			}))?
+
+	client = Tcp.connect!(address)?
+	expect_eq(exchange!(client, "a\nb\nstop\nc\n")?, "<a><b>")
+}
+
+# The server counts lines until the client stops sending, then reports.
+framing_fold_lines! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream| {
+		count = Framing.fold_lines!(stream, 0.U64, |n, _line| Ok(Continue(n + 1)))?
+		stream.write_str!("${count.to_str()} lines")
+	})?
+
+	client = Tcp.connect!(address)?
+	expect_eq(exchange!(client, "one\ntwo\nthree\n")?, "3 lines")
+}
+
+# The server echoes each frame back with its length, until the client hangs up.
+framing_each_frame! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream|
+		Framing.each_frame!(stream, |frame|
+			Framing.write_frame!(stream, Str.to_utf8("${List.len(frame).to_str()}:${Str.from_utf8_lossy(frame)}"))
+				.map_ok(|_| Continue)))?
+
+	client = Tcp.connect!(address)?
+	Framing.write_frame!(client, Str.to_utf8("ab"))?
+	Framing.write_frame!(client, Str.to_utf8("cde"))?
+	client.shutdown!(Write)?
+	replies = Framing.fold_frames!(client, [], |so_far, frame| Ok(Continue(List.append(so_far, Str.from_utf8_lossy(frame)))))?
+	expect_eq(replies, ["2:ab", "3:cde"])
+}
+
+bytes_encodings! = || {
+	expect_eq(Bytes.u16_be(258), [1, 2])?
+	expect_eq(Bytes.u32_be(16909060), [1, 2, 3, 4])?
+	expect_eq(Bytes.u64_be(72623859790382856), [1, 2, 3, 4, 5, 6, 7, 8])?
+	expect_eq(Bytes.u16_le(258), [2, 1])?
+	expect_eq(Bytes.u32_le(16909060), [4, 3, 2, 1])?
+	expect_eq(Bytes.u64_le(72623859790382856), [8, 7, 6, 5, 4, 3, 2, 1])
+}
+
+bytes_round_trips! = || {
+	tail = [9, 9]
+	expect_eq(Bytes.take_u16_be(List.concat(Bytes.u16_be(65535), tail)), Ok((65535, tail)))?
+	expect_eq(Bytes.take_u32_be(List.concat(Bytes.u32_be(4294967295), tail)), Ok((4294967295, tail)))?
+	expect_eq(Bytes.take_u64_be(List.concat(Bytes.u64_be(18446744073709551615), tail)), Ok((18446744073709551615, tail)))?
+	expect_eq(Bytes.take_u16_le(List.concat(Bytes.u16_le(4660), tail)), Ok((4660, tail)))?
+	expect_eq(Bytes.take_u32_le(List.concat(Bytes.u32_le(305419896), tail)), Ok((305419896, tail)))?
+	expect_eq(Bytes.take_u64_le(List.concat(Bytes.u64_le(1311768467463790320), tail)), Ok((1311768467463790320, tail)))?
+	expect_eq(Bytes.take_u8([7, 8]), Ok((7, [8])))?
+	expect_eq(Bytes.take([1, 2, 3], 2), Ok(([1, 2], [3])))?
+	expect_eq(Bytes.take_u32_be([1, 2, 3]), Err(TooShort))?
+	expect_eq(Bytes.take([1], 2), Err(TooShort))
 }

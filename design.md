@@ -118,8 +118,8 @@ chosen per operation and documented.
 | `Dns` | `resolve!` a host name to a list of addresses, via the OS resolver |
 | `Task` | `spawn!`, and later `Channel` |
 | `Time` | `sleep!`, monotonic `now!`, deadlines |
-| `Bytes` (pure) | big/little-endian integer encoding and decoding, slicing helpers |
-| `Framing` (pure + effectful) | a buffered reader over any stream: `read_exactly!`, `read_until!`, `read_line!`, length-prefixed frames |
+| `Bytes` (pure) | big/little-endian `U16`/`U32`/`U64` encoding and decoding, `take`, `take_u8` |
+| `Framing` (Roc) | a buffered reader over any stream: `read_line!`, `read_until!`, `read_exactly!`, length-prefixed frames; `each_`/`fold_` loops |
 | `Tls` (later) | rustls client and server, producing a stream with the shared methods |
 | `Stdout`, `Stderr`, `Stdin` | existing |
 
@@ -143,8 +143,8 @@ close! : s => {}
 A function that only calls these methods needs no annotation: Roc infers it
 as generic over any type that has them. `examples/net_tests` uses the same
 unannotated `read_to_end!` and `exchange!` helpers with TCP and Unix streams.
-`Framing` will work the same way, so it covers every current and future
-stream type.
+`Framing` works the same way, so it covers every current and future stream
+type.
 
 On the host side, every kind of socket is one `Host.Socket` handle, and one
 set of hosted functions (`socket_read!`, `socket_write!`, ...) serves all of
@@ -213,8 +213,17 @@ linker inputs don't cover it.
    listener deletes its socket file when it closes, and `listen!` replaces a
    leftover file nothing is listening on); `Udp` datagrams with connect,
    timeouts, broadcast, and multicast. Unix datagram sockets are deferred.
-5. **Framing + Bytes.** A pure-Roc buffered reader and codecs, with examples:
-   a line-based request/response protocol and a length-prefixed RPC.
+5. **Framing + Bytes (done).** Pure Roc, in the platform. A `Framing.Reader`
+   wraps any stream and is passed along by value: each read returns the
+   result and the updated reader, `(line, $reader) = $reader.read_line!()?`,
+   which costs no more lines than a mutable reader would. `each_line!` /
+   `each_frame!` run the usual loop and treat a clean end of stream as
+   success; `fold_lines!` / `fold_frames!` carry state between messages,
+   since a closure can't reassign a `var` outside it. Readers have a length
+   limit (1 MiB by default). `Bytes` encodes and decodes 16/32/64-bit
+   integers in both byte orders. Example: `examples/line_server`. Moving
+   `Bytes` and `Framing` into a separate package that other platforms could
+   share is possible later.
 6. **ARC handles (done).** Automatic close, bounded socket heap.
 7. **Channels, TLS, coroutine scheduler**, in whatever order use cases demand.
 

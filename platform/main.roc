@@ -39,7 +39,7 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [IOErr, Stdout, Stderr, Stdin, Task, Tcp, Udp, Unix]
+	exposes [Bytes, Framing, IOErr, Stdout, Stderr, Stdin, Task, Tcp, Udp, Unix]
 	packages { roc: "nightly-2026-09-24-f45bfbe" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
@@ -79,6 +79,8 @@ import Stdout
 import Stderr
 import Stdin
 import Task
+import Bytes
+import Framing
 import Tcp
 import Udp
 import Unix
