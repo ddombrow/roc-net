@@ -81,6 +81,23 @@ Framing := [].{
 			Ok((bytes, Reader.({ ..r, buffered: List.drop_first($buffered, count) })))
 		}
 
+		## Read everything until the stream ends, including anything already
+		## buffered. Fails with `TooLong` past the reader's maximum length.
+		read_to_end! = |Reader.(r)| {
+			var $bytes = r.buffered
+			while True {
+				if List.len($bytes) > r.max_len {
+					return Err(TooLong)
+				}
+				chunk = r.stream.read!(4096)?
+				if List.is_empty(chunk) {
+					break
+				}
+				$bytes = List.concat($bytes, chunk)
+			}
+			Ok(($bytes, Reader.({ ..r, buffered: [] })))
+		}
+
 		## Read one frame written by `write_frame!`: a 4-byte big-endian length,
 		## then that many bytes. Fails with `TooLong` if the length exceeds the
 		## reader's maximum.

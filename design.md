@@ -132,7 +132,7 @@ chosen per operation and documented.
 | `Dns` | `resolve!` a host name to a list of addresses, via the OS resolver |
 | `Task` | `spawn!`, and later `Channel` |
 | `Time` | monotonic `now!` / `Instant`, `Duration`, `sleep!` (deadlines later) |
-| `Random` | secure random numbers from `/dev/urandom`, read with `std` only (no `getrandom`, which would add the `libc` crate) |
+| `Random` | secure random numbers from the TLS crypto provider's CSPRNG (AWS-LC, seeded by the OS) |
 | `Bytes` (pure) | big/little-endian `U16`/`U32`/`U64` encoding and decoding, `take`, `take_u8` |
 | `Framing` (Roc) | a buffered reader over any stream: `read_line!`, `read_until!`, `read_exactly!`, length-prefixed frames; `each_`/`fold_` loops |
 | `Tls` (later) | rustls client and server, producing a stream with the shared methods |
@@ -250,7 +250,22 @@ linker inputs don't cover it.
 7. **Channels (done)**, with `examples/chat_server`. Stress-tested with 8
    producers and 4 consumers moving 4 million heap strings: every byte
    accounted for, peak memory 3.9 MB, about a million messages per second.
-8. **TLS, coroutine scheduler**, in whatever order use cases demand.
+8. **TLS (done).** rustls with the `aws-lc-rs` provider (chosen over `ring`:
+   no `libc` crate, actively developed, post-quantum key exchange) and
+   Mozilla's roots from `webpki-roots` (the macOS keychain would need Apple's
+   Security framework, which Roc's linker may not support). Streams stay
+   full-duplex: rustls sits behind a lock held only to encrypt or decrypt,
+   with separate read and write locks keeping ciphertext and records in
+   order, taken in a fixed order. Clients finish the handshake in
+   `connect!`, so certificate errors surface there; servers handshake on
+   first use, in the connection's own task. Releasing a stream sends
+   close_notify. `ignore_unexpected_eof!` opts out of treating a missing
+   close_notify as an error, like OpenSSL's `SSL_OP_IGNORE_UNEXPECTED_EOF`.
+   STARTTLS (`wrap_client!` / `wrap_server!`) duplicates the TCP connection's
+   handle, so the plain stream must not be used afterwards. Linux builds
+   cross-compile AWS-LC with Zig (`scripts/zig-cc`). Programs using TLS are
+   about 3.4 MB.
+9. **Coroutine scheduler**, when more concurrent connections are needed.
 
 `Dns.resolve!` and `Time` (done) were not milestones of their own; they were
 added for `examples/tcp_ping`, which resolves once and then times TCP

@@ -1710,6 +1710,97 @@ const _: () = assert!(core::mem::offset_of!(IOErr, tag) == 12, "IOErr tag offset
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostSocketSetTimeoutResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostSocketSetTimeoutResultPayload {
+    pub err: core::mem::ManuallyDrop<IOErr>,
+    pub ok: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostSocketSetTimeoutResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketSetTimeoutResult {
+    pub _payload_alignment: [HostSocketSetTimeoutResultPayloadAlignment; 0],
+    pub payload: [u8; 16],
+    pub tag: HostSocketSetTimeoutResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketSetTimeoutResult {
+    pub payload: HostSocketSetTimeoutResultPayload,
+    pub tag: HostSocketSetTimeoutResultTag,
+}
+
+impl HostSocketSetTimeoutResult {
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketSetTimeoutResultTag::Err` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketSetTimeoutResultTag::Err` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketSetTimeoutResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketSetTimeoutResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostSocketSetTimeoutResult>() == 40, "HostSocketSetTimeoutResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostSocketSetTimeoutResult>() == 8, "HostSocketSetTimeoutResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostSocketSetTimeoutResult, tag) == 32, "HostSocketSetTimeoutResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostSocketSetTimeoutResult>() == 20, "HostSocketSetTimeoutResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostSocketSetTimeoutResult>() == 4, "HostSocketSetTimeoutResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostSocketSetTimeoutResult, tag) == 16, "HostSocketSetTimeoutResult tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostSocketReadResultTag {
     Err = 0,
     Ok = 1,
@@ -1833,97 +1924,6 @@ const _: () = assert!(core::mem::size_of::<HostSocketReadResult>() == 20, "HostS
 const _: () = assert!(core::mem::align_of::<HostSocketReadResult>() == 4, "HostSocketReadResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostSocketReadResult, tag) == 16, "HostSocketReadResult tag offset mismatch");
-
-/// Tag discriminant for Try.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostSocketSetTimeoutResultTag {
-    Err = 0,
-    Ok = 1,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union HostSocketSetTimeoutResultPayload {
-    pub err: core::mem::ManuallyDrop<IOErr>,
-    pub ok: [u8; 0],
-}
-
-#[cfg(target_pointer_width = "32")]
-#[repr(align(4))]
-#[derive(Clone, Copy)]
-pub struct HostSocketSetTimeoutResultPayloadAlignment;
-
-/// Tag union: Try
-#[cfg(target_pointer_width = "32")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct HostSocketSetTimeoutResult {
-    pub _payload_alignment: [HostSocketSetTimeoutResultPayloadAlignment; 0],
-    pub payload: [u8; 16],
-    pub tag: HostSocketSetTimeoutResultTag,
-}
-
-/// Tag union: Try
-#[cfg(not(target_pointer_width = "32"))]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct HostSocketSetTimeoutResult {
-    pub payload: HostSocketSetTimeoutResultPayload,
-    pub tag: HostSocketSetTimeoutResultTag,
-}
-
-impl HostSocketSetTimeoutResult {
-    /// Borrow the `Err` payload without creating another owner.
-    ///
-    /// # Safety
-    /// `self.tag` must be `HostSocketSetTimeoutResultTag::Err` and the payload must still be initialized.
-    #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
-        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
-    }
-
-    /// Borrow the `Err` payload without creating another owner.
-    ///
-    /// # Safety
-    /// `self.tag` must be `HostSocketSetTimeoutResultTag::Err` and the payload must still be initialized.
-    #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
-    }
-
-    /// Move the `Err` payload out of one owned tag-union shell.
-    ///
-    /// # Safety
-    /// `self.tag` must be `HostSocketSetTimeoutResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
-    #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
-    }
-
-    /// Move the `Err` payload out of one owned tag-union shell.
-    ///
-    /// # Safety
-    /// `self.tag` must be `HostSocketSetTimeoutResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
-    #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
-        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
-    }
-
-}
-
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostSocketSetTimeoutResult>() == 40, "HostSocketSetTimeoutResult size mismatch");
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<HostSocketSetTimeoutResult>() == 8, "HostSocketSetTimeoutResult alignment mismatch");
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostSocketSetTimeoutResult, tag) == 32, "HostSocketSetTimeoutResult tag offset mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostSocketSetTimeoutResult>() == 20, "HostSocketSetTimeoutResult size mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<HostSocketSetTimeoutResult>() == 4, "HostSocketSetTimeoutResult alignment mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostSocketSetTimeoutResult, tag) == 16, "HostSocketSetTimeoutResult tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -2868,6 +2868,61 @@ pub struct HostTcpSetNodelayArgs {
     pub arg1: bool,
 }
 
+/// Arguments for Host.tls_connect!
+/// Roc signature: Str, Str, Str, U64 => Try(Host.Socket, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTlsConnectArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+    pub arg3: u64,
+}
+
+/// Arguments for Host.tls_ignore_unexpected_eof!
+/// Roc signature: Host.Socket, Bool => Try({}, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTlsIgnoreUnexpectedEofArgs {
+    pub arg0: *mut u64,
+    pub arg1: bool,
+}
+
+/// Arguments for Host.tls_listen!
+/// Roc signature: Str, Str, Str => Try(Host.Socket, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTlsListenArgs {
+    pub arg0: RocStr,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+}
+
+/// Arguments for Host.tls_wrap_client!
+/// Roc signature: Host.Socket, Str, Str => Try(Host.Socket, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTlsWrapClientArgs {
+    pub arg0: *mut u64,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+}
+
+/// Arguments for Host.tls_wrap_server!
+/// Roc signature: Host.Socket, Str, Str => Try(Host.Socket, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTlsWrapServerArgs {
+    pub arg0: *mut u64,
+    pub arg1: RocStr,
+    pub arg2: RocStr,
+}
+
 /// Arguments for Host.udp_bind!
 /// Roc signature: Str => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
@@ -2978,6 +3033,21 @@ pub type HostTcpListenResultTag = HostSocketAcceptResultTag;
 pub type HostTcpSetNodelayResult = HostSocketSetTimeoutResult;
 pub type HostTcpSetNodelayResultPayload = HostSocketSetTimeoutResultPayload;
 pub type HostTcpSetNodelayResultTag = HostSocketSetTimeoutResultTag;
+pub type HostTlsConnectResult = HostSocketAcceptResult;
+pub type HostTlsConnectResultPayload = HostSocketAcceptResultPayload;
+pub type HostTlsConnectResultTag = HostSocketAcceptResultTag;
+pub type HostTlsIgnoreUnexpectedEofResult = HostSocketSetTimeoutResult;
+pub type HostTlsIgnoreUnexpectedEofResultPayload = HostSocketSetTimeoutResultPayload;
+pub type HostTlsIgnoreUnexpectedEofResultTag = HostSocketSetTimeoutResultTag;
+pub type HostTlsListenResult = HostSocketAcceptResult;
+pub type HostTlsListenResultPayload = HostSocketAcceptResultPayload;
+pub type HostTlsListenResultTag = HostSocketAcceptResultTag;
+pub type HostTlsWrapClientResult = HostSocketAcceptResult;
+pub type HostTlsWrapClientResultPayload = HostSocketAcceptResultPayload;
+pub type HostTlsWrapClientResultTag = HostSocketAcceptResultTag;
+pub type HostTlsWrapServerResult = HostSocketAcceptResult;
+pub type HostTlsWrapServerResultPayload = HostSocketAcceptResultPayload;
+pub type HostTlsWrapServerResultTag = HostSocketAcceptResultTag;
 pub type HostUdpBindResult = HostSocketAcceptResult;
 pub type HostUdpBindResultPayload = HostSocketAcceptResultPayload;
 pub type HostUdpBindResultTag = HostSocketAcceptResultTag;
@@ -3261,6 +3331,49 @@ unsafe impl RocRelease<IOErr> for IOErrRelease {
     }
 }
 
+impl HostSocketSetTimeoutResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostSocketSetTimeoutResultTag::Err => {
+                let payload = unsafe { value.take_payload_err_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            HostSocketSetTimeoutResultTag::Ok => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostSocketSetTimeoutResultTag::Err => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostSocketSetTimeoutResultTag::Ok => {},
+        }
+    }
+}
+
+pub struct HostSocketSetTimeoutResultRelease;
+
+unsafe impl RocRelease<HostSocketSetTimeoutResult> for HostSocketSetTimeoutResultRelease {
+    unsafe fn release(value: HostSocketSetTimeoutResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl HostSocketReadResult {
     /// Recursively decrement Roc-owned payloads.
     ///
@@ -3306,49 +3419,6 @@ pub struct HostSocketReadResultRelease;
 
 unsafe impl RocRelease<HostSocketReadResult> for HostSocketReadResultRelease {
     unsafe fn release(value: HostSocketReadResult, roc_host: &RocHost) {
-        unsafe { value.decref(roc_host); }
-    }
-}
-
-impl HostSocketSetTimeoutResult {
-    /// Recursively decrement Roc-owned payloads.
-    ///
-    /// # Safety
-    /// `self` must own one live Roc reference for each refcounted payload.
-    pub unsafe fn decref(self, roc_host: &RocHost) {
-        let mut value = self;
-        let _ = roc_host;
-        match value.tag {
-            HostSocketSetTimeoutResultTag::Err => {
-                let payload = unsafe { value.take_payload_err_unchecked() };
-                unsafe { payload.decref(roc_host); }
-            },
-            HostSocketSetTimeoutResultTag::Ok => {},
-        }
-    }
-
-    /// Increment Roc-owned payloads.
-    ///
-    /// # Safety
-    /// `self` must point at live Roc allocations. The retained references must
-    /// be balanced by later decrefs.
-    pub unsafe fn incref(self, amount: isize) {
-        let value = self;
-        let _ = amount;
-        match value.tag {
-            HostSocketSetTimeoutResultTag::Err => {
-                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
-                unsafe { payload.incref(amount); }
-            },
-            HostSocketSetTimeoutResultTag::Ok => {},
-        }
-    }
-}
-
-pub struct HostSocketSetTimeoutResultRelease;
-
-unsafe impl RocRelease<HostSocketSetTimeoutResult> for HostSocketSetTimeoutResultRelease {
-    unsafe fn release(value: HostSocketSetTimeoutResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -4009,6 +4079,54 @@ unsafe extern "C" {
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_tcp_set_nodelay(arg0: *mut u64, arg1: bool) -> HostSocketSetTimeoutResult;
+
+    /// Hosted symbol for Host.tls_connect!
+    /// Roc signature: Str, Str, Str, U64 => Try(Host.Socket, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tls_connect(arg0: RocStr, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostSocketAcceptResult;
+
+    /// Hosted symbol for Host.tls_ignore_unexpected_eof!
+    /// Roc signature: Host.Socket, Bool => Try({}, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tls_ignore_unexpected_eof(arg0: *mut u64, arg1: bool) -> HostSocketSetTimeoutResult;
+
+    /// Hosted symbol for Host.tls_listen!
+    /// Roc signature: Str, Str, Str => Try(Host.Socket, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tls_listen(arg0: RocStr, arg1: RocStr, arg2: RocStr) -> HostSocketAcceptResult;
+
+    /// Hosted symbol for Host.tls_wrap_client!
+    /// Roc signature: Host.Socket, Str, Str => Try(Host.Socket, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tls_wrap_client(arg0: *mut u64, arg1: RocStr, arg2: RocStr) -> HostSocketAcceptResult;
+
+    /// Hosted symbol for Host.tls_wrap_server!
+    /// Roc signature: Host.Socket, Str, Str => Try(Host.Socket, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tls_wrap_server(arg0: *mut u64, arg1: RocStr, arg2: RocStr) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.udp_bind!
     /// Roc signature: Str => Try(Host.Socket, IOErr)

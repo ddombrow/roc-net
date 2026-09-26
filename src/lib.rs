@@ -13,6 +13,7 @@ mod roc_platform_abi;
 mod sockets;
 mod tasks;
 mod time;
+mod tls;
 mod net;
 mod random;
 

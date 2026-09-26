@@ -38,13 +38,32 @@ detect_native_target() {
     fi
 }
 
+# The host's C dependencies (AWS-LC, via rustls) need a C compiler for the
+# target. For Linux musl targets, use Zig as the cross-compiler.
+with_cross_c_compiler() {
+    local target_name=$1; shift
+    local rust_triple=$(get_rust_triple "$target_name")
+    local env_triple=$(echo "$rust_triple" | tr '-' '_')
+    case "$target_name" in
+        x64musl) zig_target="x86_64-linux-musl" ;;
+        arm64musl) zig_target="aarch64-linux-musl" ;;
+        *) "$@"; return ;;
+    esac
+    if ! command -v zig >/dev/null; then
+        echo "Building for $target_name needs zig as a C cross-compiler (https://ziglang.org)" >&2
+        exit 1
+    fi
+    local scripts="$(cd "$(dirname "$0")" && pwd)/scripts"
+    env "CC_${env_triple}=${scripts}/zig-cc" "AR_${env_triple}=${scripts}/zig-ar" ZIG_CC_TARGET="$zig_target" "$@"
+}
+
 # Build for a specific target (cross-compile)
 build_target_cross() {
     local target_name=$1
     local rust_triple=$(get_rust_triple "$target_name")
 
     echo "Building for $target_name ($rust_triple)..."
-    cargo build --release --locked --lib --target "$rust_triple"
+    with_cross_c_compiler "$target_name" cargo build --release --locked --lib --target "$rust_triple"
 
     mkdir -p "platform/targets/$target_name"
     cp "target/$rust_triple/release/libhost.a" "platform/targets/$target_name/"

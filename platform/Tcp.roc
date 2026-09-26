@@ -110,6 +110,11 @@ Tcp := [].{
 			Err(err) => Err(TcpErr(err))
 		}
 
+	## The host socket behind a stream, for `Tls.wrap_client!` and
+	## `Tls.wrap_server!`. Not useful to applications.
+	to_socket : Stream -> Host.Socket
+	to_socket = |Stream.(stream)| stream
+
 	tcp_err : Try(ok, IOErr) -> Try(ok, [TcpErr(IOErr)])
 	tcp_err = |result|
 		match result {

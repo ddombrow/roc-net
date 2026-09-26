@@ -20,6 +20,19 @@ Host := [].{
 	unix_listen! : Str => Try(Socket, IOErr)
 	unix_connect! : Str => Try(Socket, IOErr)
 	udp_bind! : Str => Try(Socket, IOErr)
+	## Connect and complete a TLS handshake. An empty `server_name` means the
+	## address's host; an empty `ca_file` means Mozilla's root certificates.
+	tls_connect! : Str, Str, Str, U64 => Try(Socket, IOErr)
+	## Listen for TLS connections using the certificate chain and private key
+	## in these PEM files.
+	tls_listen! : Str, Str, Str => Try(Socket, IOErr)
+	## Let a TLS stream treat a connection closed without close_notify as a
+	## normal end of stream.
+	tls_ignore_unexpected_eof! : Socket, Bool => Try({}, IOErr)
+	## Upgrade a connected TCP stream to TLS as the client (STARTTLS).
+	tls_wrap_client! : Socket, Str, Str => Try(Socket, IOErr)
+	## Upgrade a connected TCP stream to TLS as the server (STARTTLS).
+	tls_wrap_server! : Socket, Str, Str => Try(Socket, IOErr)
 
 	## Accept a connection on a TCP or Unix listener.
 	socket_accept! : Socket => Try(Socket, IOErr)

@@ -7,6 +7,8 @@ Started from [roc-platform-template-rust](https://github.com/lukewilliamboswell/
 ## Requirements
 
 - [Rust](https://rustup.rs/) (the toolchain is pinned in `rust-toolchain.toml`)
+- [Zig](https://ziglang.org), only for `just build-all`: it cross-compiles the
+  host's C dependency (AWS-LC, used by TLS) for Linux
 - Roc `nightly-2026-09-24-f45bfbe`, the compiler pinned in `platform/main.roc`
 
 Common tasks use [just](https://github.com/casey/just). Run `just` to list them.
@@ -40,6 +42,11 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   - `Unix.Listener`: `accept!`, `local_addr!`; deletes its socket file when it closes
   - `Unix.Stream`: the same methods as `Tcp.Stream` except `set_nodelay!`
   - Errors are `UnixErr(IOErr)`.
+- `Tls.connect!`, `Tls.connect_with!`, `Tls.listen!`: TLS over TCP (rustls)
+  - `Tls.Stream`: the same methods as `Tcp.Stream`, plus `ignore_unexpected_eof!`
+  - `Tls.client_config.with_ca_file(...)`, `.with_server_name(...)`, `.with_timeout(...)`
+  - `Tls.wrap_client!`, `Tls.wrap_server!`: upgrade a TCP connection (STARTTLS)
+  - Errors are `TlsErr(IOErr)`; certificate problems arrive as `TlsErr(Other(message))`.
 - `Udp.bind!`: UDP sockets
   - `Udp.Socket`: `send_to!`, `recv_from!`, `connect!`, `send!`, `recv!`,
     `set_read_timeout!`, `set_write_timeout!`, `set_broadcast!`,
@@ -50,14 +57,14 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     until the peer hangs up; `fold_lines!`, `fold_frames!` also carry state
     from one message to the next
   - `reader` / `reader_with_max`, then `read_line!`, `read_until!`,
-    `read_exactly!`, `read_frame!`, each returning the result and the updated
+    `read_exactly!`, `read_frame!`, `read_to_end!`, each returning the result and the updated
     reader: `(line, $reader) = $reader.read_line!()?`
   - `write_frame!`: write a 4-byte big-endian length, then the bytes
 - `Bytes`: encode and decode `U16`/`U32`/`U64`, big- and little-endian:
   `u32_be` to encode, `take_u32_be` to decode from the front of a list, and
   `u32_be_at` to decode at an offset; plus `take`, `take_u8`, `u8_at`, `bytes_at`
-- `Random`: `u8!()` ... `u64!()`, `bytes!(n)`, `between!(low, high)`, from the
-  OS's secure random source (`/dev/urandom`)
+- `Random`: `u8!()` ... `u64!()`, `bytes!(n)`, `between!(low, high)`,
+  cryptographically secure
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
   `Duration`s (`Time.millis(500)`, `.to_micros()`, ...)
 - `Dns.resolve!`: a host name's IP addresses, from the OS resolver
@@ -96,6 +103,7 @@ just run udp_client 127.0.0.1:8081 "hello"
 just run line_server 127.0.0.1:8082                   # then: nc 127.0.0.1 8082, type "ADD 2 40"
 
 just run chat_server 127.0.0.1:8083                   # then nc 127.0.0.1 8083 from a few terminals
+just run https_get https://example.com/               # a tiny curl over TLS
 just run dns_client gmail.com MX                      # a small dig: any record type, any server
 just run tcp_ping example.com 443 -c 4                # ping, timing TCP handshakes instead of ICMP
 
@@ -123,4 +131,8 @@ just run unix_client /tmp/echo.sock "hello"
 - Platform Roc code must never `Box.unbox` or re-box a socket handle. The
   compiler can reuse an unboxed box's memory in place, which would bypass
   `roc_dealloc` and leak the socket.
+- The host depends on `rustls` (with the `aws-lc-rs` crypto provider, which
+  bundles AWS-LC's C code) and `webpki-roots` (Mozilla's root certificates).
+  `Random` uses the same provider's secure random generator.
+- TLS tests use `examples/net_tests/certs`, made by `scripts/make_test_certs.sh`.
 - `Tcp.Stream.read!` caps a single read at 64 KiB regardless of the requested maximum.

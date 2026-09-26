@@ -9,6 +9,7 @@ import pf.Stdout
 import pf.Task
 import pf.Tcp
 import pf.Time
+import pf.Tls
 import pf.Udp
 import pf.Unix
 
@@ -56,6 +57,11 @@ main! = |_args| {
 		check!("channel: send fails once the receiver is gone", channel_receiver_gone!),
 		check!("channel: reply channels sent through a channel", channel_reply!),
 		check!("channel: undelivered values are freed", channel_frees_values!),
+		check!("tls: round trip, same helpers as TCP", tls_round_trip!),
+		check!("tls: rejects an untrusted certificate", tls_untrusted!),
+		check!("tls: rejects the wrong server name", tls_wrong_name!),
+		check!("tls: full duplex, 1 MB each way at once", tls_full_duplex!),
+		check!("tls: STARTTLS upgrade of a TCP connection", tls_starttls!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -665,4 +671,114 @@ strand! = |stream| {
 		Marker => Ok({})
 		Conn(_) => Err(Unexpected("received the stream before the marker"))
 	}
+}
+
+# TLS tests use the certificates in examples/net_tests/certs (made by
+# scripts/make_test_certs.sh), so run them from the repository root.
+test_ca = "examples/net_tests/certs/ca.pem"
+test_server_cert = { cert_file: "examples/net_tests/certs/server.pem", key_file: "examples/net_tests/certs/server-key.pem" }
+trusting_test_ca = Tls.client_config.with_ca_file(test_ca)
+
+tls_listen_anywhere! = || {
+	listener = Tls.listen!("127.0.0.1:0", test_server_cert)?
+	address = listener.local_addr!()?
+	Ok((listener, address))
+}
+
+# `serve_length!` and `exchange!` were written for TCP and Unix streams.
+tls_round_trip! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	serve_length!(listener)?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	expect_eq(exchange!(client, "hello over tls")?, "got 14 bytes")
+}
+
+## A TLS server that accepts one connection and waits for it to end, ignoring
+## errors (the client is expected to abandon the handshake).
+tls_serve_quietly! = |listener|
+	Task.spawn!(|| {
+		stream = listener.accept!()?
+		_ = stream.read!(16)
+		Ok({})
+	})
+
+expect_tls_rejected! = |result, reason| {
+	match result {
+		Err(TlsErr(Other(message))) if Str.contains(message, reason) => Ok({})
+		other => Err(Unexpected("expected a rejection mentioning ${reason}, got ${Str.inspect(other)}"))
+	}
+}
+
+# Mozilla's roots don't include the test CA.
+tls_untrusted! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	tls_serve_quietly!(listener)?
+	expect_tls_rejected!(Tls.connect!(address), "UnknownIssuer")
+}
+
+# The certificate is for localhost and 127.0.0.1, not example.com.
+tls_wrong_name! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	tls_serve_quietly!(listener)?
+	expect_tls_rejected!(Tls.connect_with!(address, trusting_test_ca.with_server_name("example.com")), "not valid for name")
+}
+
+# One task sends 1 MB while this one reads the echo at the same time. If the
+# two directions blocked each other, the buffers would fill and this would
+# hang (the read timeout turns that into a failure).
+tls_full_duplex! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	Task.spawn!(|| {
+		stream = listener.accept!()?
+		while True {
+			bytes = stream.read!(16384)?
+			if List.is_empty(bytes) {
+				break
+			}
+			stream.write!(bytes)?
+		}
+		Ok({})
+	})?
+
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	client.set_read_timeout!(Millis(10000))?
+	chunk = List.repeat(42, 16384)
+	Task.spawn!(|| {
+		for _ in U64.until(0, 64) {
+			client.write!(chunk)?
+		}
+		client.shutdown!(Write)
+	})?
+	var $received = 0
+	var $all_42 = True
+	while True {
+		bytes = client.read!(65536)?
+		if List.is_empty(bytes) {
+			break
+		}
+		$received = $received + List.len(bytes)
+		if List.any(bytes, |b| b != 42) {
+			$all_42 = False
+		}
+	}
+	expect_eq(($received, $all_42), (1048576, True))
+}
+
+# Plain TCP until the client asks to upgrade, then TLS on the same connection.
+tls_starttls! = || {
+	(listener, address) = listen_anywhere!()?
+	Task.spawn!(|| {
+		plain = listener.accept!()?
+		expect_eq(Str.from_utf8_lossy(plain.read!(64)?), "STARTTLS\n")?
+		plain.write_str!("GO\n")?
+		secure = Tls.wrap_server!(plain, test_server_cert)?
+		request = read_to_end!(secure)?
+		secure.write_str!("secure: ${request}")
+	})?
+
+	plain = Tcp.connect!(address)?
+	plain.write_str!("STARTTLS\n")?
+	expect_eq(Str.from_utf8_lossy(plain.read!(64)?), "GO\n")?
+	secure = Tls.wrap_client!(plain, trusting_test_ca.with_server_name("localhost"))?
+	expect_eq(exchange!(secure, "hi")?, "secure: hi")
 }

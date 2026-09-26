@@ -39,7 +39,7 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Channel, Dns, Framing, IOErr, Random, Stdout, Stderr, Stdin, Task, Tcp, Time, Udp, Unix]
+	exposes [Bytes, Channel, Dns, Framing, IOErr, Random, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
 	packages { roc: "nightly-2026-09-24-f45bfbe" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
@@ -65,6 +65,11 @@ platform ""
 		"roc_tcp_connect": Host.tcp_connect!,
 		"roc_tcp_listen": Host.tcp_listen!,
 		"roc_tcp_set_nodelay": Host.tcp_set_nodelay!,
+		"roc_tls_connect": Host.tls_connect!,
+		"roc_tls_ignore_unexpected_eof": Host.tls_ignore_unexpected_eof!,
+		"roc_tls_listen": Host.tls_listen!,
+		"roc_tls_wrap_client": Host.tls_wrap_client!,
+		"roc_tls_wrap_server": Host.tls_wrap_server!,
 		"roc_udp_bind": Host.udp_bind!,
 		"roc_udp_connect": Host.udp_connect!,
 		"roc_udp_join_multicast": Host.udp_join_multicast!,
@@ -93,6 +98,7 @@ import Dns
 import Framing
 import Tcp
 import Time
+import Tls
 import Udp
 import Unix
 import Host

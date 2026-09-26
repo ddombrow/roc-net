@@ -13,6 +13,14 @@ pub enum Socket {
     UnixListener(OwnedUnixListener),
     UnixStream(UnixStream),
     Udp(UdpSocket),
+    TlsListener(TlsListener),
+    Tls(crate::tls::TlsStream),
+}
+
+/// A TCP listener whose connections speak TLS with this configuration.
+pub struct TlsListener {
+    pub listener: TcpListener,
+    pub config: std::sync::Arc<rustls::ServerConfig>,
 }
 
 /// A Unix listener that deletes its socket file when it closes, so the path

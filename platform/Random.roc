@@ -1,11 +1,11 @@
 import Bytes
 import Host
 
-## Random numbers from the operating system's cryptographically secure source
-## (`/dev/urandom`), suitable for IDs, nonces, keys, and anything an attacker
-## must not be able to predict.
+## Cryptographically secure random numbers (from the same generator the
+## platform's TLS uses, seeded by the operating system), suitable for IDs,
+## nonces, keys, and anything an attacker must not be able to predict.
 ##
-## If the OS source is unavailable, the program stops with an error message.
+## If the generator fails, the program stops with an error message.
 Random := [].{
 
 	## `count` random bytes.

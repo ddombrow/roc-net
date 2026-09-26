@@ -1,0 +1,9 @@
+#!/bin/sh
+# C compiler for cross-building the host's C dependencies (AWS-LC) to Linux
+# musl targets with Zig: `zig cc -target $ZIG_CC_TARGET`. cc-rs adds a
+# Rust-style --target=..., which Zig doesn't understand, so drop it.
+for arg in "$@"; do
+    shift
+    case "$arg" in --target=*) ;; *) set -- "$@" "$arg" ;; esac
+done
+exec zig cc -target "$ZIG_CC_TARGET" "$@"

@@ -329,6 +329,10 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
         let accepted = match listener {
             Socket::TcpListener(l) => Socket::TcpStream(accept_retrying(|| l.accept())?.0),
             Socket::UnixListener(l) => Socket::UnixStream(accept_retrying(|| l.listener.accept())?.0),
+            Socket::TlsListener(l) => {
+                let tcp = accept_retrying(|| l.listener.accept())?.0;
+                Socket::Tls(crate::tls::server(tcp, l.config.clone())?)
+            }
             _ => return Err(wrong_kind("accept")),
         };
         Ok(slot.insert(accepted))
@@ -346,6 +350,7 @@ pub extern "C" fn roc_socket_read(socket: *mut u64, max: u64) -> HostSocketReadR
             Socket::TcpStream(s) => (&mut &*s).read(&mut buf)?,
             Socket::UnixStream(s) => (&mut &*s).read(&mut buf)?,
             Socket::Udp(s) => s.recv(&mut buf)?,
+            Socket::Tls(s) => s.read(&mut buf)?,
             _ => return Err(wrong_kind("read")),
         };
         Ok(roc_bytes(&buf[..len]))
@@ -361,6 +366,7 @@ pub extern "C" fn roc_socket_write(socket: *mut u64, bytes: RocListWith<u8, fals
             Socket::TcpStream(s) => (&mut &*s).write_all(data)?,
             Socket::UnixStream(s) => (&mut &*s).write_all(data)?,
             Socket::Udp(s) => check_datagram_sent(s.send(data)?, data.len())?,
+            Socket::Tls(s) => s.write_all(data)?,
             _ => return Err(wrong_kind("write")),
         }
         Ok(())
@@ -391,6 +397,7 @@ pub extern "C" fn roc_socket_shutdown(socket: *mut u64, how: u8) -> HostSocketSe
         match socket {
             Socket::TcpStream(s) => s.shutdown(how)?,
             Socket::UnixStream(s) => s.shutdown(how)?,
+            Socket::Tls(s) => s.shutdown(how)?,
             _ => return Err(wrong_kind("shutdown")),
         }
         Ok(())
@@ -410,6 +417,8 @@ pub extern "C" fn roc_socket_set_timeout(socket: *mut u64, which: u8, timeout_ms
             (Socket::UnixStream(s), false) => s.set_write_timeout(timeout)?,
             (Socket::Udp(s), true) => s.set_read_timeout(timeout)?,
             (Socket::Udp(s), false) => s.set_write_timeout(timeout)?,
+            (Socket::Tls(s), true) => s.tcp().set_read_timeout(timeout)?,
+            (Socket::Tls(s), false) => s.tcp().set_write_timeout(timeout)?,
             _ => return Err(wrong_kind("setting a timeout")),
         }
         Ok(())
@@ -432,6 +441,8 @@ pub extern "C" fn roc_socket_local_addr(socket: *mut u64) -> HostSocketLocalAddr
             Socket::Udp(s) => s.local_addr()?.to_string(),
             Socket::UnixListener(s) => unix_path(s.listener.local_addr()?),
             Socket::UnixStream(s) => unix_path(s.local_addr()?),
+            Socket::TlsListener(s) => s.listener.local_addr()?.to_string(),
+            Socket::Tls(s) => s.tcp().local_addr()?.to_string(),
         })
     }))
 }
@@ -444,6 +455,7 @@ pub extern "C" fn roc_socket_peer_addr(socket: *mut u64) -> HostSocketLocalAddrR
             Socket::TcpStream(s) => s.peer_addr()?.to_string(),
             Socket::Udp(s) => s.peer_addr()?.to_string(),
             Socket::UnixStream(s) => unix_path(s.peer_addr()?),
+            Socket::Tls(s) => s.tcp().peer_addr()?.to_string(),
             _ => return Err(wrong_kind("peer_addr")),
         })
     }))
@@ -454,6 +466,7 @@ pub extern "C" fn roc_socket_peer_addr(socket: *mut u64) -> HostSocketLocalAddrR
 pub extern "C" fn roc_tcp_set_nodelay(socket: *mut u64, enabled: bool) -> HostSocketSetTimeoutResult {
     unit_result(with_socket(socket, |socket| match socket {
         Socket::TcpStream(s) => Ok(s.set_nodelay(enabled)?),
+        Socket::Tls(s) => Ok(s.tcp().set_nodelay(enabled)?),
         _ => Err(wrong_kind("set_nodelay")),
     }))
 }
@@ -593,4 +606,98 @@ pub extern "C" fn roc_dns_resolve(name: RocStr) -> HostDnsResolveResult {
         result,
         |addresses| ManuallyDrop::new(roc_str_list(&addresses))
     )
+}
+
+// --- TLS ---
+
+/// Hosted function: Host.tls_connect!
+#[no_mangle]
+pub extern "C" fn roc_tls_connect(
+    address: RocStr,
+    server_name: RocStr,
+    ca_file: RocStr,
+    timeout_ms: u64,
+) -> HostSocketAcceptResult {
+    let result = with_str(address, |address| {
+        with_str(server_name, |server_name| {
+            with_str(ca_file, |ca_file| {
+                open_socket(|| {
+                    let tcp = tcp_connect(address, timeout_ms)?;
+                    let name = if server_name.is_empty() { crate::tls::host_of(address) } else { server_name };
+                    let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms));
+                    Ok(Socket::Tls(crate::tls::client(tcp, name, ca_file, timeout)?))
+                })
+            })
+        })
+    });
+    handle_result(result)
+}
+
+/// Hosted function: Host.tls_listen!
+#[no_mangle]
+pub extern "C" fn roc_tls_listen(address: RocStr, cert_file: RocStr, key_file: RocStr) -> HostSocketAcceptResult {
+    let result = with_str(address, |address| {
+        with_str(cert_file, |cert_file| {
+            with_str(key_file, |key_file| {
+                open_socket(|| {
+                    let config = crate::tls::server_config(cert_file, key_file)?;
+                    let listener = TcpListener::bind(address)?;
+                    Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config }))
+                })
+            })
+        })
+    });
+    handle_result(result)
+}
+
+/// The TCP connection behind a plain stream handle, for upgrading to TLS.
+/// The upgraded stream gets its own handle on the same connection; the plain
+/// handle must not be used afterwards, or it would read or write raw bytes in
+/// the middle of the TLS session.
+fn plain_tcp(socket: &Socket) -> NetResult<TcpStream> {
+    match socket {
+        Socket::TcpStream(s) => Ok(s.try_clone()?),
+        _ => Err(wrong_kind("upgrading to TLS")),
+    }
+}
+
+/// Hosted function: Host.tls_wrap_client!
+#[no_mangle]
+pub extern "C" fn roc_tls_wrap_client(socket: *mut u64, server_name: RocStr, ca_file: RocStr) -> HostSocketAcceptResult {
+    let result = with_str(server_name, |server_name| {
+        with_str(ca_file, |ca_file| {
+            with_socket(socket, |socket| {
+                let tcp = plain_tcp(socket)?;
+                open_socket(|| Ok(Socket::Tls(crate::tls::client(tcp, server_name, ca_file, None)?)))
+            })
+        })
+    });
+    handle_result(result)
+}
+
+/// Hosted function: Host.tls_wrap_server!
+#[no_mangle]
+pub extern "C" fn roc_tls_wrap_server(socket: *mut u64, cert_file: RocStr, key_file: RocStr) -> HostSocketAcceptResult {
+    let result = with_str(cert_file, |cert_file| {
+        with_str(key_file, |key_file| {
+            with_socket(socket, |socket| {
+                let tcp = plain_tcp(socket)?;
+                let config = crate::tls::server_config(cert_file, key_file)?;
+                open_socket(|| Ok(Socket::Tls(crate::tls::server(tcp, config)?)))
+            })
+        })
+    });
+    handle_result(result)
+}
+
+/// Hosted function: Host.tls_ignore_unexpected_eof!
+#[no_mangle]
+pub extern "C" fn roc_tls_ignore_unexpected_eof(socket: *mut u64, ignore: bool) -> HostSocketSetTimeoutResult {
+    unit_result(with_socket(socket, |socket| match socket {
+        Socket::Tls(s) => {
+            s.set_ignore_unexpected_eof(ignore);
+            Ok(())
+        }
+        _ => Err(wrong_kind("ignore_unexpected_eof")),
+    }))
 }
