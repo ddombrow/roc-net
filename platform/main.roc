@@ -39,7 +39,7 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [IOErr, Stdout, Stderr, Stdin, Task, Tcp]
+	exposes [IOErr, Stdout, Stderr, Stdin, Task, Tcp, Udp, Unix]
 	packages { roc: "nightly-2026-09-24-f45bfbe" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
@@ -47,17 +47,25 @@ platform ""
 		"roc_stdin_line": Host.stdin_line!,
 		"roc_stdout_line": Host.stdout_line!,
 		"roc_task_spawn": Host.task_spawn!,
-		"roc_tcp_accept": Host.tcp_accept!,
+		"roc_socket_accept": Host.socket_accept!,
+		"roc_socket_local_addr": Host.socket_local_addr!,
+		"roc_socket_peer_addr": Host.socket_peer_addr!,
+		"roc_socket_read": Host.socket_read!,
+		"roc_socket_set_timeout": Host.socket_set_timeout!,
+		"roc_socket_shutdown": Host.socket_shutdown!,
+		"roc_socket_write": Host.socket_write!,
 		"roc_tcp_connect": Host.tcp_connect!,
 		"roc_tcp_listen": Host.tcp_listen!,
-		"roc_tcp_listener_local_addr": Host.tcp_listener_local_addr!,
-		"roc_tcp_local_addr": Host.tcp_local_addr!,
-		"roc_tcp_peer_addr": Host.tcp_peer_addr!,
-		"roc_tcp_read": Host.tcp_read!,
 		"roc_tcp_set_nodelay": Host.tcp_set_nodelay!,
-		"roc_tcp_set_timeout": Host.tcp_set_timeout!,
-		"roc_tcp_shutdown": Host.tcp_shutdown!,
-		"roc_tcp_write": Host.tcp_write!,
+		"roc_udp_bind": Host.udp_bind!,
+		"roc_udp_connect": Host.udp_connect!,
+		"roc_udp_join_multicast": Host.udp_join_multicast!,
+		"roc_udp_leave_multicast": Host.udp_leave_multicast!,
+		"roc_udp_recv_from": Host.udp_recv_from!,
+		"roc_udp_send_to": Host.udp_send_to!,
+		"roc_udp_set_broadcast": Host.udp_set_broadcast!,
+		"roc_unix_connect": Host.unix_connect!,
+		"roc_unix_listen": Host.unix_listen!,
 	}
 	targets: {
 		inputs_dir: "targets/",
@@ -72,6 +80,8 @@ import Stderr
 import Stdin
 import Task
 import Tcp
+import Udp
+import Unix
 import Host
 import IOErr
 

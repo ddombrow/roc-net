@@ -2,33 +2,48 @@ import IOErr
 
 ## Internal hosted-effect boundary used by the platform wrappers.
 ##
-## Applications should import `Stdout`, `Stderr`, `Stdin`, and `Tcp` instead.
+## Applications should import the public modules (`Tcp`, `Udp`, `Unix`, ...) instead.
 Host := [].{
 	stderr_line! : Str => Try({}, [StderrErr(Str)])
 	stdin_line! : {} => Try(Str, [StdinErr(Str)])
 	stdout_line! : Str => Try({}, [StdoutErr(Str)])
 
-	## Host-owned sockets. The host closes one when Roc releases its last
-	## reference. Platform code must never `Box.unbox` or re-box these.
-	TcpListener :: Box(U64)
-	TcpStream :: Box(U64)
+	## A host-owned socket of any kind (TCP or Unix listener or stream, UDP
+	## socket); the public modules wrap it in distinct types. The host closes it
+	## when Roc releases the last reference. Platform code must never
+	## `Box.unbox` or re-box one.
+	Socket :: Box(U64)
 
-	tcp_listen! : Str => Try(TcpListener, IOErr)
-	tcp_accept! : TcpListener => Try(TcpStream, IOErr)
-	tcp_listener_local_addr! : TcpListener => Try(Str, IOErr)
-	## Connect, giving up after `timeout_ms` milliseconds.
-	tcp_connect! : Str, U64 => Try(TcpStream, IOErr)
-	## Read up to `max` bytes. An empty list means the peer closed the stream.
-	tcp_read! : TcpStream, U64 => Try(List(U8), IOErr)
-	## Write all bytes.
-	tcp_write! : TcpStream, List(U8) => Try({}, IOErr)
-	## Shut down reading (0), writing (1), or both (2).
-	tcp_shutdown! : TcpStream, U8 => Try({}, IOErr)
+	tcp_listen! : Str => Try(Socket, IOErr)
+	## Connect, giving up after `timeout_ms` milliseconds (0 means no timeout).
+	tcp_connect! : Str, U64 => Try(Socket, IOErr)
+	unix_listen! : Str => Try(Socket, IOErr)
+	unix_connect! : Str => Try(Socket, IOErr)
+	udp_bind! : Str => Try(Socket, IOErr)
+
+	## Accept a connection on a TCP or Unix listener.
+	socket_accept! : Socket => Try(Socket, IOErr)
+	## Read up to `max` bytes from a stream (an empty list means the peer closed
+	## it), or receive one datagram on a connected UDP socket.
+	socket_read! : Socket, U64 => Try(List(U8), IOErr)
+	## Write all bytes to a stream, or send one datagram on a connected UDP socket.
+	socket_write! : Socket, List(U8) => Try({}, IOErr)
+	## Shut down reading (0), writing (1), or both (2) on a stream.
+	socket_shutdown! : Socket, U8 => Try({}, IOErr)
 	## Set the read (0) or write (1) timeout in milliseconds; 0 means none.
-	tcp_set_timeout! : TcpStream, U8, U64 => Try({}, IOErr)
-	tcp_set_nodelay! : TcpStream, Bool => Try({}, IOErr)
-	tcp_local_addr! : TcpStream => Try(Str, IOErr)
-	tcp_peer_addr! : TcpStream => Try(Str, IOErr)
+	socket_set_timeout! : Socket, U8, U64 => Try({}, IOErr)
+	socket_local_addr! : Socket => Try(Str, IOErr)
+	socket_peer_addr! : Socket => Try(Str, IOErr)
+	tcp_set_nodelay! : Socket, Bool => Try({}, IOErr)
+
+	## Set the default destination for `socket_write!` and filter what
+	## `socket_read!` receives to datagrams from that address.
+	udp_connect! : Socket, Str => Try({}, IOErr)
+	udp_send_to! : Socket, List(U8), Str => Try({}, IOErr)
+	udp_recv_from! : Socket, U64 => Try({ bytes : List(U8), from : Str }, IOErr)
+	udp_set_broadcast! : Socket, Bool => Try({}, IOErr)
+	udp_join_multicast! : Socket, Str => Try({}, IOErr)
+	udp_leave_multicast! : Socket, Str => Try({}, IOErr)
 
 	## Start running a task on a new thread. Returns False at the task limit.
 	task_spawn! : Box(() => {}) => Bool

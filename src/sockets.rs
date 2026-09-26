@@ -1,6 +1,8 @@
 //! Sockets owned by Roc through `Box(U64)` handles (see `resource.rs`).
 
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, UdpSocket};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use crate::resource::{Full, Reservation, ResourceHeap};
@@ -8,6 +10,22 @@ use crate::resource::{Full, Reservation, ResourceHeap};
 pub enum Socket {
     TcpListener(TcpListener),
     TcpStream(TcpStream),
+    UnixListener(OwnedUnixListener),
+    UnixStream(UnixStream),
+    Udp(UdpSocket),
+}
+
+/// A Unix listener that deletes its socket file when it closes, so the path
+/// can be reused.
+pub struct OwnedUnixListener {
+    pub listener: UnixListener,
+    pub path: PathBuf,
+}
+
+impl Drop for OwnedUnixListener {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 fn heap() -> &'static ResourceHeap<Socket> {
@@ -27,22 +45,8 @@ pub fn reserve() -> Reservation<'static, Socket> {
 
 /// # Safety
 /// The caller must own a live Roc reference to `handle` while using the result.
-pub unsafe fn listener<'a>(handle: *mut u64) -> Result<&'a TcpListener, String> {
-    match unsafe { heap().get(handle) } {
-        Ok(Socket::TcpListener(listener)) => Ok(listener),
-        Ok(_) => Err("handle is not a TCP listener".into()),
-        Err(_) => Err("invalid socket handle".into()),
-    }
-}
-
-/// # Safety
-/// The caller must own a live Roc reference to `handle` while using the result.
-pub unsafe fn stream<'a>(handle: *mut u64) -> Result<&'a TcpStream, String> {
-    match unsafe { heap().get(handle) } {
-        Ok(Socket::TcpStream(stream)) => Ok(stream),
-        Ok(_) => Err("handle is not a TCP stream".into()),
-        Err(_) => Err("invalid socket handle".into()),
-    }
+pub unsafe fn get<'a>(handle: *mut u64) -> Option<&'a Socket> {
+    unsafe { heap().get(handle) }.ok()
 }
 
 /// Called by `roc_dealloc`. Returns true if `ptr` was a socket slot, which is

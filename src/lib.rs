@@ -11,7 +11,7 @@ mod resource;
 mod roc_platform_abi;
 mod sockets;
 mod tasks;
-mod tcp;
+mod net;
 
 use crate::roc_platform_abi::{
     make_roc_host, roc_main, DefaultAllocators, DefaultHandlers, HostStderrLineResult,

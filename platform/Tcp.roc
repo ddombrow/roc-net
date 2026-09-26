@@ -11,12 +11,12 @@ import IOErr
 Tcp := [].{
 
 	## A socket bound to a local address, waiting for connections.
-	Listener :: Host.TcpListener.{
+	Listener :: Host.Socket.{
 
 		## Block until a client connects.
 		accept! : Listener => Try(Stream, [TcpErr(IOErr)])
 		accept! = |Listener.(listener)|
-			match Host.tcp_accept!(listener) {
+			match Host.socket_accept!(listener) {
 				Ok(stream) => Ok(Stream.(stream))
 				Err(err) => Err(TcpErr(err))
 			}
@@ -24,20 +24,20 @@ Tcp := [].{
 		## The address this listener is bound to, such as `"127.0.0.1:8080"`.
 		## After listening on port 0, this tells you which port the OS chose.
 		local_addr! : Listener => Try(Str, [TcpErr(IOErr)])
-		local_addr! = |Listener.(listener)| tcp_err(Host.tcp_listener_local_addr!(listener))
+		local_addr! = |Listener.(listener)| tcp_err(Host.socket_local_addr!(listener))
 	}
 
 	## A connected TCP stream.
-	Stream :: Host.TcpStream.{
+	Stream :: Host.Socket.{
 
 		## Read up to `max` bytes. Returns an empty list once the peer has closed
 		## its side of the connection.
 		read! : Stream, U64 => Try(List(U8), [TcpErr(IOErr)])
-		read! = |Stream.(stream), max| tcp_err(Host.tcp_read!(stream, max))
+		read! = |Stream.(stream), max| tcp_err(Host.socket_read!(stream, max))
 
 		## Write all of `bytes` to the stream.
 		write! : Stream, List(U8) => Try({}, [TcpErr(IOErr)])
-		write! = |Stream.(stream), bytes| tcp_err(Host.tcp_write!(stream, bytes))
+		write! = |Stream.(stream), bytes| tcp_err(Host.socket_write!(stream, bytes))
 
 		## Write `text` encoded as UTF-8.
 		write_str! : Stream, Str => Try({}, [TcpErr(IOErr)])
@@ -54,7 +54,7 @@ Tcp := [].{
 					Write => 1
 					Both => 2
 				}
-			tcp_err(Host.tcp_shutdown!(stream, code))
+			tcp_err(Host.socket_shutdown!(stream, code))
 		}
 
 		## Close the connection now instead of waiting for the stream to be
@@ -62,17 +62,17 @@ Tcp := [].{
 		## end of the stream, and later reads and writes fail.
 		close! : Stream => {}
 		close! = |Stream.(stream)| {
-			_ = Host.tcp_shutdown!(stream, 2)
+			_ = Host.socket_shutdown!(stream, 2)
 			{}
 		}
 
 		## Make reads fail with `TimedOut` if no data arrives in time.
 		set_read_timeout! : Stream, [NoTimeout, Millis(U64)] => Try({}, [TcpErr(IOErr)])
-		set_read_timeout! = |Stream.(stream), timeout| tcp_err(Host.tcp_set_timeout!(stream, 0, timeout_ms(timeout)))
+		set_read_timeout! = |Stream.(stream), timeout| tcp_err(Host.socket_set_timeout!(stream, 0, timeout_ms(timeout)))
 
 		## Make writes fail with `TimedOut` if the peer stops accepting data.
 		set_write_timeout! : Stream, [NoTimeout, Millis(U64)] => Try({}, [TcpErr(IOErr)])
-		set_write_timeout! = |Stream.(stream), timeout| tcp_err(Host.tcp_set_timeout!(stream, 1, timeout_ms(timeout)))
+		set_write_timeout! = |Stream.(stream), timeout| tcp_err(Host.socket_set_timeout!(stream, 1, timeout_ms(timeout)))
 
 		## Send small writes immediately instead of batching them (disables
 		## Nagle's algorithm). Useful for interactive protocols.
@@ -81,11 +81,11 @@ Tcp := [].{
 
 		## This end's address, such as `"127.0.0.1:52814"`.
 		local_addr! : Stream => Try(Str, [TcpErr(IOErr)])
-		local_addr! = |Stream.(stream)| tcp_err(Host.tcp_local_addr!(stream))
+		local_addr! = |Stream.(stream)| tcp_err(Host.socket_local_addr!(stream))
 
 		## The other end's address.
 		peer_addr! : Stream => Try(Str, [TcpErr(IOErr)])
-		peer_addr! = |Stream.(stream)| tcp_err(Host.tcp_peer_addr!(stream))
+		peer_addr! = |Stream.(stream)| tcp_err(Host.socket_peer_addr!(stream))
 	}
 
 	## Listen on `address`, such as `"127.0.0.1:8080"`. Use port 0 to let the

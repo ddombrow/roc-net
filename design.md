@@ -114,7 +114,7 @@ chosen per operation and documented.
 | --- | --- |
 | `Tcp` | `listen!`, `connect!`; `Listener.accept!`; `Stream` read/write methods, `shutdown!` (half-close), `set_nodelay!`, addresses |
 | `Udp` | `bind!`; `Socket.send_to!`, `recv_from!`; `connect!` then `send!`/`recv!`; broadcast, multicast join/leave |
-| `Unix` | stream `listen!`/`connect!` (same `Stream` methods as `Tcp`), datagram sockets, filesystem paths; Linux abstract names later |
+| `Unix` | stream `listen!`/`connect!` (same `Stream` methods as `Tcp`) on filesystem paths; datagram sockets and Linux abstract names later |
 | `Dns` | `resolve!` a host name to a list of addresses, via the OS resolver |
 | `Task` | `spawn!`, and later `Channel` |
 | `Time` | `sleep!`, monotonic `now!`, deadlines |
@@ -125,19 +125,31 @@ chosen per operation and documented.
 
 ### Shared stream methods
 
-Every stream type provides:
+Every stream type (`Tcp.Stream`, `Unix.Stream`) provides these, with its
+module's error tag (`TcpErr(IOErr)`, `UnixErr(IOErr)`):
 
 ```roc
-read! : s, U64 => Try(List(U8), IOErr)     # up to n bytes; [] means EOF
-write! : s, List(U8) => Try({}, IOErr)     # all bytes
-shutdown! : s, [Read, Write, Both] => Try({}, IOErr)
-set_read_timeout! : s, [NoTimeout, Millis(U64)] => {}
-set_write_timeout! : s, [NoTimeout, Millis(U64)] => {}
+read! : s, U64 => Try(List(U8), _)         # up to n bytes; [] means EOF
+write! : s, List(U8) => Try({}, _)         # all bytes
+write_str! : s, Str => Try({}, _)
+shutdown! : s, [Read, Write, Both] => Try({}, _)
+set_read_timeout! : s, [NoTimeout, Millis(U64)] => Try({}, _)
+set_write_timeout! : s, [NoTimeout, Millis(U64)] => Try({}, _)
+local_addr! : s => Try(Str, _)
+peer_addr! : s => Try(Str, _)
 close! : s => {}
 ```
 
-`Framing` is written against these with `where` clauses, so it covers every
-current and future stream type.
+A function that only calls these methods needs no annotation: Roc infers it
+as generic over any type that has them. `examples/net_tests` uses the same
+unannotated `read_to_end!` and `exchange!` helpers with TCP and Unix streams.
+`Framing` will work the same way, so it covers every current and future
+stream type.
+
+On the host side, every kind of socket is one `Host.Socket` handle, and one
+set of hosted functions (`socket_read!`, `socket_write!`, ...) serves all of
+them, checking the socket's kind at runtime. The public modules wrap that
+handle in distinct opaque types, so apps can't mix the kinds up.
 
 ### Errors
 
@@ -193,12 +205,14 @@ linker inputs don't cover it.
 1. **TCP basics (done).** Blocking listen/accept/connect/read/write/close with
    string errors and an echo server/client.
 2. **Solid TCP (done).** `IOErr`, read/write/connect timeouts, `shutdown!`,
-   addresses, `set_nodelay!`, and `examples/tcp_tests` (`just test`), which
+   addresses, `set_nodelay!`, and `examples/tcp_tests` (now `net_tests`, `just test`), which
    runs servers and clients together in one process.
 3. **Tasks (done).** `Task.spawn!` on OS threads. A concurrent echo server and a
    TCP proxy (two tasks per connection pair). Validates cross-thread closures.
-4. **Unix + UDP.** `Unix` streams sharing the stream methods; `Udp`
-   datagrams.
+4. **Unix + UDP (done).** `Unix` streams sharing the stream methods (a
+   listener deletes its socket file when it closes, and `listen!` replaces a
+   leftover file nothing is listening on); `Udp` datagrams with connect,
+   timeouts, broadcast, and multicast. Unix datagram sockets are deferred.
 5. **Framing + Bytes.** A pure-Roc buffered reader and codecs, with examples:
    a line-based request/response protocol and a length-prefixed RPC.
 6. **ARC handles (done).** Automatic close, bounded socket heap.

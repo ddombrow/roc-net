@@ -296,3 +296,36 @@ time,commit,label,server,scenario,metric,value
 2026-09-26T08:11:10,3d4a434-dirty,shed at limits,tokio,hold_10000,hit_limit,False
 2026-09-26T08:11:10,3d4a434-dirty,shed at limits,tokio,hold_10000,rss_mib,55.7
 2026-09-26T08:11:10,3d4a434-dirty,shed at limits,tokio,hold_10000,server_survived,True
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_1,requests_per_sec,67410
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_1,p50_us,14
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_1,p99_us,23
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_1,errors,0
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_1,rss_mib,3.4
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_1,server_survived,True
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_1,cpu_us_per_op,4.86
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_64,requests_per_sec,164546
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_64,p50_us,380
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_64,p99_us,485
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_64,errors,0
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_64,rss_mib,4.9
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_64,server_survived,True
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,pingpong_64,cpu_us_per_op,11.93
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_1,mib_per_sec,1777.2
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_1,errors,0
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_1,rss_mib,3.4
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_1,server_survived,True
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_1,cpu_us_per_op,571.2
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_16,mib_per_sec,837.3
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_16,errors,0
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_16,rss_mib,5.9
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_16,server_survived,True
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,bulk_16,cpu_us_per_op,1146.24
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,churn_32,conns_per_sec,36159
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,churn_32,errors,0
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,churn_32,rss_mib,4.7
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,churn_32,server_survived,True
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,churn_32,cpu_us_per_op,32.48
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,hold_10000,max_open_conns,6143
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,hold_10000,hit_limit,True
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,hold_10000,rss_mib,31.9
+2026-09-26T08:30:12,976c6c9-dirty,m4: shared socket functions,roc,hold_10000,server_survived,True

@@ -17,7 +17,7 @@ just build                 # build the Rust host
 just check                 # type-check every example
 just build-examples        # build every example into target/examples/
 just run hello_world       # run an example
-just test                  # TCP tests (examples/tcp_tests) + smoke test
+just test                  # TCP/Unix/UDP tests (examples/net_tests) + smoke test
 just smoke                 # echo server + client round trip
 just docs                  # API reference in target/docs/index.html
 ```
@@ -36,6 +36,15 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     `set_read_timeout!`, `set_write_timeout!`, `set_nodelay!`, `local_addr!`, `peer_addr!`
   - Errors are `TcpErr(IOErr)`, so you can match specific cases such as
     `Err(TcpErr(ConnectionRefused))` or `Err(TcpErr(TimedOut))`.
+- `Unix.listen!`, `Unix.connect!`: Unix domain stream sockets on a file path
+  - `Unix.Listener`: `accept!`, `local_addr!`; deletes its socket file when it closes
+  - `Unix.Stream`: the same methods as `Tcp.Stream` except `set_nodelay!`
+  - Errors are `UnixErr(IOErr)`.
+- `Udp.bind!`: UDP sockets
+  - `Udp.Socket`: `send_to!`, `recv_from!`, `connect!`, `send!`, `recv!`,
+    `set_read_timeout!`, `set_write_timeout!`, `set_broadcast!`,
+    `join_multicast!`, `leave_multicast!`, `local_addr!`, `peer_addr!`
+  - Errors are `UdpErr(IOErr)`.
 - `Task.spawn!`: run a closure concurrently on its own thread
 
 Sockets close automatically when Roc drops the last reference to them, including
@@ -61,6 +70,12 @@ the OS may allow fewer: about 6,100 on macOS.
 just run tcp_echo_concurrent 127.0.0.1:8080          # in one terminal
 just run tcp_client 127.0.0.1:8080 "hello"           # in another
 just run tcp_proxy 127.0.0.1:9000 127.0.0.1:8080     # proxy in front of the echo server
+
+just run udp_echo_server 127.0.0.1:8081
+just run udp_client 127.0.0.1:8081 "hello"
+
+just run unix_echo_server /tmp/echo.sock
+just run unix_client /tmp/echo.sock "hello"
 ```
 
 ## Adding a hosted effect

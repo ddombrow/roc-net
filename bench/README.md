@@ -65,3 +65,4 @@ Averages of the two `baseline` runs in `results.csv`. Those runs used
 | Run label | Change | Effect |
 | --- | --- | --- |
 | `shed at limits` | At the task limit, drop the connection instead of exiting; limits configurable, default 10,000 tasks | roc holds 6,143 connections (the macOS thread limit, same as `threads`) and survives, instead of exiting at 1,024. Other scenarios unchanged within noise. |
+| `m4: shared socket functions` | One set of hosted functions for TCP, Unix, and UDP sockets | No change within noise. |

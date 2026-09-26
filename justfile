@@ -109,8 +109,8 @@ smoke: build (build-example "tcp_echo_concurrent") (build-example "tcp_client")
     [ "$reply" = "Received: smoke test" ]
 
 # Run the test examples, then the smoke test
-test: (build-example "tcp_tests") smoke
-    {{bin_dir}}/tcp_tests
+test: (build-example "net_tests") smoke
+    {{bin_dir}}/net_tests
 
 # Benchmark against Rust baselines and record results: just bench --label "what changed"
 bench *args:
