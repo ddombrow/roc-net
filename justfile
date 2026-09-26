@@ -1,5 +1,8 @@
 # Run `just` to list recipes.
 
+# Pass recipe arguments through as "$@" so quoted arguments keep their spaces.
+set positional-arguments
+
 # Use the project-local compiler installed by `just setup`.
 export PATH := justfile_directory() / ".tools" + ":" + env("PATH")
 
@@ -68,7 +71,7 @@ check example="":
 
 # Build the host, then run an example: just run tcp_client 127.0.0.1:8080 hi
 run example *args: build
-    roc examples/{{example}}/main.roc -- {{args}}
+    shift && roc examples/{{example}}/main.roc -- "$@"
 
 # Build an example to target/examples/<name>
 build-example example: build
@@ -111,11 +114,11 @@ test: (build-example "tcp_tests") smoke
 
 # Benchmark against Rust baselines and record results: just bench --label "what changed"
 bench *args:
-    python3 bench/run.py {{args}}
+    python3 bench/run.py "$@"
 
 # Show roc-net's recorded benchmark results over time
 bench-history *metrics:
-    python3 bench/run.py history {{metrics}}
+    python3 bench/run.py history "$@"
 
 # Generate API docs from the platform's doc comments into target/docs/
 docs:

@@ -23,8 +23,10 @@ fn main() {
     let listener = TcpListener::bind(&address).expect("bind");
     for stream in listener.incoming() {
         match stream {
+            // If the OS won't start another thread, drop this connection
+            // (like roc-net does) instead of panicking.
             Ok(stream) => {
-                std::thread::spawn(move || echo(stream));
+                let _ = std::thread::Builder::new().spawn(move || echo(stream));
             }
             Err(err) => eprintln!("accept: {err}"),
         }

@@ -23,7 +23,7 @@ an error.
 | `pingpong_1`, `pingpong_64` | 1 or 64 connections, each sending 64 bytes and waiting for the echo | requests/s, p50/p99 latency |
 | `bulk_1`, `bulk_16` | 1 or 16 connections streaming 64 KiB writes | MiB/s |
 | `churn_32` | 32 workers connecting, echoing 16 bytes, and disconnecting | connections/s |
-| `hold_5000` | Open up to 5,000 connections and keep them open | how many were served, and whether the server survived |
+| `hold_10000` | Open up to 10,000 connections and keep them open | how many were served, and whether the server survived |
 
 Every scenario gets a freshly started server. `cpu_us_per_op` is the server's
 total CPU time (user + system) divided by requests, MiB, or connections.
@@ -35,8 +35,9 @@ total CPU time (user + system) divided by requests, MiB, or connections.
   before the servers do: all three servers reach about the same requests/s.
   CPU per operation still shows what each server spends.
 - **Noise:** between identical runs, `cpu_us_per_op` varies by about 3% for
-  pingpong and churn and up to 10% for `bulk_1`. `bulk_16` varies by about
-  15% in both throughput and CPU, so treat small changes there as noise.
+  pingpong and churn and up to 10% for `bulk_1`. `bulk_16` throughput varies
+  by as much as 25%, and p99 latency with 64 connections occasionally spikes,
+  so check a surprising number by rerunning that scenario before believing it.
 - Results depend on the machine; compare runs from the same one.
 - The load generator resets connections instead of closing them, because
   closed connections sit in TIME_WAIT and tens of thousands of them exhaust
@@ -56,4 +57,11 @@ total CPU time (user + system) divided by requests, MiB, or connections.
 | churn_32 CPU µs/connection | 31.6 | 36.1 | 26.5 |
 | hold_5000 connections served | **1,024 (server exited)** | 5,000 | 5,000 |
 
-Averages of the two `baseline` runs in `results.csv`.
+Averages of the two `baseline` runs in `results.csv`. Those runs used
+`hold_5000`; later runs use `hold_10000`.
+
+## Changes
+
+| Run label | Change | Effect |
+| --- | --- | --- |
+| `shed at limits` | At the task limit, drop the connection instead of exiting; limits configurable, default 10,000 tasks | roc holds 6,143 connections (the macOS thread limit, same as `threads`) and survives, instead of exiting at 1,024. Other scenarios unchanged within noise. |

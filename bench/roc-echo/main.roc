@@ -17,10 +17,10 @@ main! = |args| {
 	listener = Tcp.listen!(address)?
 	while True {
 		stream = listener.accept!()?
-		Task.spawn!(|| {
+		_ = Task.spawn!(|| {
 			_ = echo!(stream)
 			Ok({})
-		})?
+		})
 	}
 	Ok({})
 }

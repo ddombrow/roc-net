@@ -53,8 +53,14 @@ Task.spawn! : (() => {}) => Try({}, [TaskLimitReached])
   immutable and refcounts are atomic, so this is a constraint on host
   resources, not on Roc values.)
 - Blocking effects block only the calling task.
-- Live tasks are bounded. Spawning past the limit fails with a typed error
-  rather than queueing without bound.
+- Live tasks are bounded. Spawning past the limit (or when the OS refuses a
+  thread) fails with `TaskLimitReached` and releases the closure, so anything
+  it captured, such as a connection, is closed. Spawning never waits or
+  queues: with a thread per task, that deadlocks tasks that depend on each
+  other. A proxy's connection task spawns the task for the other direction;
+  if every slot is held by a task waiting to spawn, none ever finishes.
+  Servers shed load by ignoring the error in their accept loop
+  (`_ = Task.spawn!(...)`), and must not end `main!` on it.
 - An uncaught task error is logged to stderr and ends only that task.
 
 **Implementation, phase 1: OS threads.** Each task runs on its own thread from
@@ -87,8 +93,11 @@ checks the token, so a handle whose slot was reused is rejected.
 
 `Stream.close!` shuts a stream down early (for example, so a task blocked
 reading it wakes up); the socket itself is freed when its last reference goes.
-Listeners have no `close!`. The heap holds 4096 sockets; past that, creating
-one fails with an error.
+Listeners have no `close!`. When the socket heap is full, `listen!` and
+`connect!` fail with `TooManySockets`, while `accept!` waits for a slot, so
+new clients wait in the kernel's accept queue (backpressure) rather than
+being accepted and dropped. `accept!` also retries errors that only mean "try
+again" (an aborted connection, or being out of file descriptors).
 
 Invariant: platform Roc code never `Box.unbox`es or re-boxes a handle. The
 compiler's box-reuse rewrite (`lir/box_reuse.zig`) only fires on
@@ -150,15 +159,20 @@ Addresses are strings at the API edge (`"127.0.0.1:8080"`, `"[::1]:53"`,
 port. A structured `SocketAddr` type can be added later if parsing in Roc
 proves common.
 
-## Limits and timeouts (initial defaults)
+## Limits and timeouts
 
-| Limit | Default |
-| --- | ---: |
-| Single read | 64 KiB |
-| Open handles | 4096 |
-| Live tasks | 1024 |
-| Read/write timeout | none (opt in per stream) |
-| Connect timeout | 30 s |
+| Limit | Default | Set with |
+| --- | ---: | --- |
+| Live tasks | 10,000 | `ROC_NET_MAX_TASKS` |
+| Open sockets | 16,384 (at most 65,535) | `ROC_NET_MAX_SOCKETS` |
+| Single read | 64 KiB | – |
+| Read/write timeout | none | `set_read_timeout!`, `set_write_timeout!` |
+| Connect timeout | 30 s | `connect_timeout!` |
+
+The OS may impose lower limits. With a thread per task, macOS allows about
+6,100 concurrent tasks (6,144 threads per process), which is where the
+benchmark's `hold_10000` scenario tops out. Limits are read at startup, and
+an invalid value is reported and replaced by the default.
 
 ## Targets
 

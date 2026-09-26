@@ -21,7 +21,8 @@ main! = |args| {
 
 	while True {
 		stream = listener.accept!()?
-		Task.spawn!(|| echo!(stream))?
+		# At the task limit this fails and drops the connection; the server keeps going.
+		_ = Task.spawn!(|| echo!(stream))
 	}
 
 	Ok({})

@@ -21,11 +21,12 @@ main! = |args| {
 
 	while True {
 		client = listener.accept!()?
-		Task.spawn!(|| {
+		# At the task limit this fails and drops the connection; the proxy keeps going.
+		_ = Task.spawn!(|| {
 			upstream = Tcp.connect!(upstream_address)?
 			Task.spawn!(|| pipe!(client, upstream))?
 			pipe!(upstream, client)
-		})?
+		})
 	}
 
 	Ok({})

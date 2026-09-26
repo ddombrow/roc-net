@@ -38,7 +38,7 @@ SCENARIOS = [
     ("bulk_1", "bulk", ["--conns", "1"]),
     ("bulk_16", "bulk", ["--conns", "16"]),
     ("churn_32", "churn", ["--conns", "32"]),
-    ("hold_5000", "hold", ["--conns", "5000"]),
+    ("hold_10000", "hold", ["--conns", "10000"]),
 ]
 
 # Metrics shown in the summary; lower is better for latency.

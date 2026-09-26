@@ -3,9 +3,7 @@
 use std::net::{TcpListener, TcpStream};
 use std::sync::OnceLock;
 
-use crate::resource::ResourceHeap;
-
-const MAX_SOCKETS: usize = 4096;
+use crate::resource::{Full, Reservation, ResourceHeap};
 
 pub enum Socket {
     TcpListener(TcpListener),
@@ -14,14 +12,17 @@ pub enum Socket {
 
 fn heap() -> &'static ResourceHeap<Socket> {
     static HEAP: OnceLock<ResourceHeap<Socket>> = OnceLock::new();
-    HEAP.get_or_init(|| ResourceHeap::new(MAX_SOCKETS))
+    HEAP.get_or_init(|| ResourceHeap::new(crate::limits::max_sockets()))
 }
 
-/// Hand a new socket to Roc.
-pub fn insert(socket: Socket) -> Result<*mut u64, String> {
-    heap()
-        .insert(socket)
-        .map_err(|_| format!("too many open sockets (limit {MAX_SOCKETS})"))
+/// Claim a slot for a new socket, or fail if the limit is reached.
+pub fn try_reserve() -> Result<Reservation<'static, Socket>, Full> {
+    heap().try_reserve()
+}
+
+/// Claim a slot for a new socket, waiting for one to be released if needed.
+pub fn reserve() -> Reservation<'static, Socket> {
+    heap().reserve()
 }
 
 /// # Safety

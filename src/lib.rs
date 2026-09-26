@@ -6,6 +6,7 @@ use std::ffi::c_void;
 use std::io::{self, BufRead, Write};
 use std::mem::ManuallyDrop;
 
+mod limits;
 mod resource;
 mod roc_platform_abi;
 mod sockets;
@@ -258,6 +259,9 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const i8) -> i32 {
 /// Main entry point for the Roc program.
 pub fn rust_main() -> i32 {
     ignore_sigpipe();
+    // Read the limits now so a bad setting is reported at startup.
+    limits::max_tasks();
+    limits::max_sockets();
 
     // Leaked so it stays valid for tasks that are still running when `main!` returns.
     let roc_host: &'static mut RocHost = Box::leak(Box::new(RocHost {

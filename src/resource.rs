@@ -17,7 +17,7 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::{offset_of, MaybeUninit};
 use core::sync::atomic::{AtomicIsize, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Condvar, Mutex, MutexGuard};
 
 const INDEX_BITS: u32 = 16;
 const INDEX_MASK: u64 = (1 << INDEX_BITS) - 1;
@@ -38,6 +38,8 @@ struct State {
 pub struct ResourceHeap<T> {
     slots: Box<[Slot<T>]>,
     state: Mutex<State>,
+    /// Signalled whenever a slot returns to the free list.
+    slot_freed: Condvar,
 }
 
 // Slot state is guarded by `state`. A live resource is only reached through a
@@ -71,25 +73,33 @@ impl<T> ResourceHeap<T> {
                 generations: vec![0; capacity],
                 live: vec![false; capacity],
             }),
+            slot_freed: Condvar::new(),
         }
     }
 
-    /// Store `resource` and return the payload pointer Roc will own, with one
-    /// reference.
-    pub fn insert(&self, resource: T) -> Result<*mut u64, Full> {
-        let mut state = self.lock();
-        let index = state.free.pop().ok_or(Full)?;
-        let generation = state.generations[index] + 1;
-        state.generations[index] = generation;
-        state.live[index] = true;
+    /// Claim a free slot, or fail if there is none.
+    pub fn try_reserve(&self) -> Result<Reservation<'_, T>, Full> {
+        let index = self.lock().free.pop().ok_or(Full)?;
+        Ok(Reservation { heap: self, index: Some(index) })
+    }
 
-        let slot = &self.slots[index];
-        unsafe {
-            (*slot.resource.get()).write(resource);
-            *slot.token.get() = (generation << INDEX_BITS) | index as u64;
+    /// Claim a free slot, waiting for one to be released if the heap is full.
+    pub fn reserve(&self) -> Reservation<'_, T> {
+        let mut state = self.lock();
+        loop {
+            if let Some(index) = state.free.pop() {
+                return Reservation { heap: self, index: Some(index) };
+            }
+            state = self
+                .slot_freed
+                .wait(state)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
-        slot.refcount.store(1, Ordering::Release);
-        Ok(slot.token.get())
+    }
+
+    fn free_slot(&self, index: usize) {
+        self.lock().free.push(index);
+        self.slot_freed.notify_one();
     }
 
     /// Borrow the resource behind a handle.
@@ -137,7 +147,7 @@ impl<T> ResourceHeap<T> {
         // Closing may block, so do it outside the lock and only then make the
         // slot available again.
         drop(resource);
-        self.lock().free.push(index);
+        self.free_slot(index);
         true
     }
 
@@ -163,5 +173,42 @@ impl<T> ResourceHeap<T> {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// A slot claimed for a resource that is not created yet. Dropping it without
+/// calling `insert` returns the slot to the heap.
+pub struct Reservation<'a, T> {
+    heap: &'a ResourceHeap<T>,
+    index: Option<usize>,
+}
+
+impl<T> Reservation<'_, T> {
+    /// Store `resource` in the slot and return the payload pointer Roc will own,
+    /// with one reference.
+    pub fn insert(mut self, resource: T) -> *mut u64 {
+        let index = self.index.take().expect("reservation used once");
+        let heap = self.heap;
+        let mut state = heap.lock();
+        let generation = state.generations[index] + 1;
+        state.generations[index] = generation;
+        state.live[index] = true;
+        drop(state);
+
+        let slot = &heap.slots[index];
+        unsafe {
+            (*slot.resource.get()).write(resource);
+            *slot.token.get() = (generation << INDEX_BITS) | index as u64;
+        }
+        slot.refcount.store(1, Ordering::Release);
+        slot.token.get()
+    }
+}
+
+impl<T> Drop for Reservation<'_, T> {
+    fn drop(&mut self) {
+        if let Some(index) = self.index.take() {
+            self.heap.free_slot(index);
+        }
     }
 }

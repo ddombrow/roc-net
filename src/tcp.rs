@@ -162,16 +162,50 @@ fn with_listener<T>(
     result
 }
 
-fn insert(socket: Socket) -> Result<*mut u64, NetErr> {
-    sockets::insert(socket).map_err(|_| NetErr::TooManySockets)
+/// Warn once per process that the file-descriptor limit is throttling accepts.
+fn warn_out_of_fds() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "roc-net: out of file descriptors; waiting before accepting more connections \
+             (raise the limit with `ulimit -n`)"
+        );
+    }
+}
+
+/// Accept one connection. Errors that only mean "try again" are retried here
+/// rather than returned, so a server's accept loop doesn't end over them.
+fn accept(listener: &TcpListener) -> io::Result<TcpStream> {
+    // EMFILE / ENFILE: this process / the system is out of file descriptors.
+    const EMFILE: i32 = 24;
+    const ENFILE: i32 = 23;
+    loop {
+        match listener.accept() {
+            Ok((stream, _peer)) => return Ok(stream),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted
+                ) => {}
+            Err(err) if matches!(err.raw_os_error(), Some(EMFILE | ENFILE)) => {
+                warn_out_of_fds();
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => return Err(err),
+        }
+    }
 }
 
 /// Hosted function: Host.tcp_listen!
 #[no_mangle]
 pub extern "C" fn roc_tcp_listen(address: RocStr) -> HostTcpListenResult {
-    let result = TcpListener::bind(address.as_str())
-        .map_err(NetErr::from)
-        .and_then(|listener| insert(Socket::TcpListener(listener)));
+    let result = sockets::try_reserve()
+        .map_err(|_| NetErr::TooManySockets)
+        .and_then(|slot| {
+            let listener = TcpListener::bind(address.as_str())?;
+            Ok(slot.insert(Socket::TcpListener(listener)))
+        });
     unsafe { address.decref(roc_host()) };
     handle_result!(
         HostTcpListenResult,
@@ -188,8 +222,12 @@ pub extern "C" fn roc_tcp_listen(address: RocStr) -> HostTcpListenResult {
 #[no_mangle]
 pub extern "C" fn roc_tcp_accept(listener: *mut u64) -> HostTcpAcceptResult {
     let result = with_listener(listener, |listener| {
-        let (stream, _peer) = listener.accept()?;
-        insert(Socket::TcpStream(stream))
+        // Wait for a free socket slot before accepting, so at the limit new
+        // clients wait in the kernel's accept queue instead of being accepted
+        // and immediately dropped.
+        let slot = sockets::reserve();
+        let stream = accept(listener)?;
+        Ok(slot.insert(Socket::TcpStream(stream)))
     });
     handle_result!(
         HostTcpAcceptResult,
@@ -234,7 +272,12 @@ fn connect(address: &str, timeout_ms: u64) -> Result<TcpStream, NetErr> {
 /// Hosted function: Host.tcp_connect!
 #[no_mangle]
 pub extern "C" fn roc_tcp_connect(address: RocStr, timeout_ms: u64) -> HostTcpConnectResult {
-    let result = connect(address.as_str(), timeout_ms).and_then(|stream| insert(Socket::TcpStream(stream)));
+    let result = sockets::try_reserve()
+        .map_err(|_| NetErr::TooManySockets)
+        .and_then(|slot| {
+            let stream = connect(address.as_str(), timeout_ms)?;
+            Ok(slot.insert(Socket::TcpStream(stream)))
+        });
     unsafe { address.decref(roc_host()) };
     handle_result!(
         HostTcpAcceptResult,

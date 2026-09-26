@@ -46,6 +46,15 @@ for example to wake a task blocked reading the same stream. Handles are Roc
 
 The app provides `main! : List(Str) => Try({}, [Exit(I32), ..])`.
 
+### Limits
+
+`ROC_NET_MAX_TASKS` (default 10,000) caps concurrent tasks, and
+`ROC_NET_MAX_SOCKETS` (default 16,384) caps open sockets. At the task limit
+`Task.spawn!` fails; a server should ignore that error to drop the one
+connection rather than stop (`_ = Task.spawn!(|| handle!(stream))`). At the
+socket limit `accept!` waits for a free slot. Each task is an OS thread, so
+the OS may allow fewer: about 6,100 on macOS.
+
 ## Examples
 
 ```bash
