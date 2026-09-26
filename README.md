@@ -48,7 +48,11 @@ Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
 Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 
 - `Stdout.line!`, `Stderr.line!`, `Stdin.line!`: line-based standard I/O
-- `Tcp.listen!`, `Tcp.connect!`, `Tcp.connect_timeout!`: blocking TCP sockets
+- `Tcp.listen!`, `Tcp.listen_with!`, `Tcp.connect!`, `Tcp.connect_timeout!`: blocking TCP sockets
+  - Accepted streams get 60-second idle (read) and write timeouts, so a
+    client that goes quiet or stops reading can't hold a server task forever;
+    `Tcp.listen_config.with_idle_timeout(...)`, `.with_write_timeout(...)`
+    change them (also for `Unix`, and `Tls.server_config`)
   - `Tcp.Listener`: `accept!`, `local_addr!`
   - `Tcp.Stream`: `read!`, `write!`, `write_str!`, `shutdown!`, `close!`,
     `set_read_timeout!`, `set_write_timeout!`, `set_nodelay!`, `local_addr!`, `peer_addr!`
@@ -75,6 +79,10 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   - `each_line!`, `each_frame!`: handle every line or length-prefixed frame
     until the peer hangs up; `fold_lines!`, `fold_frames!` also carry state
     from one message to the next
+  - Each line, record, or frame must arrive within 60 seconds
+    (`reader.with_message_timeout(...)`), which stops a peer trickling bytes
+  - A read timeout between messages fails with `Idle(reader)`, handing the
+    reader back so the app can ping the peer and carry on (see `chat_server`)
   - `reader` / `reader_with_max`, then `read_line!`, `read_until!`,
     `read_exactly!`, `read_frame!`, `read_to_end!`, each returning the result and the updated
     reader: `(line, $reader) = $reader.read_line!()?`

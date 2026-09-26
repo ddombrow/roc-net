@@ -11,7 +11,9 @@ import pf.Tcp
 # Usage: chat_server [ADDRESS]
 #
 # Connect with `nc 127.0.0.1 8080` from several terminals. Type a name, then
-# chat. `/who` lists who's here and `/quit` leaves.
+# chat. `/who` lists who's here and `/quit` leaves. After a minute of
+# silence the server asks if you're still there; stay quiet another minute
+# and it disconnects you.
 #
 # One hub task owns the list of users and does all broadcasting, so nothing
 # else touches shared state. Each connection has a reader task, which turns
@@ -38,6 +40,8 @@ main! = |args| {
 	(events, hub_inbox) = Channel.new!(256)?
 	Task.spawn!(|| hub!(hub_inbox))?
 
+	# Accepted streams time out a read after 60 seconds of silence (the
+	# default); `serve!` turns that into a "still there?" check.
 	listener = Tcp.listen!(address)?
 	Stdout.line!("Chat server listening on ${address}")?
 
@@ -99,7 +103,7 @@ name_of = |users, id|
 	}
 
 ## One connection: ask for a name, start a writer, then forward lines to the
-## hub until the user quits or hangs up.
+## hub until the user quits, hangs up, or stops answering.
 serve! = |stream, id, hub| {
 	stream.write_str!("Welcome! What's your name?\n")?
 	(name, reader) = Framing.reader_with_max(stream, 4096).read_line!()?
@@ -116,12 +120,7 @@ serve! = |stream, id, hub| {
 	})?
 	hub.send!(Join({ id, name: if Str.is_empty(Str.trim(name)) "anonymous" else Str.trim(name), outbox }))?
 
-	result = reader.each_line!(|line|
-		match line {
-			"/quit" => Ok(Stop)
-			"/who" => hub.send!(Who(id)).map_ok(|_| Continue)
-			_ => hub.send!(Say(id, line)).map_ok(|_| Continue)
-		})
+	result = chat!(reader, id, hub, outbox)
 	# Leave even if the connection failed, so the hub forgets this user.
 	hub.send!(Leave(id))?
 	match result {
@@ -129,4 +128,41 @@ serve! = |stream, id, hub| {
 		Err(TcpErr(ConnectionReset)) => Ok({})
 		other => other
 	}
+}
+
+## Forward the user's lines to the hub, with a heartbeat: after a minute of
+## silence (the stream's idle timeout), ask whether they're still there; after
+## another silent minute, disconnect them. A person who's around answers; a
+## connection that's dead, or an idle attacker holding it open, doesn't.
+## Messages to the user go through their outbox, so the writer task keeps them
+## in order with chat lines.
+chat! = |start, id, hub, outbox| {
+	var $reader = start
+	var $warned = False
+	while True {
+		match $reader.read_line!() {
+			Ok((line, next)) => {
+				$reader = next
+				$warned = False
+				match line {
+					"/quit" => break
+					"/who" => hub.send!(Who(id))?
+					_ => hub.send!(Say(id, line))?
+				}
+			}
+			# A minute without a line: nothing is lost, so check and carry on.
+			Err(Idle(same)) => {
+				if $warned {
+					outbox.send!("* disconnecting: no reply")?
+					break
+				}
+				outbox.send!("* still there? type anything within a minute to stay")?
+				$reader = same
+				$warned = True
+			}
+			Err(EndOfStream) => break
+			Err(err) => return Err(err)
+		}
+	}
+	Ok({})
 }

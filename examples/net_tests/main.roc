@@ -74,6 +74,15 @@ main! = |_args| {
 		check!("tls server: silent client times out", tls_server_silent!),
 		check!("tls server: deadline covers only the handshake", tls_server_deadline_only_handshake!),
 		check!("tls server: STARTTLS handshake times out", tls_server_starttls_stall!),
+		check!("server: idle tcp client times out", idle_tcp!),
+		check!("server: idle unix client times out", idle_unix!),
+		check!("server: idle tls client times out after the handshake", idle_tls!),
+		check!("server: client that never reads times out a write", write_timeout!),
+		check!("framing: line trickled a byte at a time times out", framing_slowloris_line!),
+		check!("framing: frame trickled a byte at a time times out", framing_slowloris_frame!),
+		check!("framing: idle between lines hands the reader back", framing_idle_resume!),
+		check!("framing: timeout mid-line is not idle", framing_idle_mid_line!),
+		check!("framing: timeout mid-frame is not idle", framing_idle_mid_frame!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -1055,5 +1064,186 @@ framing_limit_small_frames! = || {
 	match r2.read_frame!() {
 		Err(TooLong) => Ok({})
 		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+## Run `serve!` on the next accepted stream in a task and send back its result
+## and how long it took, measured from accept.
+report_from_server! = |accept!, serve!| {
+	(report, outcome) = Channel.new!(1)?
+	Task.spawn!(|| {
+		stream = accept!()?
+		accepted = Time.now!()
+		result = serve!(stream)
+		report.send!((Str.inspect(result), accepted.elapsed!()))
+	})?
+	Ok(outcome)
+}
+
+## The server's result must mention `expected` and have taken at least
+## `min_ms` (and not so long it looks like a hang).
+expect_report = |(result, took), expected, min_ms|
+	if Str.contains(result, expected) {
+		expect_duration(took, min_ms)
+	} else {
+		Err(Unexpected("expected ${expected}, got ${result}"))
+	}
+
+quick_idle = Tcp.listen_config.with_idle_timeout(Millis(200))
+
+idle_tcp! = || {
+	listener = Tcp.listen_with!("127.0.0.1:0", quick_idle)?
+	address = listener.local_addr!()?
+	outcome = report_from_server!(|| listener.accept!(), |stream| stream.read!(16))?
+	silent = Tcp.connect!(address)?
+	reported = outcome.receive_timeout!(Time.seconds(5))?
+	silent.close!()
+	expect_report(reported, "TimedOut", 200)
+}
+
+idle_unix! = || {
+	path = "/tmp/roc-net-tests-idle.sock"
+	listener = Unix.listen_with!(path, Unix.listen_config.with_idle_timeout(Millis(200)))?
+	outcome = report_from_server!(|| listener.accept!(), |stream| stream.read!(16))?
+	silent = Unix.connect!(path)?
+	reported = outcome.receive_timeout!(Time.seconds(5))?
+	silent.close!()
+	expect_report(reported, "TimedOut", 200)
+}
+
+# The handshake completes, then the client says nothing.
+idle_tls! = || {
+	listener = Tls.listen!("127.0.0.1:0", test_server_cert.with_idle_timeout(Millis(200)))?
+	address = listener.local_addr!()?
+	outcome = report_from_server!(|| listener.accept!(), |stream| stream.read!(16))?
+	silent = Tls.connect_with!(address, trusting_test_ca)?
+	reported = outcome.receive_timeout!(Time.seconds(5))?
+	silent.close!()
+	expect_report(reported, "TimedOut", 200)
+}
+
+# The client never reads, so once the connection's buffers fill, the server's
+# writes block until the write timeout.
+write_timeout! = || {
+	listener = Tcp.listen_with!("127.0.0.1:0", Tcp.listen_config.with_write_timeout(Millis(200)))?
+	address = listener.local_addr!()?
+	chunk = List.repeat(7, 65536)
+	outcome = report_from_server!(
+		|| listener.accept!(),
+		|stream| {
+			while True {
+				stream.write!(chunk)?
+			}
+			Ok({})
+		},
+	)?
+	not_reading = Tcp.connect!(address)?
+	reported = outcome.receive_timeout!(Time.seconds(10))?
+	not_reading.close!()
+	match reported {
+		(result, _) if Str.contains(result, "TimedOut") => Ok({})
+		(result, _) => Err(Unexpected(result))
+	}
+}
+
+## Send `prefix`, then one byte every 50 ms until the connection breaks.
+trickle! = |address, prefix, byte| {
+	client = Tcp.connect!(address)?
+	Task.spawn!(|| {
+		client.write!(prefix)?
+		for _ in U64.until(0, 1000) {
+			Time.sleep!(Time.millis(50))
+			match client.write!([byte]) {
+				Ok({}) => {}
+				Err(_) => break
+			}
+		}
+		Ok({})
+	})
+}
+
+# Every read gets a byte in time, so the idle timeout never fires; only the
+# message timeout catches it.
+framing_slowloris_line! = || {
+	(listener, address) = listen_anywhere!()?
+	outcome = report_from_server!(
+		|| listener.accept!(),
+		|stream| Framing.reader(stream).with_message_timeout(Millis(300)).read_line!(),
+	)?
+	trickle!(address, [], 97)?
+	expect_report(outcome.receive_timeout!(Time.seconds(5))?, "MessageTimedOut", 300)
+}
+
+# A frame announcing 16 bytes whose payload trickles in.
+framing_slowloris_frame! = || {
+	(listener, address) = listen_anywhere!()?
+	outcome = report_from_server!(
+		|| listener.accept!(),
+		|stream| Framing.reader(stream).with_message_timeout(Millis(300)).read_frame!(),
+	)?
+	trickle!(address, [0, 0, 0, 16], 1)?
+	expect_report(outcome.receive_timeout!(Time.seconds(5))?, "MessageTimedOut", 300)
+}
+
+## A listener whose accepted streams time out reads after 200 ms of silence.
+quick_idle_listener! = || {
+	listener = Tcp.listen_with!("127.0.0.1:0", quick_idle)?
+	address = listener.local_addr!()?
+	Ok((listener, address))
+}
+
+# The client stays quiet until pinged. The server's read goes idle, it pings
+# with the handed-back reader, and reads the reply with it.
+framing_idle_resume! = || {
+	(listener, address) = quick_idle_listener!()?
+	outcome = report_from_server!(
+		|| listener.accept!(),
+		|stream| {
+			match Framing.reader(stream).read_line!() {
+				Err(Idle(same)) => {
+					stream.write_str!("PING\n")?
+					(reply, _) = same.read_line!()?
+					Ok(reply)
+				}
+				other => Err(Unexpected(Str.inspect(other)))
+			}
+		},
+	)?
+	client = Tcp.connect!(address)?
+	client.set_read_timeout!(Millis(5000))?
+	(ping, _) = Framing.reader(client).read_line!()?
+	expect_eq(ping, "PING")?
+	client.write_str!("PONG\n")?
+	expect_report(outcome.receive_timeout!(Time.seconds(5))?, "Ok(\"PONG\")", 200)
+}
+
+## Send `bytes` and then say nothing more (until the server has reported).
+send_then_stall! = |address, bytes, outcome| {
+	client = Tcp.connect!(address)?
+	client.write!(bytes)?
+	reported = outcome.receive_timeout!(Time.seconds(5))?
+	client.close!()
+	Ok(reported)
+}
+
+framing_idle_mid_line! = || {
+	(listener, address) = quick_idle_listener!()?
+	outcome = report_from_server!(|| listener.accept!(), |stream| Framing.reader(stream).read_line!())?
+	reported = send_then_stall!(address, Str.to_utf8("partial"), outcome)?
+	match reported {
+		(result, _) if Str.contains(result, "TcpErr(TimedOut)") => Ok({})
+		(result, _) => Err(Unexpected(result))
+	}
+}
+
+# The header announces 8 bytes, then nothing: the buffer is empty when the
+# read times out, but the frame has started, so this isn't idle.
+framing_idle_mid_frame! = || {
+	(listener, address) = quick_idle_listener!()?
+	outcome = report_from_server!(|| listener.accept!(), |stream| Framing.reader(stream).read_frame!())?
+	reported = send_then_stall!(address, [0, 0, 0, 8], outcome)?
+	match reported {
+		(result, _) if Str.contains(result, "TcpErr(TimedOut)") => Ok({})
+		(result, _) => Err(Unexpected(result))
 	}
 }

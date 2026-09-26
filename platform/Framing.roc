@@ -1,4 +1,5 @@
 import Bytes
+import Time
 
 ## Split a byte stream into messages: lines, delimited records, fixed-size
 ## chunks, or length-prefixed frames.
@@ -14,9 +15,26 @@ import Bytes
 ##
 ## For the common case of handling every message until the peer hangs up,
 ## `each_line!` and `each_frame!` run that loop for you.
+##
+## If the stream's read timeout expires between messages (before any of the
+## next one has arrived), reads fail with `Idle(reader)`, handing back the
+## reader unchanged: nothing was lost, so the app can check on the peer (say,
+## send it a ping) and carry on reading. A timeout partway through a message
+## is still an error, since part of the message has been consumed.
+##
+## ```roc
+## match reader.read_line!() {
+## 	Ok((line, next)) => ...
+## 	Err(Idle(same)) => {
+## 		stream.write_str!("PING\n")?
+## 		# ...and read again with `same`
+## 	}
+## 	Err(err) => ...
+## }
+## ```
 Framing := [].{
 
-	Reader(s) :: { stream : s, buffered : List(U8), max_len : U64 }.{
+	Reader(s) :: { stream : s, buffered : List(U8), max_len : U64, message_timeout_ns : U64 }.{
 
 		## Read up to (not including) the next `\n`, dropping a `\r` before it.
 		##
@@ -43,6 +61,7 @@ Framing := [].{
 		## delimiter) is longer than the reader's maximum length, however the
 		## bytes arrive.
 		read_until! = |Reader.(r), delimiter| {
+			started = Time.now!()
 			var $buffered = r.buffered
 			var $searched = 0
 			while True {
@@ -65,9 +84,12 @@ Framing := [].{
 							return Err(TooLong)
 						}
 						$searched = List.len($buffered)
-						chunk = r.stream.read!(4096)?
+						chunk = read_chunk!(r, List.is_empty($buffered))?
 						if List.is_empty(chunk) {
 							return if List.is_empty($buffered) Err(EndOfStream) else Err(UnexpectedEof)
+						}
+						if out_of_time!(r, started) {
+							return Err(MessageTimedOut)
 						}
 						$buffered = List.concat($buffered, chunk)
 					}
@@ -83,7 +105,7 @@ Framing := [].{
 			if count > r.max_len {
 				return Err(TooLong)
 			}
-			(bytes, rest) = take_exactly!(r, count)?
+			(bytes, rest) = take_exactly!(r, count, Time.now!(), True)?
 			Ok((bytes, Reader.(rest)))
 		}
 
@@ -111,7 +133,9 @@ Framing := [].{
 			# The header is framing, not payload, so the reader's limit (which
 			# is for payloads) doesn't apply to it: even a reader limited to
 			# fewer than 4 bytes can read small frames.
-			(header, after_header) = take_exactly!(r, 4)?
+			# Header and payload are one message, on one clock.
+			started = Time.now!()
+			(header, after_header) = take_exactly!(r, 4, started, True)?
 			(len, _) =
 				match Bytes.take_u32_be(header) {
 					Ok(decoded) => decoded
@@ -120,12 +144,17 @@ Framing := [].{
 			if len.to_u64() > r.max_len {
 				return Err(TooLong)
 			}
-			Reader.(after_header).read_exactly!(len.to_u64())
+			# Mid-frame now: a timeout here isn't idle, even with nothing
+			# buffered, since the header has been read.
+			(payload, rest) = take_exactly!(after_header, len.to_u64(), started, False)?
+			Ok((payload, Reader.(rest)))
 		}
 
 		## Call `handle!` with each line until the stream ends or `handle!`
 		## returns `Ok(Stop)`. A stream that ends cleanly between lines is a
-		## normal finish, not an error.
+		## normal finish, not an error. If the stream goes idle (see the
+		## module docs), this ends with `Err(Idle(reader))`; call
+		## `reader.each_line!(handle!)` to carry on.
 		each_line! = |reader, handle!| each!(reader, |r| r.read_line!(), handle!)
 
 		## Call `handle!` with each frame (see `read_frame!`) until the stream
@@ -140,6 +169,26 @@ Framing := [].{
 		## Like `each_frame!`, but with state carried from one frame to the
 		## next; see `fold_lines!`.
 		fold_frames! = |reader, state, step!| fold!(reader, state, |r| r.read_frame!(), step!)
+
+		## Limit how long each line, record, or frame may take to arrive; past
+		## it, the read fails with `MessageTimedOut`. The default is 60
+		## seconds. `NoTimeout` removes the limit.
+		##
+		## This stops a peer that sends a message a byte at a time to keep
+		## every individual read alive (a slowloris attack), which a stream's
+		## read timeout can't catch. It's checked each time data arrives, so a
+		## read can overrun it by up to the stream's read timeout (60 seconds
+		## by default for streams a listener accepted). `read_to_end!`
+		## doesn't use it, since a large download on a slow link can
+		## legitimately take a long time.
+		with_message_timeout = |Reader.(r), timeout| {
+			ns =
+				match timeout {
+					NoTimeout => 0
+					Millis(ms) => if ms == 0 1 else ms.times_saturated(1000000)
+				}
+			Reader.({ ..r, message_timeout_ns: ns })
+		}
 
 		## The longest line, record, or frame this reader accepts.
 		max_len = |Reader.(r)| r.max_len
@@ -216,25 +265,54 @@ Framing := [].{
 	## reads its fixed-size header here. It works on a `Reader`'s inner
 	## record, which only this module can get at, so it gives callers no way
 	## around a reader's limit.
-	take_exactly! = |r, count| {
+	take_exactly! = |r, count, started, message_start| {
 		var $buffered = r.buffered
 		while List.len($buffered) < count {
-			chunk = r.stream.read!(4096)?
+			chunk = read_chunk!(r, message_start and List.is_empty($buffered))?
 			if List.is_empty(chunk) {
 				return if List.is_empty($buffered) Err(EndOfStream) else Err(UnexpectedEof)
+			}
+			if out_of_time!(r, started) {
+				return Err(MessageTimedOut)
 			}
 			$buffered = List.concat($buffered, chunk)
 		}
 		Ok((List.take_first($buffered, count), { ..r, buffered: List.drop_first($buffered, count) }))
 	}
 
+	## Read the next chunk from the stream. If the stream's read timeout
+	## expires while `idle` (nothing of the next message has arrived), that's
+	## `Idle` with the reader handed back, since nothing is lost: the app can
+	## check on the peer and resume. Any other error passes through.
+	read_chunk! = |r, idle|
+		match r.stream.read!(4096) {
+			Ok(chunk) => Ok(chunk)
+			Err(err) =>
+				if idle and timed_out(err) {
+					Err(Idle(Reader.(r)))
+				} else {
+					Err(err)
+				}
+		}
+
+	## Whether a stream error is a read timeout, whichever kind of stream.
+	timed_out = |err|
+		match err {
+			TcpErr(TimedOut) | UnixErr(TimedOut) | TlsErr(TimedOut) => True
+			_ => False
+		}
+
+	## Whether a message that started at `started` has run past the reader's
+	## message timeout.
+	out_of_time! = |r, started| r.message_timeout_ns > 0 and started.elapsed!().to_nanos() > r.message_timeout_ns
+
 	## Wrap `stream` in a reader that accepts lines, records, and frames of up
-	## to 1 MiB.
+	## to 1 MiB, each arriving within 60 seconds (see `with_message_timeout`).
 	reader = |stream| reader_with_max(stream, 1048576)
 
 	## Wrap `stream` in a reader that accepts lines, records, and frames of up
 	## to `max_len` bytes.
-	reader_with_max = |stream, max_len| Reader.({ stream, buffered: [], max_len })
+	reader_with_max = |stream, max_len| Reader.({ stream, buffered: [], max_len, message_timeout_ns: 60000000000 })
 
 	## Write `bytes` as one frame for `read_frame!`: a 4-byte big-endian length,
 	## then the bytes.

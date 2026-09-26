@@ -212,6 +212,39 @@ Very long timeouts: `Time` saturates (`Time.seconds(U64.highest)` used to
 crash with an integer overflow in Roc) and caps at about 584 years, and the
 host treats a deadline too far off to represent as none.
 
+## Server timeouts
+
+Servers are safe by default against clients that tie up a task by being
+slow:
+
+| Attack | Defense | Default |
+| --- | --- | ---: |
+| Silent client | idle (read) timeout on every accepted stream | 60 s |
+| Client that stops reading | write timeout on every accepted stream | 60 s |
+| Slowloris during a TLS handshake | handshake deadline | 10 s |
+| Slowloris sending a line or frame a byte at a time | `Framing` message timeout | 60 s |
+
+Listeners (`Tcp.listen_config`, `Unix.listen_config`, `Tls.server_config`)
+set the first three on accepted streams; the app changes them per listener
+or per stream (`set_read_timeout!`). The idle timeout bounds each read, so a
+peer trickling bytes defeats it; the `Framing` message timeout bounds a
+whole line or frame, checked as data arrives (so it can overrun by up to one
+idle timeout). `read_to_end!` has no message timeout, since big downloads on
+slow links are legitimate. Client connections get no defaults.
+
+Quiet-but-alive clients are handled with heartbeats rather than by turning
+timeouts off. A read timeout doesn't close anything; it returns control to
+the app. `Framing` makes that usable: a timeout between messages (nothing of
+the next one received) fails with `Idle(reader)`, handing back the reader
+unchanged, so the app can check on the peer and resume; mid-message it's
+still an error. `examples/chat_server` keeps the 60 s default and, on `Idle`,
+asks "still there?", disconnecting after another silent minute, so people
+can idle and dead or hostile connections still get dropped. Other options: a
+protocol ping (PING/PONG), relaxing a stream's timeout once the client has
+authenticated, and resource limits (per listener or per IP; not built yet).
+`examples/tcp_proxy` allows an hour, since it can't add a heartbeat to the
+protocols it carries.
+
 ## Limits and timeouts
 
 | Limit | Default | Set with |

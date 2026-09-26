@@ -240,7 +240,7 @@ fn tcp_connect(address: &str, deadline: Option<std::time::Instant>) -> NetResult
 /// Bind a Unix listener, replacing a socket file left behind by a program
 /// that exited without cleaning up. A file that some process is still
 /// listening on is left alone, and binding fails with `AddrInUse`.
-fn unix_listen(path: &str) -> NetResult<OwnedUnixListener> {
+fn unix_listen(path: &str, timeouts: crate::sockets::ServerTimeouts) -> NetResult<OwnedUnixListener> {
     let listener = match UnixListener::bind(path) {
         Ok(listener) => listener,
         Err(err) if err.kind() == io::ErrorKind::AddrInUse && is_stale_socket(path) => {
@@ -249,7 +249,7 @@ fn unix_listen(path: &str) -> NetResult<OwnedUnixListener> {
         }
         Err(err) => return Err(err.into()),
     };
-    Ok(OwnedUnixListener { listener, path: path.into() })
+    Ok(OwnedUnixListener { listener, path: path.into(), timeouts })
 }
 
 fn is_stale_socket(path: &str) -> bool {
@@ -262,9 +262,10 @@ fn is_stale_socket(path: &str) -> bool {
 
 /// Hosted function: Host.tcp_listen!
 #[no_mangle]
-pub extern "C" fn roc_tcp_listen(address: RocStr) -> HostSocketAcceptResult {
+pub extern "C" fn roc_tcp_listen(address: RocStr, idle_ms: u64, write_ms: u64) -> HostSocketAcceptResult {
+    let timeouts = crate::sockets::ServerTimeouts { idle_ms, write_ms };
     handle_result(with_str(address, |address| {
-        open_socket(|| Ok(Socket::TcpListener(TcpListener::bind(address)?)))
+        open_socket(|| Ok(Socket::TcpListener(TcpListener::bind(address)?, timeouts)))
     }))
 }
 
@@ -278,8 +279,11 @@ pub extern "C" fn roc_tcp_connect(address: RocStr, timeout_ms: u64) -> HostSocke
 
 /// Hosted function: Host.unix_listen!
 #[no_mangle]
-pub extern "C" fn roc_unix_listen(path: RocStr) -> HostSocketAcceptResult {
-    handle_result(with_str(path, |path| open_socket(|| Ok(Socket::UnixListener(unix_listen(path)?)))))
+pub extern "C" fn roc_unix_listen(path: RocStr, idle_ms: u64, write_ms: u64) -> HostSocketAcceptResult {
+    let timeouts = crate::sockets::ServerTimeouts { idle_ms, write_ms };
+    handle_result(with_str(path, |path| {
+        open_socket(|| Ok(Socket::UnixListener(unix_listen(path, timeouts)?)))
+    }))
 }
 
 /// Hosted function: Host.unix_connect!
@@ -343,10 +347,20 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
         // and immediately dropped.
         let slot = sockets::reserve();
         let accepted = match listener {
-            Socket::TcpListener(l) => Socket::TcpStream(accept_retrying(|| l.accept())?.0),
-            Socket::UnixListener(l) => Socket::UnixStream(accept_retrying(|| l.listener.accept())?.0),
+            Socket::TcpListener(l, timeouts) => {
+                let stream = accept_retrying(|| l.accept())?.0;
+                timeouts.apply(&stream)?;
+                Socket::TcpStream(stream)
+            }
+            Socket::UnixListener(l) => {
+                let stream = accept_retrying(|| l.listener.accept())?.0;
+                l.timeouts.apply_unix(&stream)?;
+                Socket::UnixStream(stream)
+            }
             Socket::TlsListener(l) => {
                 let tcp = accept_retrying(|| l.listener.accept())?.0;
+                // The handshake deadline restores these afterwards.
+                l.timeouts.apply(&tcp)?;
                 // The handshake clock starts now, at accept.
                 let deadline = deadline_after(l.handshake_timeout_ms);
                 Socket::Tls(crate::tls::server(tcp, l.config.clone(), deadline)?)
@@ -454,7 +468,7 @@ fn unix_path(addr: std::os::unix::net::SocketAddr) -> String {
 pub extern "C" fn roc_socket_local_addr(socket: *mut u64) -> HostSocketLocalAddrResult {
     str_result(with_socket(socket, |socket| {
         Ok(match socket {
-            Socket::TcpListener(s) => s.local_addr()?.to_string(),
+            Socket::TcpListener(s, _) => s.local_addr()?.to_string(),
             Socket::TcpStream(s) => s.local_addr()?.to_string(),
             Socket::Udp(s) => s.local_addr()?.to_string(),
             Socket::UnixListener(s) => unix_path(s.listener.local_addr()?),
@@ -674,14 +688,17 @@ pub extern "C" fn roc_tls_listen(
     cert_file: RocStr,
     key_file: RocStr,
     handshake_timeout_ms: u64,
+    idle_ms: u64,
+    write_ms: u64,
 ) -> HostSocketAcceptResult {
+    let timeouts = crate::sockets::ServerTimeouts { idle_ms, write_ms };
     let result = with_str(address, |address| {
         with_str(cert_file, |cert_file| {
             with_str(key_file, |key_file| {
                 open_socket(|| {
                     let config = crate::tls::server_config(cert_file, key_file)?;
                     let listener = TcpListener::bind(address)?;
-                    Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config, handshake_timeout_ms }))
+                    Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config, handshake_timeout_ms, timeouts }))
                 })
             })
         })

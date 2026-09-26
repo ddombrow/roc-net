@@ -161,7 +161,18 @@ Tls := [].{
 	## config = Tls.server_config({ cert_file: "server.pem", key_file: "server-key.pem" })
 	## listener = Tls.listen!("0.0.0.0:8443", config.with_handshake_timeout(Millis(3000)))?
 	## ```
-	ServerConfig :: { cert_file : Str, key_file : Str, handshake_timeout_ms : U64 }.{
+	ServerConfig :: { cert_file : Str, key_file : Str, handshake_timeout_ms : U64, idle_ms : U64, write_ms : U64 }.{
+
+		## After the handshake, how long a read waits for data before failing
+		## with `TimedOut`; see `Tcp.ListenConfig.with_idle_timeout`.
+		with_idle_timeout : ServerConfig, [NoTimeout, Millis(U64)] -> ServerConfig
+		with_idle_timeout = |ServerConfig.(config), timeout| ServerConfig.({ ..config, idle_ms: timeout_ms(timeout) })
+
+		## How long a write can wait for a client that has stopped reading; see
+		## `Tcp.ListenConfig.with_write_timeout`.
+		with_write_timeout : ServerConfig, [NoTimeout, Millis(U64)] -> ServerConfig
+		with_write_timeout = |ServerConfig.(config), timeout| ServerConfig.({ ..config, write_ms: timeout_ms(timeout) })
+
 
 		## How long each client has, from when its connection is accepted, to
 		## complete the TLS handshake; `NoTimeout` means no limit. Past it, the
@@ -185,14 +196,22 @@ Tls := [].{
 	}
 
 	## A server presenting the certificate chain and private key in these PEM
-	## files, giving clients 10 seconds to complete the handshake.
+	## files. Clients get 10 seconds to complete the handshake, then 60-second
+	## idle and write timeouts, as with `Tcp.listen!`.
 	server_config : { cert_file : Str, key_file : Str } -> ServerConfig
-	server_config = |files| ServerConfig.({ cert_file: files.cert_file, key_file: files.key_file, handshake_timeout_ms: 10000 })
+	server_config = |files|
+		ServerConfig.({
+			cert_file: files.cert_file,
+			key_file: files.key_file,
+			handshake_timeout_ms: 10000,
+			idle_ms: 60000,
+			write_ms: 60000,
+		})
 
 	## Listen for TLS connections on `address`.
 	listen! : Str, ServerConfig => Try(Listener, [TlsErr(IOErr)])
 	listen! = |address, ServerConfig.(config)|
-		match Host.tls_listen!(address, config.cert_file, config.key_file, config.handshake_timeout_ms) {
+		match Host.tls_listen!(address, config.cert_file, config.key_file, config.handshake_timeout_ms, config.idle_ms, config.write_ms) {
 			Ok(listener) => Ok(Listener.(listener))
 			Err(err) => Err(TlsErr(err))
 		}

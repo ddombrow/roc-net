@@ -84,12 +84,51 @@ Unix := [].{
 		peer_addr! = |Stream.(stream)| unix_err(Host.socket_peer_addr!(stream))
 	}
 
+	## Timeouts for the streams a listener accepts, so a client that goes
+	## quiet or stops reading can't hold a server task forever. Start from
+	## `listen_config` and adjust:
+	##
+	## ```roc
+	## # Chat users can sit idle for a while.
+	## config = Unix.listen_config.with_idle_timeout(Millis(1800000))
+	## listener = Unix.listen_with!("/tmp/chat.sock", config)?
+	## ```
+	##
+	## Each accepted stream starts with these; its `set_read_timeout!` and
+	## `set_write_timeout!` change them for that stream.
+	ListenConfig :: { idle_ms : U64, write_ms : U64 }.{
+
+		## How long a read on an accepted stream waits for data before failing
+		## with `TimedOut`: a client that stays silent this long is dropped.
+		## This bounds each read, not a whole message; `Framing` readers also
+		## bound each line or frame (see `Framing.Reader.with_message_timeout`).
+		with_idle_timeout : ListenConfig, [NoTimeout, Millis(U64)] -> ListenConfig
+		with_idle_timeout = |ListenConfig.(config), timeout| ListenConfig.({ ..config, idle_ms: timeout_ms(timeout) })
+
+		## How long a write can wait for the client to accept data (when it has
+		## stopped reading and the connection's buffers are full) before failing
+		## with `TimedOut`.
+		with_write_timeout : ListenConfig, [NoTimeout, Millis(U64)] -> ListenConfig
+		with_write_timeout = |ListenConfig.(config), timeout| ListenConfig.({ ..config, write_ms: timeout_ms(timeout) })
+	}
+
+	## Idle and write timeouts of 60 seconds.
+	listen_config : ListenConfig
+	listen_config = ListenConfig.({ idle_ms: 60000, write_ms: 60000 })
+
 	## Listen on the socket file at `path`. If a socket file is already there
 	## but nothing is listening on it (left over from a program that crashed),
 	## it is replaced; if something is listening, this fails with `AddrInUse`.
+	## Accepted streams use `listen_config`: 60-second idle and write
+	## timeouts.
 	listen! : Str => Try(Listener, [UnixErr(IOErr)])
-	listen! = |path|
-		match Host.unix_listen!(path) {
+	listen! = |path| listen_with!(path, listen_config)
+
+	## Listen on the socket file at `path` with the given timeouts for
+	## accepted streams.
+	listen_with! : Str, ListenConfig => Try(Listener, [UnixErr(IOErr)])
+	listen_with! = |path, ListenConfig.(config)|
+		match Host.unix_listen!(path, config.idle_ms, config.write_ms) {
 			Ok(listener) => Ok(Listener.(listener))
 			Err(err) => Err(UnixErr(err))
 		}

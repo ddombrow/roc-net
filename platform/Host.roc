@@ -14,11 +14,13 @@ Host := [].{
 	## `Box.unbox` or re-box one.
 	Socket :: Box(U64)
 
-	tcp_listen! : Str => Try(Socket, IOErr)
+	## Listen; every accepted stream gets these read (idle) and write timeouts
+	## in milliseconds (0 means none).
+	tcp_listen! : Str, U64, U64 => Try(Socket, IOErr)
 	## Look up the name and connect, all within `timeout_ms` milliseconds (0
 	## means no limit).
 	tcp_connect! : Str, U64 => Try(Socket, IOErr)
-	unix_listen! : Str => Try(Socket, IOErr)
+	unix_listen! : Str, U64, U64 => Try(Socket, IOErr)
 	unix_connect! : Str => Try(Socket, IOErr)
 	udp_bind! : Str => Try(Socket, IOErr)
 	## Look up the name, connect, and complete a TLS handshake, all within
@@ -27,8 +29,9 @@ Host := [].{
 	tls_connect! : Str, Str, Str, U64 => Try(Socket, IOErr)
 	## Listen for TLS connections using the certificate chain and private key
 	## in these PEM files. Each connection must finish its handshake within
-	## `handshake_timeout_ms` of being accepted (0 means no limit).
-	tls_listen! : Str, Str, Str, U64 => Try(Socket, IOErr)
+	## `handshake_timeout_ms` of being accepted (0 means no limit), then has
+	## the given read (idle) and write timeouts.
+	tls_listen! : Str, Str, Str, U64, U64, U64 => Try(Socket, IOErr)
 	## Let a TLS stream treat a connection closed without close_notify as a
 	## normal end of stream.
 	tls_ignore_unexpected_eof! : Socket, Bool => Try({}, IOErr)

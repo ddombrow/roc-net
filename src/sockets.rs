@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use crate::resource::{Full, Reservation, ResourceHeap};
 
 pub enum Socket {
-    TcpListener(TcpListener),
+    TcpListener(TcpListener, ServerTimeouts),
     TcpStream(TcpStream),
     UnixListener(OwnedUnixListener),
     UnixStream(UnixStream),
@@ -24,6 +24,8 @@ pub struct TlsListener {
     /// How long each accepted connection has to finish its handshake
     /// (0 means no limit).
     pub handshake_timeout_ms: u64,
+    /// Timeouts for after the handshake.
+    pub timeouts: ServerTimeouts,
 }
 
 /// A Unix listener that deletes its socket file when it closes, so the path
@@ -31,6 +33,33 @@ pub struct TlsListener {
 pub struct OwnedUnixListener {
     pub listener: UnixListener,
     pub path: PathBuf,
+    pub timeouts: ServerTimeouts,
+}
+
+/// Read and write timeouts a listener puts on every stream it accepts, so a
+/// client that goes quiet (or stops reading) can't hold a server task
+/// forever. In milliseconds; 0 means none.
+#[derive(Clone, Copy)]
+pub struct ServerTimeouts {
+    pub idle_ms: u64,
+    pub write_ms: u64,
+}
+
+impl ServerTimeouts {
+    /// Apply to a newly accepted stream's socket.
+    pub fn apply(self, stream: &TcpStream) -> std::io::Result<()> {
+        stream.set_read_timeout(Self::duration(self.idle_ms))?;
+        stream.set_write_timeout(Self::duration(self.write_ms))
+    }
+
+    pub fn apply_unix(self, stream: &UnixStream) -> std::io::Result<()> {
+        stream.set_read_timeout(Self::duration(self.idle_ms))?;
+        stream.set_write_timeout(Self::duration(self.write_ms))
+    }
+
+    fn duration(ms: u64) -> Option<std::time::Duration> {
+        (ms > 0).then(|| std::time::Duration::from_millis(ms))
+    }
 }
 
 impl Drop for OwnedUnixListener {

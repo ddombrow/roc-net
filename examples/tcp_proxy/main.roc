@@ -16,7 +16,9 @@ main! = |args| {
 			_ => return Err(Exit(2))
 		}
 
-	listener = Tcp.listen!(listen_address)?
+	# Proxied sessions (SSH, say) can be quiet for long stretches, so allow an
+	# hour of silence (the default drops a client after 60 seconds).
+	listener = Tcp.listen_with!(listen_address, Tcp.listen_config.with_idle_timeout(Millis(3600000)))?
 	Stdout.line!("Proxying ${listen_address} -> ${upstream_address}")?
 
 	while True {
