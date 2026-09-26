@@ -218,9 +218,7 @@ pub extern "C" fn roc_crashed(bytes: *const u8, len: usize) {
 }
 
 /// Build a RocList<RocStr> from command-line arguments.
-fn build_args_list(roc_host: &RocHost) -> RocList<RocStr> {
-    let args: Vec<String> = std::env::args().collect();
-
+fn build_args_list(args: &[String], roc_host: &RocHost) -> RocList<RocStr> {
     if args.is_empty() {
         return RocList::empty();
     }
@@ -238,13 +236,32 @@ fn build_args_list(roc_host: &RocHost) -> RocList<RocStr> {
 
 /// C-compatible main entry point for the Roc program.
 /// This is exported so the linker can find it.
+///
+/// The arguments come from `argc`/`argv`, not `std::env::args()`: on Linux,
+/// std fills that from a startup hook that relies on the C library passing
+/// argc/argv to it, which glibc does and musl doesn't, so with musl it would
+/// be empty.
 #[no_mangle]
-pub extern "C" fn main(_argc: i32, _argv: *const *const i8) -> i32 {
-    rust_main()
+pub extern "C" fn main(argc: i32, argv: *const *const std::ffi::c_char) -> i32 {
+    let args = (0..argc.max(0) as usize)
+        .map(|i| {
+            let arg = unsafe { *argv.add(i) };
+            if arg.is_null() {
+                String::new()
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(arg) }.to_string_lossy().into_owned()
+            }
+        })
+        .collect::<Vec<_>>();
+    run(&args)
 }
 
-/// Main entry point for the Roc program.
+/// Entry point for the `host` binary target, which runs without Roc's `main`.
 pub fn rust_main() -> i32 {
+    run(&std::env::args().collect::<Vec<_>>())
+}
+
+fn run(args: &[String]) -> i32 {
     time::init();
     // Read the limits now so a bad setting is reported at startup.
     limits::max_tasks();
@@ -258,7 +275,7 @@ pub fn rust_main() -> i32 {
     }));
     set_roc_host(roc_host);
 
-    let args_list = build_args_list(roc_host);
+    let args_list = build_args_list(args, roc_host);
 
     unsafe { roc_main(args_list) }
 }

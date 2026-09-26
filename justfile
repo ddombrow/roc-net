@@ -113,6 +113,73 @@ test: (build-example "net_tests") smoke
     {{bin_dir}}/net_tests
     for f in $(grep -lE '^expect' examples/*/*.roc | xargs -n1 dirname | sort -u); do roc test "$f/main.roc" || exit 1; done
 
+linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e"
+compose := "docker compose -f tests/e2e/compose.yaml"
+roc_linux := ".tools/linux-arm64/roc_nightly-linux_arm64-" + nightly_suffix + "/roc"
+
+# Build the test programs for Linux into target/linux/<target>: arm64musl, x64musl (static), arm64glibc, x64glibc
+build-linux target="arm64musl":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p target/linux/{{target}}
+    case "{{target}}" in
+    *glibc)
+        # Roc only links glibc programs on Linux: use its Linux build in a
+        # Rocky 8 container, against Rocky 8's glibc (2.28).
+        [ -f platform/targets/{{target}}/libc.so.6 ] || scripts/fetch_glibc_inputs.sh {{target}}
+        if [ ! -x "{{roc_linux}}" ]; then
+            mkdir -p .tools/linux-arm64
+            gh release download "{{nightly}}" -R roc-lang/nightlies -D .tools/linux-arm64 --clobber \
+                -p "roc_nightly-linux_arm64-{{nightly_suffix}}.tar.gz"
+            tar xzf .tools/linux-arm64/roc_nightly-linux_arm64-{{nightly_suffix}}.tar.gz -C .tools/linux-arm64
+        fi
+        ./build.sh --target {{target}}
+        docker run --rm --platform linux/arm64 -v "$PWD:/work" -w /work rockylinux/rockylinux:8-minimal sh -euc '
+            for program in {{linux_programs}}; do
+                {{roc_linux}} build --target={{target}} "$program/main.roc" --output="target/linux/{{target}}/$(basename "$program")" >/dev/null
+                echo "built target/linux/{{target}}/$(basename "$program")"
+            done' ;;
+    *)
+        ./build.sh --target {{target}}
+        for program in {{linux_programs}}; do
+            roc build --target={{target}} "$program/main.roc" --output="target/linux/{{target}}/$(basename "$program")" >/dev/null
+            echo "built target/linux/{{target}}/$(basename "$program")"
+        done ;;
+    esac
+
+# Run the suite and cross-container e2e checks for every Linux build: musl on Alpine, glibc on Rocky 8 and 9 (needs docker)
+linux-test: (build-linux "arm64musl") (build-linux "arm64glibc") (build-linux "x64musl") (build-linux "x64glibc")
+    #!/usr/bin/env bash
+    set -uo pipefail
+    status=0
+    platform_of() { case "$1" in x64*) echo linux/amd64 ;; *) echo linux/arm64 ;; esac; }
+    suite() {
+        echo "== test suite: $1 on $2"
+        # A stage that hangs fails after 10 minutes instead of blocking the run.
+        # -T and </dev/null: timeout runs compose in the background, where
+        # reading from the terminal would stop it (SIGTTIN) instead of timing out.
+        ROC_TARGET=$1 ROC_IMAGE=$2 ROC_PLATFORM=$(platform_of "$1") timeout 600 {{compose}} run --rm -T net-tests </dev/null | tail -1
+        [ "${PIPESTATUS[0]}" = 0 ] || { status=1; echo "FAILED (exit ${PIPESTATUS[0]}; 124 means it timed out)"; }
+        {{compose}} down -t 1 >/dev/null 2>&1
+    }
+    e2e() {
+        echo "== e2e: $1 on $2"
+        # Fresh containers every run, so none keep running an older binary.
+        {{compose}} down -t 1 >/dev/null 2>&1
+        ROC_TARGET=$1 ROC_IMAGE=$2 ROC_PLATFORM=$(platform_of "$1") timeout 600 {{compose}} up --force-recreate --exit-code-from e2e echo udp lines chat e2e </dev/null 2>/dev/null \
+            | sed -n 's/^e2e-1 *| //p' | tail -1
+        [ "${PIPESTATUS[0]}" = 0 ] || { status=1; echo "FAILED (exit ${PIPESTATUS[0]}; 124 means it timed out)"; }
+        {{compose}} down -t 1 >/dev/null 2>&1
+    }
+    for arch in arm64 x64; do
+        suite ${arch}musl alpine:3
+        suite ${arch}glibc rockylinux/rockylinux:8-minimal
+        suite ${arch}glibc rockylinux/rockylinux:9-minimal
+        e2e ${arch}musl alpine:3
+        e2e ${arch}glibc rockylinux/rockylinux:9-minimal
+    done
+    exit $status
+
 # Benchmark against Rust baselines and record results: just bench --label "what changed"
 bench *args:
     python3 bench/run.py "$@"

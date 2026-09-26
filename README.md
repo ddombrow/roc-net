@@ -7,8 +7,11 @@ Started from [roc-platform-template-rust](https://github.com/lukewilliamboswell/
 ## Requirements
 
 - [Rust](https://rustup.rs/) (the toolchain is pinned in `rust-toolchain.toml`)
-- [Zig](https://ziglang.org), only for `just build-all`: it cross-compiles the
-  host's C dependency (AWS-LC, used by TLS) for Linux
+- [Zig](https://ziglang.org), only for Linux builds (`just build-all`,
+  `just linux-test`): it cross-compiles the host's C dependency (AWS-LC, used by TLS)
+- Docker with Compose, only for `just linux-test`. On an Apple Silicon Mac the
+  x86-64 builds run under emulation, which must be Rosetta (Colima:
+  `colima start --vz-rosetta`); QEMU mis-runs Roc's default x86-64 code.
 - Roc `nightly-2026-09-24-f45bfbe`, the compiler pinned in `platform/main.roc`
 
 Common tasks use [just](https://github.com/casey/just). Run `just` to list them.
@@ -22,6 +25,7 @@ just run hello_world       # run an example
 just test                  # TCP/Unix/UDP tests (examples/net_tests) + smoke test
 just smoke                 # echo server + client round trip
 just docs                  # API reference in target/docs/index.html
+just linux-test            # suite + e2e for arm64/x64 Linux: musl on Alpine, glibc on Rocky 8/9 (needs docker)
 ```
 
 Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
@@ -135,4 +139,19 @@ just run unix_client /tmp/echo.sock "hello"
   bundles AWS-LC's C code) and `webpki-roots` (Mozilla's root certificates).
   `Random` uses the same provider's secure random generator.
 - TLS tests use `examples/net_tests/certs`, made by `scripts/make_test_certs.sh`.
+- Linux has two builds. `arm64musl` is static and runs on any distribution.
+  `arm64glibc` links dynamically against the system's glibc (2.28 or newer:
+  Rocky/RHEL 8+, Debian 10+, Ubuntu 20.04+), so name lookups go through the
+  system's resolver configuration (NSS), like other programs on the machine.
+  `just build-linux [arm64musl|arm64glibc]` builds the test programs into
+  `target/linux/<target>`. Roc only links glibc programs on Linux, so the
+  glibc build runs Roc's Linux release in a Rocky 8 container, against glibc
+  files `scripts/fetch_glibc_inputs.sh` copies out of Rocky 8.
+- `just linux-test` builds all four Linux targets (arm64 and x64, musl and
+  glibc) and runs `examples/net_tests` (musl on Alpine; glibc on Rocky 8 and 9)
+  and `tests/e2e`, which reaches the example servers, each in its own
+  container, by service name (`tests/e2e/compose.yaml`; all-musl on Alpine,
+  all-glibc on Rocky 9). The musl C runtime comes from the release pinned in
+  `runtime/link-inputs.lock.json`, checked against its SHA-256 by
+  `scripts/fetch_linux_runtime.py`.
 - `Tcp.Stream.read!` caps a single read at 64 KiB regardless of the requested maximum.

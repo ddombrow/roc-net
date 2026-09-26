@@ -6,4 +6,6 @@ for arg in "$@"; do
     shift
     case "$arg" in --target=*) ;; *) set -- "$@" "$arg" ;; esac
 done
-exec zig cc -target "$ZIG_CC_TARGET" "$@"
+# zig cc enables UndefinedBehaviorSanitizer by default; its checks call a
+# runtime that isn't linked into Roc programs, so turn them off.
+exec zig cc -target "$ZIG_CC_TARGET" -fno-sanitize=undefined "$@"

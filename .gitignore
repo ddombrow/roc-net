@@ -43,3 +43,10 @@ __pycache__/
 # Independently built runtime artifacts
 dist/
 platform/runtime/
+
+# glibc link inputs, extracted by scripts/fetch_glibc_inputs.sh
+platform/targets/arm64glibc/
+platform/targets/x64glibc/
+
+# Core dumps QEMU writes when an emulated (x86-64) test run crashes
+qemu_*.core

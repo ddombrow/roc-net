@@ -1,0 +1,47 @@
+# Linux end-to-end tests, run by `just linux-test`. Which build and which
+# distribution come from the environment:
+#
+#   ROC_TARGET    arm64musl, x64musl (static), arm64glibc, or x64glibc
+#                 (dynamically linked); the binaries are in
+#                 target/linux/$ROC_TARGET (`just build-linux <target>`)
+#   ROC_IMAGE     the image to run them on, e.g. alpine:3 for musl builds or
+#                 rockylinux/rockylinux:9-minimal for glibc builds
+#   ROC_PLATFORM  linux/arm64 or linux/amd64, matching the target (on an
+#                 arm64 host, amd64 containers run under emulation)
+
+x-roc: &roc
+  image: ${ROC_IMAGE:-alpine:3}
+  platform: ${ROC_PLATFORM:-linux/arm64}
+  volumes:
+    - ../../target/linux/${ROC_TARGET:-arm64musl}:/roc:ro
+
+services:
+  # The full test suite. Reads TLS certificates from the repository.
+  net-tests:
+    image: ${ROC_IMAGE:-alpine:3}
+    platform: ${ROC_PLATFORM:-linux/arm64}
+    volumes:
+      - ../..:/work:ro
+    working_dir: /work
+    command: ["target/linux/${ROC_TARGET:-arm64musl}/net_tests"]
+    profiles: ["suite"]
+
+  # Example servers, each in its own container.
+  echo:
+    <<: *roc
+    command: ["/roc/tcp_echo_concurrent", "0.0.0.0:8080"]
+  udp:
+    <<: *roc
+    command: ["/roc/udp_echo_server", "0.0.0.0:8081"]
+  lines:
+    <<: *roc
+    command: ["/roc/line_server", "0.0.0.0:8082"]
+  chat:
+    <<: *roc
+    command: ["/roc/chat_server", "0.0.0.0:8083"]
+
+  # The client that checks them, by service name, over Docker's network.
+  e2e:
+    <<: *roc
+    command: ["/roc/e2e"]
+    depends_on: [echo, udp, lines, chat]

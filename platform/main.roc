@@ -86,6 +86,11 @@ platform ""
 		arm64mac: { inputs: ["libhost.a", app] },
 		x64musl: { inputs: ["crt1.o", "libhost.a", "libunwind.a", app, "libc.a", "libzigc.a", "libcompiler_rt.a"] },
 		arm64musl: { inputs: ["crt1.o", "libhost.a", "libunwind.a", app, "libc.a", "libzigc.a", "libcompiler_rt.a"] },
+		# The glibc targets link dynamically against glibc 2.28 (Rocky/RHEL 8) or
+		# newer; inputs from scripts/fetch_glibc_inputs.sh. Roc only links glibc
+		# targets on Linux.
+		arm64glibc: { inputs: ["Scrt1.o", "crti.o", "libhost.a", app, "libpthread.so.0", "libdl.so.2", "libm.so.6", "librt.so.1", "libgcc_s.so.1", "libc.so.6", "libc_nonshared.a", "ld-linux-aarch64.so.1", "crtn.o"] },
+		x64glibc: { inputs: ["Scrt1.o", "crti.o", "libhost.a", app, "libpthread.so.0", "libdl.so.2", "libm.so.6", "librt.so.1", "libgcc_s.so.1", "libc.so.6", "libc_nonshared.a", "ld-linux-x86-64.so.2", "crtn.o"] },
 	}
 
 import Stdout

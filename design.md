@@ -292,6 +292,50 @@ features. They test whether roc-net is pleasant to use.
   `try_send!`, so a user who stops reading misses messages instead of
   stalling the room.
 
+## Linux targets and testing
+
+Two Linux builds: `arm64musl`, static, runs anywhere; and `arm64glibc`,
+dynamically linked against glibc 2.28+ (Rocky/RHEL 8 and newer). The glibc
+build matters for a networking platform because a static musl binary uses
+musl's own resolver and ignores `/etc/nsswitch.conf`, bypassing SSSD/LDAP host
+lookups, systemd-resolved, and mDNS; with glibc, `Dns.resolve!` and
+`connect!("host:port")` resolve like every other program on the machine. It
+also picks up the distribution's glibc fixes, and avoids musl's allocator,
+which is known to be slow under multithreaded contention.
+
+Roc refuses to link glibc programs except on Linux, so `just build-linux
+arm64glibc` cross-builds the host library on macOS (Rust's
+`aarch64-unknown-linux-gnu`, AWS-LC via `zig cc -target
+aarch64-linux-gnu.2.28`), then runs Roc's Linux release (a static binary) in a
+Rocky 8 container. The link inputs (startup files, `libc.so.6`,
+`libpthread.so.0` and the other pre-2.34 split libraries, `libgcc_s.so.1` for
+Rust's unwinder) are copied from Rocky 8 by `scripts/fetch_glibc_inputs.sh`,
+so symbol versions are no newer than 2.28.
+
+`just linux-test` runs the suite (musl on Alpine; glibc on Rocky 8 and 9) and
+`tests/e2e`, whose client reaches the example servers, each in its own
+container, by service name through Docker's DNS (all-musl on Alpine, all-glibc
+on Rocky 9). Its first run found a real bug: the host built the argument list
+with `std::env::args()`, which is empty on musl (std fills it from a startup
+hook glibc feeds argc/argv to and musl doesn't), so every musl program ran
+without arguments; the host now reads `main`'s own argc/argv. Cross-building
+also needed `zig cc` run with `-fno-sanitize=undefined`: its default UBSan
+checks call a runtime that isn't linked into Roc programs. SIGPIPE behavior
+was confirmed on Linux too.
+
+The template's `ci/runtime.py fetch` can't run here, since it fingerprints
+release tooling (GitHub workflows) this repo removed;
+`scripts/fetch_linux_runtime.py` does the same download checked against the
+same pinned SHA-256.
+
+All four builds (`arm64musl`, `arm64glibc`, `x64musl`, `x64glibc`) run in
+`just linux-test`; on an Apple Silicon Mac the x86-64 ones run under
+emulation. That needs Rosetta (Colima: `--vz-rosetta`), not QEMU: Roc's
+default x86-64 targets use modern-CPU instructions (AVX2), and under Colima's
+QEMU those builds corrupted memory and QEMU itself crashed, while the same
+code built for baseline CPUs (`x64v1musl`) ran correctly. Rosetta on macOS 15+
+handles AVX2, and every stage passes under it.
+
 ## Risks and open questions
 
 - **Cross-thread closures.** roc-ray passes closures to the host

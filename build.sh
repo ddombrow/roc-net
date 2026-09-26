@@ -8,6 +8,8 @@ get_rust_triple() {
         arm64mac)  echo "aarch64-apple-darwin" ;;
         x64musl)   echo "x86_64-unknown-linux-musl" ;;
         arm64musl) echo "aarch64-unknown-linux-musl" ;;
+        arm64glibc) echo "aarch64-unknown-linux-gnu" ;;
+        x64glibc) echo "x86_64-unknown-linux-gnu" ;;
         *) echo "Unknown target: $1" >&2; exit 1 ;;
     esac
 }
@@ -47,6 +49,9 @@ with_cross_c_compiler() {
     case "$target_name" in
         x64musl) zig_target="x86_64-linux-musl" ;;
         arm64musl) zig_target="aarch64-linux-musl" ;;
+        # Rocky/RHEL 8's glibc, the oldest the glibc build supports.
+        arm64glibc) zig_target="aarch64-linux-gnu.2.28" ;;
+        x64glibc) zig_target="x86_64-linux-gnu.2.28" ;;
         *) "$@"; return ;;
     esac
     if ! command -v zig >/dev/null; then
@@ -100,30 +105,43 @@ build_target_native() {
 # Download and verify the independently released linker inputs before building hosts.
 # An unpublished archive is accepted only with this explicit development flag.
 BUILD_ALL=0
+CROSS_TARGET=""
 RUNTIME_CANDIDATE_PATH=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --all) BUILD_ALL=1; shift ;;
+        --target)
+            test "$#" -ge 2 || { echo "--target requires a target name ($ALL_TARGETS)" >&2; exit 1; }
+            get_rust_triple "$2" >/dev/null
+            CROSS_TARGET=$2; shift 2 ;;
         --runtime-candidate)
             test "$#" -ge 2 || { echo "--runtime-candidate requires an archive" >&2; exit 1; }
             RUNTIME_CANDIDATE_PATH=$2; shift 2 ;;
         *) echo "Unknown build argument: $1" >&2; exit 1 ;;
     esac
 done
-if [ "$BUILD_ALL" = 1 ] || [[ "$(detect_native_target)" == *musl ]]; then
+
+# Linux musl targets link against a verified C runtime (crt1.o, libc.a, ...).
+fetch_runtime() {
     if [ -n "$RUNTIME_CANDIDATE_PATH" ]; then
         python3 ci/runtime.py install-candidate "$RUNTIME_CANDIDATE_PATH"
     else
-        if [ "$BUILD_ALL" = 1 ]; then
-            python3 ci/runtime.py fetch --target x64musl --target arm64musl
-        else
-            python3 ci/runtime.py fetch --target "$(detect_native_target)"
-        fi
+        python3 scripts/fetch_linux_runtime.py "$@"
     fi
+}
+if [ "$BUILD_ALL" = 1 ]; then
+    fetch_runtime x64musl arm64musl
+elif [[ "$CROSS_TARGET" == *musl ]]; then
+    fetch_runtime "$CROSS_TARGET"
+elif [ -z "$CROSS_TARGET" ] && [[ "$(detect_native_target)" == *musl ]]; then
+    fetch_runtime "$(detect_native_target)"
 fi
 
 # Main logic
-if [ "$BUILD_ALL" = 1 ]; then
+if [ -n "$CROSS_TARGET" ]; then
+    rustup target add "$(get_rust_triple "$CROSS_TARGET")" 2>/dev/null || true
+    build_target_cross "$CROSS_TARGET"
+elif [ "$BUILD_ALL" = 1 ]; then
     echo "Building for all targets..."
     echo ""
 
