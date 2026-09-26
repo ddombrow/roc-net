@@ -109,6 +109,14 @@ smoke: build (build-example "tcp_echo_concurrent") (build-example "tcp_client")
 test: (build-example "tcp_tests") smoke
     {{bin_dir}}/tcp_tests
 
+# Benchmark against Rust baselines and record results: just bench --label "what changed"
+bench *args:
+    python3 bench/run.py {{args}}
+
+# Show roc-net's recorded benchmark results over time
+bench-history *metrics:
+    python3 bench/run.py history {{metrics}}
+
 # Generate API docs from the platform's doc comments into target/docs/
 docs:
     roc docs platform/main.roc --output=target/docs --no-cache
