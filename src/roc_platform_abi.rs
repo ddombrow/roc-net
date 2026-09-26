@@ -2434,6 +2434,15 @@ pub struct HostDnsResolveArgs {
     pub arg0: RocStr,
 }
 
+/// Arguments for Host.random_bytes!
+/// Roc signature: U64 => List(U8)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostRandomBytesArgs {
+    pub arg0: u64,
+}
+
 /// Arguments for Host.time_sleep_ns!
 /// Roc signature: U64 => {}
 /// Refcounted fields are owned by the hosted function.
@@ -3376,6 +3385,11 @@ unsafe extern "C" {
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_dns_resolve(arg0: RocStr) -> HostDnsResolveResult;
+
+    /// Hosted symbol for Host.random_bytes!
+    /// Roc signature: U64 => List(U8)
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_random_bytes(arg0: u64) -> RocListWith<u8, false>;
 
     /// Hosted symbol for Host.time_now_ns!
     /// Roc signature: {} => U64

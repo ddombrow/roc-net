@@ -53,8 +53,11 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     `read_exactly!`, `read_frame!`, each returning the result and the updated
     reader: `(line, $reader) = $reader.read_line!()?`
   - `write_frame!`: write a 4-byte big-endian length, then the bytes
-- `Bytes`: encode and decode `U16`/`U32`/`U64`, big- and little-endian
-  (`u32_be`, `take_u32_be`, ...), plus `take` and `take_u8`
+- `Bytes`: encode and decode `U16`/`U32`/`U64`, big- and little-endian:
+  `u32_be` to encode, `take_u32_be` to decode from the front of a list, and
+  `u32_be_at` to decode at an offset; plus `take`, `take_u8`, `u8_at`, `bytes_at`
+- `Random`: `u8!()` ... `u64!()`, `bytes!(n)`, `between!(low, high)`, from the
+  OS's secure random source (`/dev/urandom`)
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
   `Duration`s (`Time.millis(500)`, `.to_micros()`, ...)
 - `Dns.resolve!`: a host name's IP addresses, from the OS resolver

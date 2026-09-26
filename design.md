@@ -118,6 +118,7 @@ chosen per operation and documented.
 | `Dns` | `resolve!` a host name to a list of addresses, via the OS resolver |
 | `Task` | `spawn!`, and later `Channel` |
 | `Time` | monotonic `now!` / `Instant`, `Duration`, `sleep!` (deadlines later) |
+| `Random` | secure random numbers from `/dev/urandom`, read with `std` only (no `getrandom`, which would add the `libc` crate) |
 | `Bytes` (pure) | big/little-endian `U16`/`U32`/`U64` encoding and decoding, `take`, `take_u8` |
 | `Framing` (Roc) | a buffered reader over any stream: `read_line!`, `read_until!`, `read_exactly!`, length-prefixed frames; `each_`/`fold_` loops |
 | `Tls` (later) | rustls client and server, producing a stream with the shared methods |
@@ -248,10 +249,11 @@ features. They test whether roc-net is pleasant to use.
   against a chosen server, which the OS resolver behind `Dns.resolve!` cannot
   do. Pure encoding and decoding (`Dns.roc`, with name compression and loop
   protection, tested by `expect`) plus UDP with retries, reply validation, and
-  fallback to TCP for truncated replies. It surfaced three platform gaps:
-  no random numbers (the query ID should be random), no clock, and `Bytes`
-  decoders that only read from the front of a list, while DNS compression
-  needs reads at arbitrary offsets.
+  fallback to TCP for truncated replies. It surfaced three platform gaps,
+  since closed: random numbers (`Random`, for the query ID), a clock
+  (`Time`), and `Bytes` readers at arbitrary offsets (`u16_be_at`, ...),
+  which DNS name compression needs. Switching the parser to the offset
+  readers removed its private byte helpers and error-conversion blocks.
 - **Chat server.** A line protocol with broadcast. Needs milestone 5 and channels.
 
 ## Risks and open questions

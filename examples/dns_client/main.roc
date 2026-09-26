@@ -2,6 +2,7 @@ app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/ma
 
 import pf.Bytes
 import pf.Framing
+import pf.Random
 import pf.Stdout
 import pf.Tcp
 import pf.Udp
@@ -36,10 +37,9 @@ main! = |args| {
 
 	socket = Udp.bind!(if Str.contains(server, "[") "[::]:0" else "0.0.0.0:0")?
 	socket.connect!(server)?
-	# roc-net has no random numbers yet, so derive the query ID from the local
-	# port, which the OS picks per run. A real resolver must use a random ID so
-	# attackers can't guess it and forge replies.
-	id = query_id(socket.local_addr!()?)
+	# A random ID, so an attacker who can't see our query can't guess it and
+	# forge a reply.
+	id = Random.u16!()
 	query = Dns.encode_query(id, name, type)?
 
 	udp_reply =
@@ -139,15 +139,4 @@ with_default_port = |server|
 		if List.len(Str.split_on(server, ":")) > 2 "[${server}]:53" else server
 	} else {
 		"${server}:53"
-	}
-
-query_id : Str -> U16
-query_id = |local_addr|
-	match Str.split_on(local_addr, ":").last() {
-		Ok(port) =>
-			match U16.from_str(port) {
-				Ok(n) => n
-				Err(_) => 1
-			}
-		Err(_) => 1
 	}

@@ -13,6 +13,7 @@ mod sockets;
 mod tasks;
 mod time;
 mod net;
+mod random;
 
 use crate::roc_platform_abi::{
     make_roc_host, roc_main, DefaultAllocators, DefaultHandlers, HostStderrLineResult,

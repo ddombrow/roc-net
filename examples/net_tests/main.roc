@@ -3,6 +3,7 @@ app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/ma
 import pf.Bytes
 import pf.Dns
 import pf.Framing
+import pf.Random
 import pf.Stdout
 import pf.Task
 import pf.Tcp
@@ -42,6 +43,9 @@ main! = |_args| {
 		check!("time: sleep and elapsed", time_sleep!),
 		check!("time: durations", time_durations!),
 		check!("dns: resolve", dns_resolve!),
+		check!("bytes: reading at offsets", bytes_offsets!),
+		check!("random: bytes differ", random_bytes!),
+		check!("random: between! stays in range and covers it", random_between!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -455,4 +459,46 @@ dns_resolve! = || {
 		Err(DnsErr(_)) => Ok({})
 		other => Err(Unexpected(Str.inspect(other)))
 	}
+}
+
+bytes_offsets! = || {
+	data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+	expect_eq(Bytes.u8_at(data, 9), Ok(10))?
+	expect_eq(Bytes.u16_be_at(data, 1), Ok(515))?
+	expect_eq(Bytes.u16_le_at(data, 1), Ok(770))?
+	expect_eq(Bytes.u32_be_at(data, 6), Ok(117967114))?
+	expect_eq(Bytes.u64_be_at(data, 2), Ok(217304205466536202))?
+	expect_eq(Bytes.u64_le_at(data, 2), Ok(723118041428460547))?
+	expect_eq(Bytes.bytes_at(data, 3, 2), Ok([4, 5]))?
+	# Reading nothing at the very end is fine; reading past it is not.
+	expect_eq(Bytes.bytes_at(data, 10, 0), Ok([]))?
+	expect_eq(Bytes.u8_at(data, 10), Err(TooShort))?
+	expect_eq(Bytes.u32_be_at(data, 7), Err(TooShort))?
+	expect_eq(Bytes.bytes_at(data, 8, 5), Err(TooShort))
+}
+
+random_bytes! = || {
+	a = Random.bytes!(16)
+	b = Random.bytes!(16)
+	expect_eq(List.len(a), 16)?
+	# Equal by chance with probability 2^-128.
+	if a == b Err(Unexpected("two random draws were equal")) else Ok({})
+}
+
+random_between! = || {
+	var $seen = [False, False, False, False, False, False]
+	for _ in U64.until(0, 2000) {
+		roll = Random.between!(1, 6)
+		if roll < 1 or roll > 6 {
+			return Err(Unexpected("between!(1, 6) returned ${roll.to_str()}"))
+		}
+		$seen = List.set($seen, roll - 1, True)?
+	}
+	# Missing a face in 2000 rolls happens with probability about 10^-157.
+	expect_eq($seen, [True, True, True, True, True, True])?
+	expect_eq(Random.between!(5, 5), 5)?
+	expect_eq(Random.between!(9, 3), 9)?
+	# The full range must not loop forever.
+	_ = Random.between!(0, U64.highest)
+	Ok({})
 }

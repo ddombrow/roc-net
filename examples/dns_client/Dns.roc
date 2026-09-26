@@ -124,20 +124,20 @@ Dns := [].{
 
 	# --- Decoding ---
 
-	decode_response : List(U8) -> Try(Response, [Malformed(Str)])
+	decode_response : List(U8) -> Try(Response, [Malformed(Str), TooShort])
 	decode_response = |msg| {
-		id = u16_at(msg, 0)?
-		flags = u16_at(msg, 2)?
-		question_count = u16_at(msg, 4)?
-		answer_count = u16_at(msg, 6)?
-		authority_count = u16_at(msg, 8)?
-		additional_count = u16_at(msg, 10)?
+		id = Bytes.u16_be_at(msg, 0)?
+		flags = Bytes.u16_be_at(msg, 2)?
+		question_count = Bytes.u16_be_at(msg, 4)?
+		answer_count = Bytes.u16_be_at(msg, 6)?
+		authority_count = Bytes.u16_be_at(msg, 8)?
+		additional_count = Bytes.u16_be_at(msg, 10)?
 
 		var $offset = 12
 		var $question = []
 		for _ in U16.until(0, question_count) {
 			(name, after_name) = read_name(msg, $offset)?
-			type = type_from_code(u16_at(msg, after_name)?)
+			type = type_from_code(Bytes.u16_be_at(msg, after_name)?)
 			$question = List.append($question, { name, type })
 			$offset = after_name + 4
 		}
@@ -157,15 +157,15 @@ Dns := [].{
 		})
 	}
 
-	read_records : List(U8), U64, U16 -> Try((List(Record), U64), [Malformed(Str)])
+	read_records : List(U8), U64, U16 -> Try((List(Record), U64), [Malformed(Str), TooShort])
 	read_records = |msg, start, count| {
 		var $records = []
 		var $offset = start
 		for _ in U16.until(0, count) {
 			(name, after_name) = read_name(msg, $offset)?
-			type = type_from_code(u16_at(msg, after_name)?)
-			ttl = u32_at(msg, after_name + 4)?
-			data_len = u16_at(msg, after_name + 8)?.to_u64()
+			type = type_from_code(Bytes.u16_be_at(msg, after_name)?)
+			ttl = Bytes.u32_be_at(msg, after_name + 4)?
+			data_len = Bytes.u16_be_at(msg, after_name + 8)?.to_u64()
 			data_start = after_name + 10
 			data = format_data(msg, type, data_start, data_len)?
 			$records = List.append($records, { name, type, ttl, data })
@@ -180,21 +180,21 @@ Dns := [].{
 	## Compression: a length byte with its top two bits set is instead a 14-bit
 	## pointer to where the rest of the name was already written. A reply can
 	## point in a circle, so give up after a bounded number of jumps.
-	read_name : List(U8), U64 -> Try((Str, U64), [Malformed(Str)])
+	read_name : List(U8), U64 -> Try((Str, U64), [Malformed(Str), TooShort])
 	read_name = |msg, start| {
 		var $labels = []
 		var $position = start
 		var $after = 0
 		var $jumps = 0
 		while True {
-			length = u8_at(msg, $position)?
+			length = Bytes.u8_at(msg, $position)?
 			if length == 0 {
 				if $jumps == 0 {
 					$after = $position + 1
 				}
 				break
 			} else if length >= 192 {
-				low = u8_at(msg, $position + 1)?
+				low = Bytes.u8_at(msg, $position + 1)?
 				if $jumps == 0 {
 					$after = $position + 2
 				}
@@ -206,7 +206,7 @@ Dns := [].{
 			} else if length >= 64 {
 				return Err(Malformed("invalid label length ${length.to_str()}"))
 			} else {
-				label = slice(msg, $position + 1, length.to_u64())?
+				label = Bytes.bytes_at(msg, $position + 1, length.to_u64())?
 				$labels = List.append($labels, Str.from_utf8_lossy(label))
 				$position = $position + 1 + length.to_u64()
 			}
@@ -215,9 +215,9 @@ Dns := [].{
 	}
 
 	## Render a record's data the way `dig` does.
-	format_data : List(U8), RecordType, U64, U64 -> Try(Str, [Malformed(Str)])
+	format_data : List(U8), RecordType, U64, U64 -> Try(Str, [Malformed(Str), TooShort])
 	format_data = |msg, type, start, len| {
-		data = slice(msg, start, len)?
+		data = Bytes.bytes_at(msg, start, len)?
 		match type {
 			A =>
 				match data {
@@ -227,25 +227,25 @@ Dns := [].{
 			AAAA => format_ipv6(data)
 			NS | CNAME | PTR => read_name(msg, start).map_ok(|(name, _)| name)
 			MX => {
-				preference = u16_at(msg, start)?
+				preference = Bytes.u16_be_at(msg, start)?
 				(exchange, _) = read_name(msg, start + 2)?
 				Ok("${preference.to_str()} ${exchange}")
 			}
 			SRV => {
-				priority = u16_at(msg, start)?
-				weight = u16_at(msg, start + 2)?
-				port = u16_at(msg, start + 4)?
+				priority = Bytes.u16_be_at(msg, start)?
+				weight = Bytes.u16_be_at(msg, start + 2)?
+				port = Bytes.u16_be_at(msg, start + 4)?
 				(target, _) = read_name(msg, start + 6)?
 				Ok("${priority.to_str()} ${weight.to_str()} ${port.to_str()} ${target}")
 			}
 			SOA => {
 				(primary, after_primary) = read_name(msg, start)?
 				(mailbox, after_mailbox) = read_name(msg, after_primary)?
-				numbers = [0, 4, 8, 12, 16].map(|at| u32_at(msg, after_mailbox + at))
+				numbers = [0, 4, 8, 12, 16].map(|at| Bytes.u32_be_at(msg, after_mailbox + at))
 				match numbers {
 					[Ok(serial), Ok(refresh), Ok(retry), Ok(expire), Ok(minimum)] =>
 						Ok("${primary} ${mailbox} ${serial.to_str()} ${refresh.to_str()} ${retry.to_str()} ${expire.to_str()} ${minimum.to_str()}")
-					_ => Err(Malformed("SOA record ends early"))
+					_ => Err(TooShort)
 				}
 			}
 			TXT => format_txt(data)
@@ -254,21 +254,13 @@ Dns := [].{
 	}
 
 	## TXT data is a sequence of length-prefixed strings.
-	format_txt : List(U8) -> Try(Str, [Malformed(Str)])
+	format_txt : List(U8) -> Try(Str, [Malformed(Str), TooShort])
 	format_txt = |data| {
 		var $rest = data
 		var $parts = []
 		while !List.is_empty($rest) {
-			(length, after_length) =
-				match Bytes.take_u8($rest) {
-					Ok(taken) => taken
-					Err(TooShort) => return Err(Malformed("TXT record ends early"))
-				}
-			(text, after_text) =
-				match Bytes.take(after_length, length.to_u64()) {
-					Ok(taken) => taken
-					Err(TooShort) => return Err(Malformed("TXT string ends early"))
-				}
+			(length, after_length) = Bytes.take_u8($rest)?
+			(text, after_text) = Bytes.take(after_length, length.to_u64())?
 			$parts = List.append($parts, Str.inspect(Str.from_utf8_lossy(text)))
 			$rest = after_text
 		}
@@ -278,14 +270,14 @@ Dns := [].{
 	## Format 16 bytes as an IPv6 address in the standard short form (RFC 5952):
 	## lowercase hex groups without leading zeros, and the longest run of two
 	## or more zero groups written as `::`.
-	format_ipv6 : List(U8) -> Try(Str, [Malformed(Str)])
+	format_ipv6 : List(U8) -> Try(Str, [Malformed(Str), TooShort])
 	format_ipv6 = |data| {
 		if List.len(data) != 16 {
 			return Err(Malformed("AAAA record is not 16 bytes"))
 		}
 		var $groups = []
 		for i in U64.until(0, 8) {
-			$groups = List.append($groups, u16_at(data, i * 2)?)
+			$groups = List.append($groups, Bytes.u16_be_at(data, i * 2)?)
 		}
 		groups = $groups
 
@@ -320,35 +312,6 @@ Dns := [].{
 	}
 
 	# --- Byte helpers ---
-
-	slice : List(U8), U64, U64 -> Try(List(U8), [Malformed(Str)])
-	slice = |msg, offset, count|
-		if offset + count > List.len(msg) {
-			Err(Malformed("message ends early"))
-		} else {
-			Ok(List.sublist(msg, { start: offset, len: count }))
-		}
-
-	u8_at : List(U8), U64 -> Try(U8, [Malformed(Str)])
-	u8_at = |msg, offset|
-		match List.get(msg, offset) {
-			Ok(byte) => Ok(byte)
-			Err(_) => Err(Malformed("message ends early"))
-		}
-
-	u16_at : List(U8), U64 -> Try(U16, [Malformed(Str)])
-	u16_at = |msg, offset|
-		match Bytes.take_u16_be(slice(msg, offset, 2)?) {
-			Ok((n, _)) => Ok(n)
-			Err(TooShort) => Err(Malformed("message ends early"))
-		}
-
-	u32_at : List(U8), U64 -> Try(U32, [Malformed(Str)])
-	u32_at = |msg, offset|
-		match Bytes.take_u32_be(slice(msg, offset, 4)?) {
-			Ok((n, _)) => Ok(n)
-			Err(TooShort) => Err(Malformed("message ends early"))
-		}
 
 	hex_digit : U8 -> U8
 	hex_digit = |n| if n < 10 48 + n else 87 + n
@@ -408,7 +371,7 @@ expect {
 # A name that points at itself must fail rather than loop forever.
 expect Dns.read_name([192, 0], 0) == Err(Malformed("name compression loop"))
 
-expect Dns.decode_response([18, 52, 129]) == Err(Malformed("message ends early"))
+expect Dns.decode_response([18, 52, 129]) == Err(TooShort)
 
 expect Dns.format_ipv6([32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]) == Ok("2001:db8::1")
 

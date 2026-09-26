@@ -14,6 +14,17 @@
 ## ```
 ##
 ## They fail with `TooShort` if there aren't enough bytes left.
+##
+## The `_at` functions instead read at a byte offset without consuming
+## anything, for formats that refer to positions within a message (like DNS
+## name compression) or have fields at fixed offsets:
+##
+## ```roc
+## id = Bytes.u16_be_at(packet, 0)?
+## flags = Bytes.u16_be_at(packet, 2)?
+## ```
+##
+## They fail with `TooShort` if the bytes they need run past the end.
 Bytes := [].{
 
 	## Encode as 2 big-endian bytes.
@@ -111,4 +122,52 @@ Bytes := [].{
 		(n, _) = take_u64_be(List.rev(field))?
 		Ok((n, rest))
 	}
+
+	## The `len` bytes starting at `offset`.
+	bytes_at : List(U8), U64, U64 -> Try(List(U8), [TooShort])
+	bytes_at = |bytes, offset, len| {
+		# `List.sublist` silently shortens a range that runs past the end, so
+		# check the length it returned.
+		part = List.sublist(bytes, { start: offset, len })
+		if List.len(part) == len Ok(part) else Err(TooShort)
+	}
+
+	## The byte at `offset`.
+	u8_at : List(U8), U64 -> Try(U8, [TooShort])
+	u8_at = |bytes, offset|
+		match List.get(bytes, offset) {
+			Ok(byte) => Ok(byte)
+			Err(_) => Err(TooShort)
+		}
+
+	## Decode a big-endian `U16` at `offset`.
+	u16_be_at : List(U8), U64 -> Try(U16, [TooShort])
+	u16_be_at = |bytes, offset| first(take_u16_be(bytes_at(bytes, offset, 2)?))
+
+	## Decode a big-endian `U32` at `offset`.
+	u32_be_at : List(U8), U64 -> Try(U32, [TooShort])
+	u32_be_at = |bytes, offset| first(take_u32_be(bytes_at(bytes, offset, 4)?))
+
+	## Decode a big-endian `U64` at `offset`.
+	u64_be_at : List(U8), U64 -> Try(U64, [TooShort])
+	u64_be_at = |bytes, offset| first(take_u64_be(bytes_at(bytes, offset, 8)?))
+
+	## Decode a little-endian `U16` at `offset`.
+	u16_le_at : List(U8), U64 -> Try(U16, [TooShort])
+	u16_le_at = |bytes, offset| first(take_u16_le(bytes_at(bytes, offset, 2)?))
+
+	## Decode a little-endian `U32` at `offset`.
+	u32_le_at : List(U8), U64 -> Try(U32, [TooShort])
+	u32_le_at = |bytes, offset| first(take_u32_le(bytes_at(bytes, offset, 4)?))
+
+	## Decode a little-endian `U64` at `offset`.
+	u64_le_at : List(U8), U64 -> Try(U64, [TooShort])
+	u64_le_at = |bytes, offset| first(take_u64_le(bytes_at(bytes, offset, 8)?))
+
+	first : Try((n, List(U8)), [TooShort]) -> Try(n, [TooShort])
+	first = |taken|
+		match taken {
+			Ok((n, _)) => Ok(n)
+			Err(TooShort) => Err(TooShort)
+		}
 }

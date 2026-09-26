@@ -52,6 +52,9 @@ Host := [].{
 	## Resolve a host name to IP addresses with the OS resolver.
 	dns_resolve! : Str => Try(List(Str), IOErr)
 
+	## `count` bytes from the OS's secure random source.
+	random_bytes! : U64 => List(U8)
+
 	## Start running a task on a new thread. Returns False at the task limit.
 	task_spawn! : Box(() => {}) => Bool
 }
