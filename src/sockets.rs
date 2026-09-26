@@ -14,7 +14,10 @@ pub enum Socket {
     UnixStream(UnixStream),
     Udp(UdpSocket),
     TlsListener(TlsListener),
-    Tls(crate::tls::TlsStream),
+    /// Boxed: rustls's state is about a kilobyte, and every slot in the
+    /// socket heap is sized for the largest kind of socket, so inline it would
+    /// make each of the (by default) 16,384 slots that big.
+    Tls(Box<crate::tls::TlsStream>),
 }
 
 /// A TCP listener whose connections speak TLS with this configuration.

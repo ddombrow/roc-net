@@ -25,13 +25,15 @@ main! = |args| {
 	Ok({})
 }
 
+# read_into! reuses one buffer for every read (the Rust baselines do too).
 echo! = |stream| {
+	var $buf = List.with_capacity(4096)
 	while True {
-		bytes = stream.read!(4096)?
-		if List.is_empty(bytes) {
+		$buf = stream.read_into!($buf, 4096)?
+		if List.is_empty($buf) {
 			break
 		}
-		stream.write!(bytes)?
+		stream.write!($buf)?
 	}
 	Ok({})
 }

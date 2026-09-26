@@ -59,6 +59,8 @@ platform ""
 		"roc_socket_local_addr": Host.socket_local_addr!,
 		"roc_socket_peer_addr": Host.socket_peer_addr!,
 		"roc_socket_read": Host.socket_read!,
+		"roc_socket_read_append": Host.socket_read_append!,
+		"roc_socket_read_into": Host.socket_read_into!,
 		"roc_socket_set_timeout": Host.socket_set_timeout!,
 		"roc_socket_shutdown": Host.socket_shutdown!,
 		"roc_socket_write": Host.socket_write!,

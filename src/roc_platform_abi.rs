@@ -2809,6 +2809,28 @@ pub struct HostSocketReadArgs {
     pub arg1: u64,
 }
 
+/// Arguments for Host.socket_read_append!
+/// Roc signature: Host.Socket, List(U8), U64 => Try(List(U8), IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketReadAppendArgs {
+    pub arg0: *mut u64,
+    pub arg1: RocListWith<u8, false>,
+    pub arg2: u64,
+}
+
+/// Arguments for Host.socket_read_into!
+/// Roc signature: Host.Socket, List(U8), U64 => Try(List(U8), IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketReadIntoArgs {
+    pub arg0: *mut u64,
+    pub arg1: RocListWith<u8, false>,
+    pub arg2: u64,
+}
+
 /// Arguments for Host.socket_set_timeout!
 /// Roc signature: Host.Socket, U8, U64 => Try({}, IOErr)
 /// Refcounted fields are owned by the hosted function.
@@ -3028,6 +3050,12 @@ pub type HostChannelReceiveErr = ClosedOrTimedOut;
 pub type HostSocketPeerAddrResult = HostSocketLocalAddrResult;
 pub type HostSocketPeerAddrResultPayload = HostSocketLocalAddrResultPayload;
 pub type HostSocketPeerAddrResultTag = HostSocketLocalAddrResultTag;
+pub type HostSocketReadAppendResult = HostSocketReadResult;
+pub type HostSocketReadAppendResultPayload = HostSocketReadResultPayload;
+pub type HostSocketReadAppendResultTag = HostSocketReadResultTag;
+pub type HostSocketReadIntoResult = HostSocketReadResult;
+pub type HostSocketReadIntoResultPayload = HostSocketReadResultPayload;
+pub type HostSocketReadIntoResultTag = HostSocketReadResultTag;
 pub type HostSocketShutdownResult = HostSocketSetTimeoutResult;
 pub type HostSocketShutdownResultPayload = HostSocketSetTimeoutResultPayload;
 pub type HostSocketShutdownResultTag = HostSocketSetTimeoutResultTag;
@@ -4040,6 +4068,24 @@ unsafe extern "C" {
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_socket_read(arg0: *mut u64, arg1: u64) -> HostSocketReadResult;
+
+    /// Hosted symbol for Host.socket_read_append!
+    /// Roc signature: Host.Socket, List(U8), U64 => Try(List(U8), IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_socket_read_append(arg0: *mut u64, arg1: RocListWith<u8, false>, arg2: u64) -> HostSocketReadResult;
+
+    /// Hosted symbol for Host.socket_read_into!
+    /// Roc signature: Host.Socket, List(U8), U64 => Try(List(U8), IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_socket_read_into(arg0: *mut u64, arg1: RocListWith<u8, false>, arg2: u64) -> HostSocketReadResult;
 
     /// Hosted symbol for Host.socket_set_timeout!
     /// Roc signature: Host.Socket, U8, U64 => Try({}, IOErr)

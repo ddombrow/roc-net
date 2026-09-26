@@ -212,6 +212,21 @@ Very long timeouts: `Time` saturates (`Time.seconds(U64.highest)` used to
 crash with an integer overflow in Roc) and caps at about 584 years, and the
 host treats a deadline too far off to represent as none.
 
+## Reading without allocating
+
+`read!` returns a new list every call. `read_into!(buf, max)` and
+`read_append!(buf, max)` put what arrived into `buf` (replacing or
+appending), reusing its allocation when the host can see nothing else refers
+to it: exactly one reference (not `is_unique`, which also accepts static data
+such as list literals), a whole list rather than a seamless slice, and room.
+Otherwise they allocate and leave the old list alone, so reuse is never a
+correctness question. The bytes are read into a per-thread buffer and copied
+in, since Rust can't soundly read into uninitialized memory. `Framing` uses
+`read_append!` and takes its reader record apart before reading so the
+buffer has one owner; a line arriving in pieces now costs one allocation
+(for the returned record) instead of about four. Uniqueness in Roc isn't
+visible in the types, so reuse was checked by instrumenting the host once.
+
 ## Server timeouts
 
 Servers are safe by default against clients that tie up a task by being

@@ -50,3 +50,6 @@ platform/targets/x64glibc/
 
 # Core dumps QEMU writes when an emulated (x86-64) test run crashes
 qemu_*.core
+
+# Linux build of the benchmark tools
+bench/target-linux/

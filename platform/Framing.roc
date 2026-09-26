@@ -62,7 +62,10 @@ Framing := [].{
 		## bytes arrive.
 		read_until! = |Reader.(r), delimiter| {
 			started = Time.now!()
-			var $buffered = r.buffered
+			# Take the reader apart so the buffer has only one owner, $buffered,
+			# which lets each read add to it in place.
+			{ stream, buffered, max_len, message_timeout_ns } = r
+			var $buffered = buffered
 			var $searched = 0
 			while True {
 				match List.find_first_index(List.drop_first($buffered, $searched), |byte| byte == delimiter) {
@@ -70,28 +73,37 @@ Framing := [].{
 						end = $searched + offset
 						# Check the record found, not just what was buffered
 						# before it: one read can bring a whole oversized record.
-						if end > r.max_len {
+						if end > max_len {
 							return Err(TooLong)
 						}
 						record = List.take_first($buffered, end)
 						rest = List.drop_first($buffered, end + 1)
-						return Ok((record, Reader.({ ..r, buffered: rest })))
+						return Ok((record, Reader.({ stream, buffered: rest, max_len, message_timeout_ns })))
 					}
 					Err(NotFound) => {
 						# No delimiter yet, so the record is at least this long.
 						# Exactly max_len is still fine if the delimiter is next.
-						if List.len($buffered) > r.max_len {
+						if List.len($buffered) > max_len {
 							return Err(TooLong)
 						}
 						$searched = List.len($buffered)
-						chunk = read_chunk!(r, List.is_empty($buffered))?
-						if List.is_empty(chunk) {
-							return if List.is_empty($buffered) Err(EndOfStream) else Err(UnexpectedEof)
+						before = List.len($buffered)
+						$buffered =
+							match stream.read_append!($buffered, 4096) {
+								Ok(grown) => grown
+								Err(err) =>
+									return if before == 0 and timed_out(err) {
+										Err(Idle(Reader.({ stream, buffered: [], max_len, message_timeout_ns })))
+									} else {
+										Err(err)
+									}
+							}
+						if List.len($buffered) == before {
+							return if before == 0 Err(EndOfStream) else Err(UnexpectedEof)
 						}
-						if out_of_time!(r, started) {
+						if out_of_time!(message_timeout_ns, started) {
 							return Err(MessageTimedOut)
 						}
-						$buffered = List.concat($buffered, chunk)
 					}
 				}
 			}
@@ -112,18 +124,19 @@ Framing := [].{
 		## Read everything until the stream ends, including anything already
 		## buffered. Fails with `TooLong` past the reader's maximum length.
 		read_to_end! = |Reader.(r)| {
-			var $bytes = r.buffered
+			{ stream, buffered, max_len, message_timeout_ns } = r
+			var $bytes = buffered
 			while True {
-				if List.len($bytes) > r.max_len {
+				if List.len($bytes) > max_len {
 					return Err(TooLong)
 				}
-				chunk = r.stream.read!(4096)?
-				if List.is_empty(chunk) {
+				before = List.len($bytes)
+				$bytes = stream.read_append!($bytes, 4096)?
+				if List.len($bytes) == before {
 					break
 				}
-				$bytes = List.concat($bytes, chunk)
 			}
-			Ok(($bytes, Reader.({ ..r, buffered: [] })))
+			Ok(($bytes, Reader.({ stream, buffered: [], max_len, message_timeout_ns })))
 		}
 
 		## Read one frame written by `write_frame!`: a 4-byte big-endian length,
@@ -135,13 +148,14 @@ Framing := [].{
 			# fewer than 4 bytes can read small frames.
 			# Header and payload are one message, on one clock.
 			started = Time.now!()
+			max_len = r.max_len
 			(header, after_header) = take_exactly!(r, 4, started, True)?
 			(len, _) =
 				match Bytes.take_u32_be(header) {
 					Ok(decoded) => decoded
 					Err(TooShort) => return Err(UnexpectedEof)
 				}
-			if len.to_u64() > r.max_len {
+			if len.to_u64() > max_len {
 				return Err(TooLong)
 			}
 			# Mid-frame now: a timeout here isn't idle, even with nothing
@@ -260,40 +274,35 @@ Framing := [].{
 		Ok($state)
 	}
 
-	## Take exactly `count` bytes from a reader's buffer and stream, without
-	## the length limit: `read_exactly!` applies that first, and `read_frame!`
+	## Take exactly `count` bytes from a reader's buffer and stream, adding to
+	## the buffer in place as data arrives, without the length limit: `read_exactly!` applies that first, and `read_frame!`
 	## reads its fixed-size header here. It works on a `Reader`'s inner
 	## record, which only this module can get at, so it gives callers no way
 	## around a reader's limit.
 	take_exactly! = |r, count, started, message_start| {
-		var $buffered = r.buffered
+		{ stream, buffered, max_len, message_timeout_ns } = r
+		var $buffered = buffered
 		while List.len($buffered) < count {
-			chunk = read_chunk!(r, message_start and List.is_empty($buffered))?
-			if List.is_empty(chunk) {
-				return if List.is_empty($buffered) Err(EndOfStream) else Err(UnexpectedEof)
+			before = List.len($buffered)
+			$buffered =
+				match stream.read_append!($buffered, 4096) {
+					Ok(grown) => grown
+					Err(err) =>
+						return if message_start and before == 0 and timed_out(err) {
+							Err(Idle(Reader.({ stream, buffered: [], max_len, message_timeout_ns })))
+						} else {
+							Err(err)
+						}
+				}
+			if List.len($buffered) == before {
+				return if before == 0 Err(EndOfStream) else Err(UnexpectedEof)
 			}
-			if out_of_time!(r, started) {
+			if out_of_time!(message_timeout_ns, started) {
 				return Err(MessageTimedOut)
 			}
-			$buffered = List.concat($buffered, chunk)
 		}
-		Ok((List.take_first($buffered, count), { ..r, buffered: List.drop_first($buffered, count) }))
+		Ok((List.take_first($buffered, count), { stream, buffered: List.drop_first($buffered, count), max_len, message_timeout_ns }))
 	}
-
-	## Read the next chunk from the stream. If the stream's read timeout
-	## expires while `idle` (nothing of the next message has arrived), that's
-	## `Idle` with the reader handed back, since nothing is lost: the app can
-	## check on the peer and resume. Any other error passes through.
-	read_chunk! = |r, idle|
-		match r.stream.read!(4096) {
-			Ok(chunk) => Ok(chunk)
-			Err(err) =>
-				if idle and timed_out(err) {
-					Err(Idle(Reader.(r)))
-				} else {
-					Err(err)
-				}
-		}
 
 	## Whether a stream error is a read timeout, whichever kind of stream.
 	timed_out = |err|
@@ -302,9 +311,9 @@ Framing := [].{
 			_ => False
 		}
 
-	## Whether a message that started at `started` has run past the reader's
-	## message timeout.
-	out_of_time! = |r, started| r.message_timeout_ns > 0 and started.elapsed!().to_nanos() > r.message_timeout_ns
+	## Whether a message that started at `started` has run past a message
+	## timeout of `timeout_ns` (0 means none).
+	out_of_time! = |timeout_ns, started| timeout_ns > 0 and started.elapsed!().to_nanos() > timeout_ns
 
 	## Wrap `stream` in a reader that accepts lines, records, and frames of up
 	## to 1 MiB, each arriving within 60 seconds (see `with_message_timeout`).

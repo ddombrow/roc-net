@@ -47,6 +47,13 @@ Host := [].{
 	## Read up to `max` bytes from a stream (an empty list means the peer closed
 	## it), or receive one datagram on a connected UDP socket.
 	socket_read! : Socket, U64 => Try(List(U8), IOErr)
+	## Read up to `max` bytes from a stream and return them in `list`, whose
+	## old contents are replaced; its allocation is reused when possible. An
+	## empty result means the peer closed the stream.
+	socket_read_into! : Socket, List(U8), U64 => Try(List(U8), IOErr)
+	## Like `socket_read_into!`, but add what arrived to the end of `list`.
+	## An unchanged length means the peer closed the stream.
+	socket_read_append! : Socket, List(U8), U64 => Try(List(U8), IOErr)
 	## Write all bytes to a stream, or send one datagram on a connected UDP socket.
 	socket_write! : Socket, List(U8) => Try({}, IOErr)
 	## Shut down reading (0), writing (1), or both (2) on a stream.

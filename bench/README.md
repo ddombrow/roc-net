@@ -67,3 +67,33 @@ Averages of the two `baseline` runs in `results.csv`. Those runs used
 | `shed at limits` | At the task limit, drop the connection instead of exiting; limits configurable, default 10,000 tasks | roc holds 6,143 connections (the macOS thread limit, same as `threads`) and survives, instead of exiting at 1,024. Other scenarios unchanged within noise. |
 | `m4: shared socket functions` | One set of hosted functions for TCP, Unix, and UDP sockets | No change within noise. |
 | `channels (extra dealloc check)` | Every Roc deallocation also checks the channel heap | No change within noise. |
+| `boxed tls + read into roc list` | TLS socket state boxed; reads straight into the Roc list | Startup memory 22.8 MB to 3.7 MB (every socket-heap slot was sized for TLS state). Reading into the list: within noise, reverted. |
+| `reuse task threads` | Finished task threads wait up to 10 s for the next task (at most 64 idle) | churn CPU/connection 34 to 21.7 µs (-36%); thread creation was ~40% of active time. |
+| `thread reuse + per-thread read buffer` | Reads use a reused per-thread buffer instead of a fresh zeroed one | macOS: pingpong_64 11.8 to 11.3 µs. Linux (`just bench-linux`): musl pingpong_64 4.06 to 3.10 µs, bulk_16 724 to 430 µs/MiB; musl now matches glibc. |
+| `read_into! (buffer reuse)` | New `read_into!`/`read_append!` put what arrived into a buffer the caller passes back, reusing its allocation; the benchmark server uses `read_into!` | macOS: pingpong_1 4.74 to 4.55 µs; bulk_1 ~575 to ~505 µs/MiB (at the edge of its noise). Linux: pingpong_64 ~3.1 to ~2.9 µs, glibc bulk_16 441 to 405-412 µs/MiB; musl bulk_16 430 to 437-452 (no gain, within noise) |
+
+## Linux
+
+`just bench-linux` runs the same kind of load in an arm64 Linux container
+against roc-net's musl and glibc builds and the plain-Rust server (also both
+ways). It found what the macOS runs couldn't: allocating and zeroing a read
+buffer per read cost musl builds 30-60% more CPU under concurrency (musl's
+memset is slower than glibc's). mimalloc was tried first and made no
+difference; the plain-Rust server showing no musl/glibc gap pointed at
+roc-net's read path instead. Latest (6-CPU Colima VM):
+
+| CPU per op | roc musl | roc glibc | Rust musl | Rust glibc |
+| --- | ---: | ---: | ---: | ---: |
+| pingpong_1 | 9.74 µs | 10.45 µs | 9.45 µs | 9.82 µs |
+| pingpong_64 | 2.83 µs | 2.95 µs | 2.53 µs | 2.55 µs |
+| bulk_16 | 437 µs/MiB | 412 µs/MiB | 300 µs/MiB | 302 µs/MiB |
+| churn_32 | 19.2 µs | 19.2 µs | 88.4 µs | 56.4 µs |
+
+The Rust servers start a thread per connection, so roc-net's reused task
+threads win churn.
+
+With `read_into!` there's no allocation per read, but still one copy (from
+the host's per-thread buffer into the Roc list, since Rust can't soundly
+read into memory that hasn't been initialized); the Rust servers read in
+place. The rest of the gap is per-call handle lookups, refcounting, and the
+Roc code itself.

@@ -36,6 +36,35 @@ Unix := [].{
 		read! : Stream, U64 => Try(List(U8), [UnixErr(IOErr)])
 		read! = |Stream.(stream), max| unix_err(Host.socket_read!(stream, max))
 
+		## Like `read!`, but reuse `buffer`'s memory for the result: its old
+		## contents are replaced by the (up to `max`) bytes that arrived, and an
+		## empty result means the peer closed the stream. In a loop, pass back
+		## what it returned, and there's no new allocation per read:
+		##
+		## ```roc
+		## var $buf = List.with_capacity(4096)
+		## while True {
+		## 	$buf = stream.read_into!($buf, 4096)?
+		## 	if List.is_empty($buf) {
+		## 		break
+		## 	}
+		## 	stream.write!($buf)?
+		## }
+		## ```
+		##
+		## The memory is reused only while nothing else refers to `buffer`; if
+		## something does (say, you kept an earlier result), you get a new list
+		## instead and the old one is left as it was. Either way it's correct;
+		## reuse only makes it faster.
+		read_into! : Stream, List(U8), U64 => Try(List(U8), [UnixErr(IOErr)])
+		read_into! = |Stream.(stream), buffer, max| unix_err(Host.socket_read_into!(stream, buffer, max))
+
+		## Like `read_into!`, but add the bytes that arrived to the end of
+		## `buffer` instead of replacing its contents. If the length didn't
+		## change, the peer closed the stream. `Framing` reads this way.
+		read_append! : Stream, List(U8), U64 => Try(List(U8), [UnixErr(IOErr)])
+		read_append! = |Stream.(stream), buffer, max| unix_err(Host.socket_read_append!(stream, buffer, max))
+
 		## Write all of `bytes` to the stream.
 		write! : Stream, List(U8) => Try({}, [UnixErr(IOErr)])
 		write! = |Stream.(stream), bytes| unix_err(Host.socket_write!(stream, bytes))

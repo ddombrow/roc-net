@@ -362,3 +362,399 @@ time,commit,label,server,scenario,metric,value
 2026-09-26T12:07:11,d3cd63e-dirty,channels (extra dealloc check),roc,hold_10000,hit_limit,True
 2026-09-26T12:07:11,d3cd63e-dirty,channels (extra dealloc check),roc,hold_10000,rss_mib,32.1
 2026-09-26T12:07:11,d3cd63e-dirty,channels (extra dealloc check),roc,hold_10000,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_1,requests_per_sec,67096
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_1,p50_us,14
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_1,p99_us,25
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_1,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_1,rss_mib,22.8
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_1,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_1,cpu_us_per_op,4.92
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_64,requests_per_sec,164651
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_64,p50_us,380
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_64,p99_us,471
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_64,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_64,rss_mib,24.5
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_64,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,roc,pingpong_64,cpu_us_per_op,11.67
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_1,mib_per_sec,1827.7
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_1,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_1,rss_mib,22.5
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_1,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_1,cpu_us_per_op,551.42
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_16,mib_per_sec,1386.6
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_16,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_16,rss_mib,25.3
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_16,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,roc,bulk_16,cpu_us_per_op,842.21
+2026-09-26T17:58:32,37b400a,perf baseline,roc,churn_32,conns_per_sec,37583
+2026-09-26T17:58:32,37b400a,perf baseline,roc,churn_32,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,roc,churn_32,rss_mib,24.2
+2026-09-26T17:58:32,37b400a,perf baseline,roc,churn_32,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,roc,churn_32,cpu_us_per_op,33.96
+2026-09-26T17:58:32,37b400a,perf baseline,roc,hold_10000,max_open_conns,6143
+2026-09-26T17:58:32,37b400a,perf baseline,roc,hold_10000,hit_limit,True
+2026-09-26T17:58:32,37b400a,perf baseline,roc,hold_10000,rss_mib,51.3
+2026-09-26T17:58:32,37b400a,perf baseline,roc,hold_10000,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_1,requests_per_sec,69105
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_1,p50_us,14
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_1,p99_us,21
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_1,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_1,rss_mib,1.6
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_1,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_1,cpu_us_per_op,4.44
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_64,requests_per_sec,167045
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_64,p50_us,377
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_64,p99_us,461
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_64,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_64,rss_mib,1.8
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_64,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,threads,pingpong_64,cpu_us_per_op,11.27
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_1,mib_per_sec,1796.3
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_1,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_1,rss_mib,1.6
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_1,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_1,cpu_us_per_op,563.35
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_16,mib_per_sec,1263.2
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_16,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_16,rss_mib,1.7
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_16,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,threads,bulk_16,cpu_us_per_op,818.58
+2026-09-26T17:58:32,37b400a,perf baseline,threads,churn_32,conns_per_sec,38345
+2026-09-26T17:58:32,37b400a,perf baseline,threads,churn_32,errors,0
+2026-09-26T17:58:32,37b400a,perf baseline,threads,churn_32,rss_mib,1.9
+2026-09-26T17:58:32,37b400a,perf baseline,threads,churn_32,server_survived,True
+2026-09-26T17:58:32,37b400a,perf baseline,threads,churn_32,cpu_us_per_op,35.99
+2026-09-26T17:58:32,37b400a,perf baseline,threads,hold_10000,max_open_conns,6143
+2026-09-26T17:58:32,37b400a,perf baseline,threads,hold_10000,hit_limit,True
+2026-09-26T17:58:32,37b400a,perf baseline,threads,hold_10000,rss_mib,16.4
+2026-09-26T17:58:32,37b400a,perf baseline,threads,hold_10000,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_1,requests_per_sec,67684
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_1,p50_us,14
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_1,p99_us,24
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_1,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_1,rss_mib,22.8
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_1,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_1,cpu_us_per_op,4.84
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_64,requests_per_sec,164924
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_64,p50_us,381
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_64,p99_us,470
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_64,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_64,rss_mib,24.1
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_64,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,roc,pingpong_64,cpu_us_per_op,11.87
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_1,mib_per_sec,1709.5
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_1,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_1,rss_mib,22.8
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_1,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_1,cpu_us_per_op,591.7
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_16,mib_per_sec,1013.4
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_16,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_16,rss_mib,25.4
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_16,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,roc,bulk_16,cpu_us_per_op,1020.34
+2026-09-26T17:59:09,37b400a,perf baseline,roc,churn_32,conns_per_sec,37286
+2026-09-26T17:59:09,37b400a,perf baseline,roc,churn_32,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,roc,churn_32,rss_mib,24.1
+2026-09-26T17:59:09,37b400a,perf baseline,roc,churn_32,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,roc,churn_32,cpu_us_per_op,34.1
+2026-09-26T17:59:09,37b400a,perf baseline,roc,hold_10000,max_open_conns,6143
+2026-09-26T17:59:09,37b400a,perf baseline,roc,hold_10000,hit_limit,True
+2026-09-26T17:59:09,37b400a,perf baseline,roc,hold_10000,rss_mib,51.2
+2026-09-26T17:59:09,37b400a,perf baseline,roc,hold_10000,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_1,requests_per_sec,69085
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_1,p50_us,14
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_1,p99_us,22
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_1,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_1,rss_mib,1.6
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_1,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_1,cpu_us_per_op,4.48
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_64,requests_per_sec,165931
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_64,p50_us,377
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_64,p99_us,467
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_64,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_64,rss_mib,1.8
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_64,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,threads,pingpong_64,cpu_us_per_op,11.3
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_1,mib_per_sec,1828.4
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_1,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_1,rss_mib,1.6
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_1,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_1,cpu_us_per_op,550.55
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_16,mib_per_sec,785.7
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_16,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_16,rss_mib,1.6
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_16,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,threads,bulk_16,cpu_us_per_op,1087.75
+2026-09-26T17:59:09,37b400a,perf baseline,threads,churn_32,conns_per_sec,37571
+2026-09-26T17:59:09,37b400a,perf baseline,threads,churn_32,errors,0
+2026-09-26T17:59:09,37b400a,perf baseline,threads,churn_32,rss_mib,1.9
+2026-09-26T17:59:09,37b400a,perf baseline,threads,churn_32,server_survived,True
+2026-09-26T17:59:09,37b400a,perf baseline,threads,churn_32,cpu_us_per_op,35.41
+2026-09-26T17:59:09,37b400a,perf baseline,threads,hold_10000,max_open_conns,6143
+2026-09-26T17:59:09,37b400a,perf baseline,threads,hold_10000,hit_limit,True
+2026-09-26T17:59:09,37b400a,perf baseline,threads,hold_10000,rss_mib,16.4
+2026-09-26T17:59:09,37b400a,perf baseline,threads,hold_10000,server_survived,True
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,requests_per_sec,67352
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,p50_us,14
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,p99_us,22
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,errors,0
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,rss_mib,3.7
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,server_survived,True
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,cpu_us_per_op,4.79
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,requests_per_sec,165303
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,p50_us,381
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,p99_us,478
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,errors,0
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,rss_mib,5.3
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,server_survived,True
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,cpu_us_per_op,11.77
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,mib_per_sec,1867.1
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,errors,0
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,rss_mib,3.8
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,server_survived,True
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,cpu_us_per_op,539.16
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,mib_per_sec,1023.6
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,errors,0
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,rss_mib,4.6
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,server_survived,True
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,cpu_us_per_op,1000.96
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,conns_per_sec,37707
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,errors,0
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,rss_mib,5.3
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,server_survived,True
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,cpu_us_per_op,33.73
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,hold_10000,max_open_conns,6143
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,hold_10000,hit_limit,True
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,hold_10000,rss_mib,27.3
+2026-09-26T18:00:46,37b400a-dirty,boxed tls + read into roc list,roc,hold_10000,server_survived,True
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,requests_per_sec,67134
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,p50_us,14
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,p99_us,27
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,errors,0
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,rss_mib,3.7
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,server_survived,True
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_1,cpu_us_per_op,4.85
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,requests_per_sec,163297
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,p50_us,384
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,p99_us,472
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,errors,0
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,rss_mib,5.3
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,server_survived,True
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,pingpong_64,cpu_us_per_op,11.69
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,mib_per_sec,1769.7
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,errors,0
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,rss_mib,3.4
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,server_survived,True
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_1,cpu_us_per_op,569.81
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,mib_per_sec,1016.1
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,errors,0
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,rss_mib,4.5
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,server_survived,True
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,bulk_16,cpu_us_per_op,1004.26
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,conns_per_sec,37168
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,errors,0
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,rss_mib,5.3
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,server_survived,True
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,churn_32,cpu_us_per_op,33.71
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,hold_10000,max_open_conns,6143
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,hold_10000,hit_limit,True
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,hold_10000,rss_mib,35.2
+2026-09-26T18:01:05,37b400a-dirty,boxed tls + read into roc list,roc,hold_10000,server_survived,True
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_1,requests_per_sec,67028
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_1,p50_us,14
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_1,p99_us,24
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_1,errors,0
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_1,rss_mib,3.6
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_1,server_survived,True
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_1,cpu_us_per_op,4.88
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_64,requests_per_sec,163247
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_64,p50_us,383
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_64,p99_us,480
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_64,errors,0
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_64,rss_mib,5.9
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_64,server_survived,True
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,pingpong_64,cpu_us_per_op,11.58
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_1,mib_per_sec,1697.6
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_1,errors,0
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_1,rss_mib,3.7
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_1,server_survived,True
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_1,cpu_us_per_op,593.4
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_16,mib_per_sec,813.5
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_16,errors,0
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_16,rss_mib,6.4
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_16,server_survived,True
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,bulk_16,cpu_us_per_op,1154.68
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,churn_32,conns_per_sec,38833
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,churn_32,errors,0
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,churn_32,rss_mib,5.0
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,churn_32,server_survived,True
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,churn_32,cpu_us_per_op,21.59
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,hold_10000,max_open_conns,6143
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,hold_10000,hit_limit,True
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,hold_10000,rss_mib,33.3
+2026-09-26T18:08:37,37b400a-dirty,reuse task threads,roc,hold_10000,server_survived,True
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_1,requests_per_sec,66559
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_1,p50_us,14
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_1,p99_us,26
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_1,errors,0
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_1,rss_mib,3.7
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_1,server_survived,True
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_1,cpu_us_per_op,4.9
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_64,requests_per_sec,162198
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_64,p50_us,386
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_64,p99_us,477
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_64,errors,0
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_64,rss_mib,6.1
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_64,server_survived,True
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,pingpong_64,cpu_us_per_op,11.74
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_1,mib_per_sec,1710.2
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_1,errors,0
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_1,rss_mib,3.4
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_1,server_survived,True
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_1,cpu_us_per_op,590.5
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_16,mib_per_sec,1307.1
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_16,errors,0
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_16,rss_mib,6.5
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_16,server_survived,True
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,bulk_16,cpu_us_per_op,924.99
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,churn_32,conns_per_sec,38095
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,churn_32,errors,0
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,churn_32,rss_mib,5.2
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,churn_32,server_survived,True
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,churn_32,cpu_us_per_op,21.76
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,hold_10000,max_open_conns,6143
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,hold_10000,hit_limit,True
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,hold_10000,rss_mib,33.0
+2026-09-26T18:08:57,37b400a-dirty,reuse task threads,roc,hold_10000,server_survived,True
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,requests_per_sec,67347
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,p50_us,14
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,p99_us,26
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,errors,0
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,rss_mib,3.4
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,server_survived,True
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,cpu_us_per_op,4.75
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,requests_per_sec,167734
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,p50_us,372
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,p99_us,474
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,errors,0
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,rss_mib,4.8
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,server_survived,True
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,cpu_us_per_op,11.26
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,mib_per_sec,1722.8
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,errors,0
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,rss_mib,3.5
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,server_survived,True
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,cpu_us_per_op,586.38
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,mib_per_sec,1199.5
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,errors,0
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,rss_mib,6.6
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,server_survived,True
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,cpu_us_per_op,965.23
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,conns_per_sec,37945
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,errors,0
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,rss_mib,4.5
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,server_survived,True
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,cpu_us_per_op,21.37
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,hold_10000,max_open_conns,6143
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,hold_10000,hit_limit,True
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,hold_10000,rss_mib,33.4
+2026-09-26T18:17:07,37b400a-dirty,thread reuse + per-thread read buffer,roc,hold_10000,server_survived,True
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,requests_per_sec,67679
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,p50_us,14
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,p99_us,24
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,errors,0
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,rss_mib,3.3
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,server_survived,True
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_1,cpu_us_per_op,4.72
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,requests_per_sec,166342
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,p50_us,375
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,p99_us,479
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,errors,0
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,rss_mib,4.8
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,server_survived,True
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,pingpong_64,cpu_us_per_op,11.3
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,mib_per_sec,1782.0
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,errors,0
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,rss_mib,3.5
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,server_survived,True
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_1,cpu_us_per_op,564.29
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,mib_per_sec,996.7
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,errors,0
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,rss_mib,6.0
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,server_survived,True
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,bulk_16,cpu_us_per_op,1115.44
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,conns_per_sec,40035
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,errors,0
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,rss_mib,4.7
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,server_survived,True
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,churn_32,cpu_us_per_op,21.58
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,hold_10000,max_open_conns,6143
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,hold_10000,hit_limit,True
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,hold_10000,rss_mib,33.5
+2026-09-26T18:17:26,37b400a-dirty,thread reuse + per-thread read buffer,roc,hold_10000,server_survived,True
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,requests_per_sec,68632
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,p50_us,14
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,p99_us,21
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,errors,0
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,rss_mib,3.1
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,server_survived,True
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,cpu_us_per_op,4.57
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,requests_per_sec,164043
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,p50_us,380
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,p99_us,477
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,errors,0
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,rss_mib,5.4
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,server_survived,True
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,cpu_us_per_op,11.21
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,mib_per_sec,2072.2
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,errors,0
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,rss_mib,3.2
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,server_survived,True
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,cpu_us_per_op,484.72
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,mib_per_sec,1068.2
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,errors,0
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,rss_mib,4.2
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,server_survived,True
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,cpu_us_per_op,1074.71
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,conns_per_sec,39999
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,errors,0
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,rss_mib,5.2
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,server_survived,True
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,cpu_us_per_op,21.12
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,hold_10000,max_open_conns,6143
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,hold_10000,hit_limit,True
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,hold_10000,rss_mib,44.3
+2026-09-26T18:31:42,37b400a-dirty,read_into! (buffer reuse),roc,hold_10000,server_survived,True
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,requests_per_sec,69228
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,p50_us,14
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,p99_us,19
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,errors,0
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,rss_mib,3.2
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,server_survived,True
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_1,cpu_us_per_op,4.53
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,requests_per_sec,166195
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,p50_us,380
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,p99_us,467
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,errors,0
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,rss_mib,5.4
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,server_survived,True
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,pingpong_64,cpu_us_per_op,11.34
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,mib_per_sec,1898.5
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,errors,0
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,rss_mib,3.2
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,server_survived,True
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_1,cpu_us_per_op,526.65
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,mib_per_sec,1308.5
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,errors,0
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,rss_mib,4.3
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,server_survived,True
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,bulk_16,cpu_us_per_op,880.86
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,conns_per_sec,41143
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,errors,0
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,rss_mib,5.2
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,server_survived,True
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,churn_32,cpu_us_per_op,21.17
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,hold_10000,max_open_conns,6143
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,hold_10000,hit_limit,True
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,hold_10000,rss_mib,44.2
+2026-09-26T18:32:01,37b400a-dirty,read_into! (buffer reuse),roc,hold_10000,server_survived,True

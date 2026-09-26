@@ -83,6 +83,10 @@ main! = |_args| {
 		check!("framing: idle between lines hands the reader back", framing_idle_resume!),
 		check!("framing: timeout mid-line is not idle", framing_idle_mid_line!),
 		check!("framing: timeout mid-frame is not idle", framing_idle_mid_frame!),
+		check!("read_into!: each read replaces the buffer's contents", read_into_loop!),
+		check!("read_into!: a buffer still in use elsewhere is left alone", read_into_shared!),
+		check!("read_append!: appends, and end of stream leaves it unchanged", read_append_basic!),
+		check!("read_into!: a list literal as the buffer is never written to", read_into_literal!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -1246,4 +1250,59 @@ framing_idle_mid_frame! = || {
 		(result, _) if Str.contains(result, "TcpErr(TimedOut)") => Ok({})
 		(result, _) => Err(Unexpected(result))
 	}
+}
+
+## A server that sends each of `messages` as its own write, a moment apart,
+## then hangs up; returns the client's stream.
+messages_from_server! = |messages| {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |stream| {
+		for message in messages {
+			stream.write_str!(message)?
+			Time.sleep!(Time.millis(30))
+		}
+		Ok({})
+	})?
+	Tcp.connect!(address)
+}
+
+read_into_loop! = || {
+	stream = messages_from_server!(["first", "second message", "3"])?
+	var $buf = List.with_capacity(64)
+	var $got = []
+	while True {
+		$buf = stream.read_into!($buf, 64)?
+		if List.is_empty($buf) {
+			break
+		}
+		$got = List.append($got, Str.from_utf8_lossy($buf))
+	}
+	expect_eq($got, ["first", "second message", "3"])
+}
+
+# Keeping the first result while reading again must not change it: the host
+# has to see the buffer is shared and use a new one.
+read_into_shared! = || {
+	stream = messages_from_server!(["aaaa", "bbbb"])?
+	first = stream.read_into!(List.with_capacity(64), 64)?
+	second = stream.read_into!(first, 64)?
+	expect_eq((Str.from_utf8_lossy(first), Str.from_utf8_lossy(second)), ("aaaa", "bbbb"))
+}
+
+read_append_basic! = || {
+	stream = messages_from_server!(["ab", "cd"])?
+	one = stream.read_append!(Str.to_utf8("start:"), 64)?
+	two = stream.read_append!(one, 64)?
+	three = stream.read_append!(two, 64)?
+	expect_eq((Str.from_utf8_lossy(two), List.len(three) == List.len(two)), ("start:abcd", True))
+}
+
+# A literal list lives in the program's read-only data. The host must not
+# treat it as reusable (its refcount marks it as static, which "unique"
+# checks can mistake for unique).
+read_into_literal! = || {
+	stream = messages_from_server!(["xy"])?
+	literal = [1, 2, 3, 4, 5, 6, 7, 8]
+	got = stream.read_into!(literal, 64)?
+	expect_eq((got, literal), ([120, 121], [1, 2, 3, 4, 5, 6, 7, 8]))
 }

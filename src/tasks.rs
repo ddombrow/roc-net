@@ -7,7 +7,9 @@
 //! none ever finishes. Refusing lets the caller shed that one piece of work.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use crate::roc_platform_abi::{decref_erased_callable, roc_run_task, RocErasedCallable};
 
@@ -50,6 +52,74 @@ fn warn_thread_limit(err: &std::io::Error) {
     }
 }
 
+/// A task waiting to run: its closure, and its slot in the task limit.
+struct Job {
+    task: SendCallable,
+    slot: Slot,
+}
+
+impl Job {
+    fn run(self) {
+        let Job { task, slot } = self;
+        // roc_run_task takes ownership of the closure.
+        unsafe { roc_run_task(task.0) };
+        drop(slot);
+    }
+}
+
+/// Threads that finished a task wait here briefly for the next one, so a
+/// server handling many short connections reuses threads instead of creating
+/// and tearing one down per connection (which dominated that workload).
+struct Pool {
+    queue: VecDeque<Job>,
+    /// Threads waiting for a job that no job has been handed to yet.
+    idle: usize,
+}
+
+static POOL: Mutex<Pool> = Mutex::new(Pool { queue: VecDeque::new(), idle: 0 });
+static JOB_READY: Condvar = Condvar::new();
+
+/// At most this many threads wait for work at once. Idle threads count
+/// against the OS's thread limit, so the pool mustn't crowd out tasks.
+const MAX_IDLE_THREADS: usize = 64;
+/// An idle thread exits after this long without work, so the pool shrinks
+/// after a burst.
+const IDLE_THREAD_LIFETIME: Duration = Duration::from_secs(10);
+
+fn pool() -> MutexGuard<'static, Pool> {
+    POOL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Run `first`, then keep taking jobs until none comes for a while.
+fn worker(first: Job) {
+    let mut job = first;
+    loop {
+        job.run();
+        let mut pool = pool();
+        if pool.idle >= MAX_IDLE_THREADS {
+            return;
+        }
+        pool.idle += 1;
+        let deadline = Instant::now() + IDLE_THREAD_LIFETIME;
+        job = loop {
+            // Jobs are only queued after claiming an idle thread (see
+            // `roc_task_spawn`), so a queued job always has a waiter.
+            if let Some(next) = pool.queue.pop_front() {
+                break next;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                pool.idle -= 1;
+                return;
+            }
+            pool = JOB_READY
+                .wait_timeout(pool, left)
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .0;
+        };
+    }
+}
+
 /// Hosted function: Host.task_spawn!
 #[no_mangle]
 pub extern "C" fn roc_task_spawn(callable: RocErasedCallable) -> bool {
@@ -57,17 +127,29 @@ pub extern "C" fn roc_task_spawn(callable: RocErasedCallable) -> bool {
         unsafe { decref_erased_callable(callable, crate::roc_host()) };
         return false;
     };
+    let job = Job { task: SendCallable(callable), slot };
 
-    // Shared so the closure can be recovered and released if the thread
-    // never starts (`spawn` drops what it was given on failure).
-    let task = Arc::new(Mutex::new(Some(SendCallable(callable))));
-    let for_thread = task.clone();
+    // Hand it to a waiting thread if there is one.
+    {
+        let mut pool = pool();
+        if pool.idle > 0 {
+            pool.idle -= 1;
+            pool.queue.push_back(job);
+            drop(pool);
+            JOB_READY.notify_one();
+            return true;
+        }
+    }
+
+    // Otherwise start a thread. It's shared so the closure can be recovered
+    // and released if the thread never starts (`spawn` drops what it was
+    // given on failure).
+    let job = Arc::new(Mutex::new(Some(job)));
+    let for_thread = job.clone();
     let spawned = std::thread::Builder::new().spawn(move || {
-        let _slot = slot;
-        let task = for_thread.lock().unwrap().take();
-        if let Some(task) = task {
-            // roc_run_task takes ownership of the closure.
-            unsafe { roc_run_task(task.0) };
+        let first = for_thread.lock().unwrap().take();
+        if let Some(first) = first {
+            worker(first);
         }
     });
 
@@ -75,8 +157,8 @@ pub extern "C" fn roc_task_spawn(callable: RocErasedCallable) -> bool {
         Ok(_) => true,
         Err(err) => {
             warn_thread_limit(&err);
-            if let Some(task) = task.lock().unwrap().take() {
-                unsafe { decref_erased_callable(task.0, crate::roc_host()) };
+            if let Some(job) = job.lock().unwrap().take() {
+                unsafe { decref_erased_callable(job.task.0, crate::roc_host()) };
             }
             false
         }

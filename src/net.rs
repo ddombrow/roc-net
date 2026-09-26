@@ -155,6 +155,26 @@ fn unit_result(value: NetResult<()>) -> HostSocketSetTimeoutResult {
     )
 }
 
+/// Run `f` with this thread's read buffer, at least `len` bytes long.
+///
+/// Reusing one buffer per thread avoids allocating and zeroing a fresh one on
+/// every read (then only the bytes that arrived are copied into the Roc list
+/// returned). That per-read allocate-and-zero cost 30-60% extra CPU under
+/// concurrent load with musl, whose memset is slower than glibc's. It grows
+/// to the largest read a thread has asked for, at most `MAX_READ_BYTES`.
+fn with_scratch<T>(len: usize, f: impl FnOnce(&mut [u8]) -> T) -> T {
+    thread_local! {
+        static SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        if scratch.len() < len {
+            scratch.resize(len, 0);
+        }
+        f(&mut scratch[..len])
+    })
+}
+
 fn roc_bytes(bytes: &[u8]) -> RocListWith<u8, false> {
     unsafe { RocListWith::<u8, false>::from_slice(bytes, roc_host()) }
 }
@@ -363,7 +383,7 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
                 l.timeouts.apply(&tcp)?;
                 // The handshake clock starts now, at accept.
                 let deadline = deadline_after(l.handshake_timeout_ms);
-                Socket::Tls(crate::tls::server(tcp, l.config.clone(), deadline)?)
+                Socket::Tls(Box::new(crate::tls::server(tcp, l.config.clone(), deadline)?))
             }
             _ => return Err(wrong_kind("accept")),
         };
@@ -377,16 +397,95 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
 #[no_mangle]
 pub extern "C" fn roc_socket_read(socket: *mut u64, max: u64) -> HostSocketReadResult {
     bytes_result(with_socket(socket, |socket| {
-        let mut buf = vec![0u8; max.min(MAX_READ_BYTES) as usize];
-        let len = match socket {
-            Socket::TcpStream(s) => (&mut &*s).read(&mut buf)?,
-            Socket::UnixStream(s) => (&mut &*s).read(&mut buf)?,
-            Socket::Udp(s) => s.recv(&mut buf)?,
-            Socket::Tls(s) => s.read(&mut buf)?,
-            _ => return Err(wrong_kind("read")),
-        };
-        Ok(roc_bytes(&buf[..len]))
+        with_scratch(max.min(MAX_READ_BYTES) as usize, |buf| {
+            let len = match socket {
+                Socket::TcpStream(s) => (&mut &*s).read(buf)?,
+                Socket::UnixStream(s) => (&mut &*s).read(buf)?,
+                Socket::Udp(s) => s.recv(buf)?,
+                Socket::Tls(s) => s.read(buf)?,
+                _ => return Err(wrong_kind("read")),
+            };
+            Ok(roc_bytes(&buf[..len]))
+        })
     }))
+}
+
+/// Read from a stream into this thread's scratch buffer (see `with_scratch`)
+/// and put what arrived into `list`, replacing its contents or (with `keep`)
+/// after them. On an error the list is released.
+fn read_to_list(
+    socket: *mut u64,
+    list: RocListWith<u8, false>,
+    max: u64,
+    keep: bool,
+) -> NetResult<RocListWith<u8, false>> {
+    let max = max.min(MAX_READ_BYTES) as usize;
+    let read = with_socket(socket, |socket| {
+        with_scratch(max, |buf| {
+            let len = match socket {
+                Socket::TcpStream(s) => (&mut &*s).read(buf)?,
+                Socket::UnixStream(s) => (&mut &*s).read(buf)?,
+                Socket::Tls(s) => s.read(buf)?,
+                _ => return Err(wrong_kind("read_into")),
+            };
+            Ok(fill_list(list, keep, &buf[..len], max))
+        })
+    });
+    // `fill_list` took the list on success; on failure it's still ours.
+    match read {
+        Ok(list) => Ok(list),
+        Err(err) => {
+            unsafe { list.decref(roc_host()) };
+            Err(err)
+        }
+    }
+}
+
+/// Put `new_bytes` into `list`, replacing its contents or (with `keep`)
+/// after them. Reuses the list's allocation when it can: when this is the
+/// only reference to it (so no other Roc value can see the change), it's a
+/// whole list rather than a slice of another, and there's room. Otherwise it
+/// allocates a new list, leaving the old one untouched for anyone else
+/// holding it.
+fn fill_list(list: RocListWith<u8, false>, keep: bool, new_bytes: &[u8], max: usize) -> RocListWith<u8, false> {
+    let kept = if keep { list.len() } else { 0 };
+    let needed = kept + new_bytes.len();
+    // has_one_ref, not is_unique: is_unique also accepts static data (a list
+    // literal in the program), which must never be written to.
+    let capacity = list.capacity_or_alloc_ptr >> 1;
+    if !list.is_seamless_slice() && list.has_one_ref() && capacity >= needed {
+        let mut list = list;
+        unsafe { std::ptr::copy_nonoverlapping(new_bytes.as_ptr(), list.elements.add(kept), new_bytes.len()) };
+        list.length = needed;
+        return list;
+    }
+    // Room for the next read too: appending doubles, replacing sizes for `max`.
+    let capacity = if keep { needed.max(kept.saturating_mul(2)).max(kept + max) } else { needed.max(max) };
+    if capacity == 0 {
+        unsafe { list.decref(roc_host()) };
+        return RocListWith::empty();
+    }
+    let mut fresh = unsafe { RocListWith::<u8, false>::allocate(capacity, roc_host()) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(list.as_slice().as_ptr(), fresh.elements, kept);
+        std::ptr::copy_nonoverlapping(new_bytes.as_ptr(), fresh.elements.add(kept), new_bytes.len());
+        list.decref(roc_host());
+    }
+    // Only the first `needed` elements are written; the length says so.
+    fresh.length = needed;
+    fresh
+}
+
+/// Hosted function: Host.socket_read_into!
+#[no_mangle]
+pub extern "C" fn roc_socket_read_into(socket: *mut u64, list: RocListWith<u8, false>, max: u64) -> HostSocketReadResult {
+    bytes_result(read_to_list(socket, list, max, false))
+}
+
+/// Hosted function: Host.socket_read_append!
+#[no_mangle]
+pub extern "C" fn roc_socket_read_append(socket: *mut u64, list: RocListWith<u8, false>, max: u64) -> HostSocketReadResult {
+    bytes_result(read_to_list(socket, list, max, true))
 }
 
 /// Hosted function: Host.socket_write!
@@ -539,11 +638,12 @@ pub extern "C" fn roc_udp_send_to(
 #[no_mangle]
 pub extern "C" fn roc_udp_recv_from(socket: *mut u64, max: u64) -> HostUdpRecvFromResult {
     let result = with_udp(socket, |s| {
-        let mut buf = vec![0u8; max.min(MAX_READ_BYTES) as usize];
-        let (len, from): (usize, SocketAddr) = s.recv_from(&mut buf)?;
-        Ok(RocRecvFrom {
-            bytes: roc_bytes(&buf[..len]),
-            from: RocStr::from_str(&from.to_string(), roc_host()),
+        with_scratch(max.min(MAX_READ_BYTES) as usize, |buf| {
+            let (len, from): (usize, SocketAddr) = s.recv_from(buf)?;
+            Ok(RocRecvFrom {
+                bytes: roc_bytes(&buf[..len]),
+                from: RocStr::from_str(&from.to_string(), roc_host()),
+            })
         })
     });
     roc_result!(
@@ -673,7 +773,7 @@ pub extern "C" fn roc_tls_connect(
                     let deadline = deadline_after(timeout_ms);
                     let tcp = tcp_connect(address, deadline)?;
                     let name = if server_name.is_empty() { crate::tls::host_of(address) } else { server_name };
-                    Ok(Socket::Tls(crate::tls::client(tcp, name, ca_file, deadline)?))
+                    Ok(Socket::Tls(Box::new(crate::tls::client(tcp, name, ca_file, deadline)?)))
                 })
             })
         })
@@ -730,7 +830,7 @@ pub extern "C" fn roc_tls_wrap_client(
         with_str(ca_file, |ca_file| {
             with_socket(socket, |socket| {
                 let tcp = plain_tcp(socket)?;
-                open_socket(|| Ok(Socket::Tls(crate::tls::client(tcp, server_name, ca_file, deadline)?)))
+                open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::client(tcp, server_name, ca_file, deadline)?))))
             })
         })
     });
@@ -751,7 +851,7 @@ pub extern "C" fn roc_tls_wrap_server(
             with_socket(socket, |socket| {
                 let tcp = plain_tcp(socket)?;
                 let config = crate::tls::server_config(cert_file, key_file)?;
-                open_socket(|| Ok(Socket::Tls(crate::tls::server(tcp, config, deadline)?)))
+                open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::server(tcp, config, deadline)?))))
             })
         })
     });

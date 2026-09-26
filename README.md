@@ -54,8 +54,11 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     `Tcp.listen_config.with_idle_timeout(...)`, `.with_write_timeout(...)`
     change them (also for `Unix`, and `Tls.server_config`)
   - `Tcp.Listener`: `accept!`, `local_addr!`
-  - `Tcp.Stream`: `read!`, `write!`, `write_str!`, `shutdown!`, `close!`,
+  - `Tcp.Stream`: `read!`, `read_into!`, `read_append!`, `write!`, `write_str!`, `shutdown!`, `close!`,
     `set_read_timeout!`, `set_write_timeout!`, `set_nodelay!`, `local_addr!`, `peer_addr!`
+  - `read_into!(buf, max)` reuses `buf`'s memory for what arrives (no new
+    allocation per read when nothing else holds `buf`); `read_append!` adds
+    to it instead (`Framing` reads this way). Also on `Unix` and `Tls` streams.
   - Errors are `TcpErr(IOErr)`, so you can match specific cases such as
     `Err(TcpErr(ConnectionRefused))` or `Err(TcpErr(TimedOut))`.
 - `Unix.listen!`, `Unix.connect!`: Unix domain stream sockets on a file path
