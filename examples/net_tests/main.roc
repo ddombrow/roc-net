@@ -62,6 +62,13 @@ main! = |_args| {
 		check!("tls: rejects the wrong server name", tls_wrong_name!),
 		check!("tls: full duplex, 1 MB each way at once", tls_full_duplex!),
 		check!("tls: STARTTLS upgrade of a TCP connection", tls_starttls!),
+		check!("tls: STARTTLS handshake times out if the peer stalls", tls_starttls_stall!),
+		check!("tls: handshake deadline beats a peer trickling bytes", tls_trickle!),
+		check!("tls: STARTTLS keeps the plain stream's read timeout", tls_starttls_keeps_timeout!),
+		check!("tls server: slowloris client times out", tls_server_slowloris!),
+		check!("tls server: silent client times out", tls_server_silent!),
+		check!("tls server: deadline covers only the handshake", tls_server_deadline_only_handshake!),
+		check!("tls server: STARTTLS handshake times out", tls_server_starttls_stall!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -676,7 +683,7 @@ strand! = |stream| {
 # TLS tests use the certificates in examples/net_tests/certs (made by
 # scripts/make_test_certs.sh), so run them from the repository root.
 test_ca = "examples/net_tests/certs/ca.pem"
-test_server_cert = { cert_file: "examples/net_tests/certs/server.pem", key_file: "examples/net_tests/certs/server-key.pem" }
+test_server_cert = Tls.server_config({ cert_file: "examples/net_tests/certs/server.pem", key_file: "examples/net_tests/certs/server-key.pem" })
 trusting_test_ca = Tls.client_config.with_ca_file(test_ca)
 
 tls_listen_anywhere! = || {
@@ -781,4 +788,179 @@ tls_starttls! = || {
 	expect_eq(Str.from_utf8_lossy(plain.read!(64)?), "GO\n")?
 	secure = Tls.wrap_client!(plain, trusting_test_ca.with_server_name("localhost"))?
 	expect_eq(exchange!(secure, "hi")?, "secure: hi")
+}
+
+## Fail unless `took` was at least `min_ms` and well under a hang.
+expect_duration = |took, min_ms| {
+	ms = took.to_millis()
+	if ms >= min_ms and ms < min_ms + 3000 Ok({}) else Err(Unexpected("took ${ms.to_str()} ms"))
+}
+
+## Accept one plain connection, agree to STARTTLS, then never speak TLS:
+## just read (and ignore) whatever arrives until the client hangs up.
+serve_starttls_then_stall! = |listener|
+	Task.spawn!(|| {
+		plain = listener.accept!()?
+		_ = plain.read!(64)?
+		plain.write_str!("GO\n")?
+		while True {
+			match plain.read!(4096) {
+				Ok([]) | Err(_) => break
+				Ok(_) => {}
+			}
+		}
+		Ok({})
+	})
+
+# Without the timeout reaching the handshake, this waited forever.
+tls_starttls_stall! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_starttls_then_stall!(listener)?
+
+	plain = Tcp.connect!(address)?
+	plain.write_str!("STARTTLS\n")?
+	_ = plain.read!(64)?
+	start = Time.now!()
+	config = trusting_test_ca.with_server_name("localhost").with_timeout(Millis(300))
+	match Tls.wrap_client!(plain, config) {
+		Err(TlsErr(TimedOut)) => expect_duration(start.elapsed!(), 300)
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# The server starts a TLS record that claims 16 KB and then sends one byte
+# every 50 ms. Each read gets a byte in time, so only a deadline for the whole
+# handshake stops it (otherwise it would take about 13 minutes).
+tls_trickle! = || {
+	(listener, address) = listen_anywhere!()?
+	Task.spawn!(|| {
+		stream = listener.accept!()?
+		# Handshake record, TLS 1.2 version field, length 16384.
+		stream.write!([22, 3, 3, 64, 0])?
+		for _ in U64.until(0, 16384) {
+			Time.sleep!(Time.millis(50))
+			match stream.write!([0]) {
+				Ok({}) => {}
+				Err(_) => break
+			}
+		}
+		Ok({})
+	})?
+
+	start = Time.now!()
+	match Tls.connect_with!(address, trusting_test_ca.with_timeout(Millis(500))) {
+		Err(TlsErr(TimedOut)) => expect_duration(start.elapsed!(), 500)
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# A read timeout set before the upgrade still applies afterwards, even though
+# the handshake used its own deadline in between.
+tls_starttls_keeps_timeout! = || {
+	(listener, address) = listen_anywhere!()?
+	Task.spawn!(|| {
+		plain = listener.accept!()?
+		_ = plain.read!(64)?
+		plain.write_str!("GO\n")?
+		secure = Tls.wrap_server!(plain, test_server_cert)?
+		# Handshake, then say nothing until the client hangs up.
+		_ = read_to_end!(secure)
+		Ok({})
+	})?
+
+	plain = Tcp.connect!(address)?
+	plain.set_read_timeout!(Millis(200))?
+	plain.write_str!("STARTTLS\n")?
+	_ = plain.read!(64)?
+	secure = Tls.wrap_client!(plain, trusting_test_ca.with_server_name("localhost"))?
+	start = Time.now!()
+	match secure.read!(16) {
+		Err(TlsErr(TimedOut)) => expect_duration(start.elapsed!(), 200)
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+## A TLS server whose clients get 300 ms to finish the handshake. It accepts
+## one connection, tries one read, and reports what happened (and how long
+## after accepting) on the returned channel.
+tls_impatient_server! = || {
+	listener = Tls.listen!("127.0.0.1:0", test_server_cert.with_handshake_timeout(Millis(300)))?
+	address = listener.local_addr!()?
+	(report, outcome) = Channel.new!(1)?
+	Task.spawn!(|| {
+		stream = listener.accept!()?
+		accepted = Time.now!()
+		result = stream.read!(64)
+		report.send!((result, accepted.elapsed!()))
+	})?
+	Ok((address, outcome))
+}
+
+expect_server_timed_out = |(result, took)|
+	match result {
+		Err(TlsErr(TimedOut)) => expect_duration(took, 300)
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+
+# The client starts a TLS record claiming 16 KB, then sends a byte every
+# 50 ms: every read the server makes succeeds in time, so only a deadline
+# for the whole handshake ends it.
+tls_server_slowloris! = || {
+	(address, outcome) = tls_impatient_server!()?
+	attacker = Tcp.connect!(address)?
+	Task.spawn!(|| {
+		attacker.write!([22, 3, 3, 64, 0])?
+		for _ in U64.until(0, 16384) {
+			Time.sleep!(Time.millis(50))
+			match attacker.write!([0]) {
+				Ok({}) => {}
+				Err(_) => break
+			}
+		}
+		Ok({})
+	})?
+	expect_server_timed_out(outcome.receive_timeout!(Time.seconds(5))?)
+}
+
+tls_server_silent! = || {
+	(address, outcome) = tls_impatient_server!()?
+	silent = Tcp.connect!(address)?
+	reported = outcome.receive_timeout!(Time.seconds(5))?
+	# Keep the silent connection open until the server has given up on it.
+	silent.close!()
+	expect_server_timed_out(reported)
+}
+
+# A client that finishes the handshake at once and then waits longer than
+# the handshake deadline before sending is served normally.
+tls_server_deadline_only_handshake! = || {
+	(address, outcome) = tls_impatient_server!()?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	Time.sleep!(Time.millis(700))
+	client.write_str!("late but fine")?
+	match outcome.receive_timeout!(Time.seconds(5))? {
+		(Ok(bytes), _) => expect_eq(Str.from_utf8_lossy(bytes), "late but fine")
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# The client agrees to STARTTLS but never starts the handshake.
+tls_server_starttls_stall! = || {
+	(listener, address) = listen_anywhere!()?
+	(report, outcome) = Channel.new!(1)?
+	Task.spawn!(|| {
+		plain = listener.accept!()?
+		_ = plain.read!(64)?
+		plain.write_str!("GO\n")?
+		upgraded = Time.now!()
+		secure = Tls.wrap_server!(plain, test_server_cert.with_handshake_timeout(Millis(300)))?
+		result = secure.read!(64)
+		report.send!((result, upgraded.elapsed!()))
+	})?
+	client = Tcp.connect!(address)?
+	client.write_str!("STARTTLS\n")?
+	_ = client.read!(64)?
+	reported = outcome.receive_timeout!(Time.seconds(5))?
+	client.close!()
+	expect_server_timed_out(reported)
 }

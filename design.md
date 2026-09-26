@@ -258,7 +258,19 @@ linker inputs don't cover it.
    with separate read and write locks keeping ciphertext and records in
    order, taken in a fixed order. Clients finish the handshake in
    `connect!`, so certificate errors surface there; servers handshake on
-   first use, in the connection's own task. Releasing a stream sends
+   first use, in the connection's own task. A client's timeout is a deadline
+   for the whole connect-plus-handshake (for `wrap_client!`, the handshake):
+   each socket read and write during the handshake gets only the time left,
+   since a per-read timeout alone lets a peer that trickles bytes stall it
+   indefinitely. The socket's own timeouts are restored afterwards, as for
+   STARTTLS the socket is shared with the plain stream. (Found in a red-team
+   review: `wrap_client!` originally ignored its timeout and cleared the
+   plain stream's.) Servers get the same kind of deadline, counted from
+   accept (or `wrap_server!`): `Tls.server_config(...)` defaults to 10
+   seconds, adjustable with `with_handshake_timeout`, so a slowloris client
+   can't hold a connection and its task open during the handshake. It covers
+   only the handshake; bounding idle clients afterwards is the app's
+   `set_read_timeout!`, as for plain TCP. Releasing a stream sends
    close_notify. `ignore_unexpected_eof!` opts out of treating a missing
    close_notify as an error, like OpenSSL's `SSL_OP_IGNORE_UNEXPECTED_EOF`.
    STARTTLS (`wrap_client!` / `wrap_server!`) duplicates the TCP connection's

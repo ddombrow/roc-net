@@ -128,7 +128,10 @@ Tls := [].{
 		with_server_name : ClientConfig, Str -> ClientConfig
 		with_server_name = |ClientConfig.(config), name| ClientConfig.({ ..config, server_name: name })
 
-		## Give up if connecting and the handshake take longer than this.
+		## Give up with `TimedOut` if connecting and the handshake together (or,
+		## for `wrap_client!`, the handshake) take longer than this. It bounds
+		## the whole handshake, so a peer that trickles bytes to keep each read
+		## alive still times out.
 		with_timeout : ClientConfig, [Millis(U64)] -> ClientConfig
 		with_timeout = |ClientConfig.(config), Millis(ms)| ClientConfig.({ ..config, timeout_ms: ms })
 	}
@@ -150,13 +153,45 @@ Tls := [].{
 			Err(err) => Err(TlsErr(err))
 		}
 
-	## The certificate chain and private key a server presents, as PEM files.
-	ServerConfig : { cert_file : Str, key_file : Str }
+	## What a server presents and how long clients get to set up a session.
+	## Start from `server_config` and adjust:
+	##
+	## ```roc
+	## config = Tls.server_config({ cert_file: "server.pem", key_file: "server-key.pem" })
+	## listener = Tls.listen!("0.0.0.0:8443", config.with_handshake_timeout(Millis(3000)))?
+	## ```
+	ServerConfig :: { cert_file : Str, key_file : Str, handshake_timeout_ms : U64 }.{
+
+		## How long each client has, from when its connection is accepted, to
+		## complete the TLS handshake; `NoTimeout` means no limit. Past it, the
+		## stream's first read or write fails with `TimedOut`.
+		##
+		## This is a deadline for the whole handshake, so a client that sends a
+		## byte at a time to keep each read alive (a slowloris attack) can't
+		## hold the connection and its task open. It covers only the handshake:
+		## to bound idle clients after it, use the stream's
+		## `set_read_timeout!`.
+		with_handshake_timeout : ServerConfig, [NoTimeout, Millis(U64)] -> ServerConfig
+		with_handshake_timeout = |ServerConfig.(config), timeout| {
+			ms =
+				match timeout {
+					NoTimeout => 0
+					# 0 would mean "no timeout" to the host, so round up.
+					Millis(n) => if n == 0 1 else n
+				}
+			ServerConfig.({ ..config, handshake_timeout_ms: ms })
+		}
+	}
+
+	## A server presenting the certificate chain and private key in these PEM
+	## files, giving clients 10 seconds to complete the handshake.
+	server_config : { cert_file : Str, key_file : Str } -> ServerConfig
+	server_config = |files| ServerConfig.({ cert_file: files.cert_file, key_file: files.key_file, handshake_timeout_ms: 10000 })
 
 	## Listen for TLS connections on `address`.
 	listen! : Str, ServerConfig => Try(Listener, [TlsErr(IOErr)])
-	listen! = |address, config|
-		match Host.tls_listen!(address, config.cert_file, config.key_file) {
+	listen! = |address, ServerConfig.(config)|
+		match Host.tls_listen!(address, config.cert_file, config.key_file, config.handshake_timeout_ms) {
 			Ok(listener) => Ok(Listener.(listener))
 			Err(err) => Err(TlsErr(err))
 		}
@@ -164,19 +199,22 @@ Tls := [].{
 	## Switch a plain TCP connection to TLS as the client, as protocols with a
 	## STARTTLS command (SMTP, IMAP, ...) do partway through. Uses `config`'s
 	## server name, which is required here since there's no address to take
-	## it from. Don't use `stream` afterwards: raw bytes in the middle of the
-	## TLS session would break it.
+	## it from. The handshake is bounded by `config`'s timeout (30 seconds
+	## unless changed with `with_timeout`). Read and write timeouts set on
+	## `stream` carry over to the TLS stream. Don't use `stream` afterwards:
+	## raw bytes in the middle of the TLS session would break it.
 	wrap_client! : Tcp.Stream, ClientConfig => Try(Stream, [TlsErr(IOErr)])
 	wrap_client! = |stream, ClientConfig.(config)|
-		match Host.tls_wrap_client!(Tcp.to_socket(stream), config.server_name, config.ca_file) {
+		match Host.tls_wrap_client!(Tcp.to_socket(stream), config.server_name, config.ca_file, config.timeout_ms) {
 			Ok(tls) => Ok(Stream.(tls))
 			Err(err) => Err(TlsErr(err))
 		}
 
 	## Switch a plain TCP connection to TLS as the server; see `wrap_client!`.
+	## The handshake timeout counts from this call.
 	wrap_server! : Tcp.Stream, ServerConfig => Try(Stream, [TlsErr(IOErr)])
-	wrap_server! = |stream, config|
-		match Host.tls_wrap_server!(Tcp.to_socket(stream), config.cert_file, config.key_file) {
+	wrap_server! = |stream, ServerConfig.(config)|
+		match Host.tls_wrap_server!(Tcp.to_socket(stream), config.cert_file, config.key_file, config.handshake_timeout_ms) {
 			Ok(tls) => Ok(Stream.(tls))
 			Err(err) => Err(TlsErr(err))
 		}

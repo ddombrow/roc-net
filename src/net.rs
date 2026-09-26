@@ -331,7 +331,9 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
             Socket::UnixListener(l) => Socket::UnixStream(accept_retrying(|| l.listener.accept())?.0),
             Socket::TlsListener(l) => {
                 let tcp = accept_retrying(|| l.listener.accept())?.0;
-                Socket::Tls(crate::tls::server(tcp, l.config.clone())?)
+                // The handshake clock starts now, at accept.
+                let deadline = deadline_after(l.handshake_timeout_ms);
+                Socket::Tls(crate::tls::server(tcp, l.config.clone(), deadline)?)
             }
             _ => return Err(wrong_kind("accept")),
         };
@@ -610,6 +612,11 @@ pub extern "C" fn roc_dns_resolve(name: RocStr) -> HostDnsResolveResult {
 
 // --- TLS ---
 
+/// The moment `timeout_ms` from now; 0 means no deadline.
+fn deadline_after(timeout_ms: u64) -> Option<std::time::Instant> {
+    (timeout_ms > 0).then(|| std::time::Instant::now() + Duration::from_millis(timeout_ms))
+}
+
 /// Hosted function: Host.tls_connect!
 #[no_mangle]
 pub extern "C" fn roc_tls_connect(
@@ -622,10 +629,11 @@ pub extern "C" fn roc_tls_connect(
         with_str(server_name, |server_name| {
             with_str(ca_file, |ca_file| {
                 open_socket(|| {
+                    // One deadline for connecting and the handshake together.
+                    let deadline = deadline_after(timeout_ms);
                     let tcp = tcp_connect(address, timeout_ms)?;
                     let name = if server_name.is_empty() { crate::tls::host_of(address) } else { server_name };
-                    let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms));
-                    Ok(Socket::Tls(crate::tls::client(tcp, name, ca_file, timeout)?))
+                    Ok(Socket::Tls(crate::tls::client(tcp, name, ca_file, deadline)?))
                 })
             })
         })
@@ -635,14 +643,19 @@ pub extern "C" fn roc_tls_connect(
 
 /// Hosted function: Host.tls_listen!
 #[no_mangle]
-pub extern "C" fn roc_tls_listen(address: RocStr, cert_file: RocStr, key_file: RocStr) -> HostSocketAcceptResult {
+pub extern "C" fn roc_tls_listen(
+    address: RocStr,
+    cert_file: RocStr,
+    key_file: RocStr,
+    handshake_timeout_ms: u64,
+) -> HostSocketAcceptResult {
     let result = with_str(address, |address| {
         with_str(cert_file, |cert_file| {
             with_str(key_file, |key_file| {
                 open_socket(|| {
                     let config = crate::tls::server_config(cert_file, key_file)?;
                     let listener = TcpListener::bind(address)?;
-                    Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config }))
+                    Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config, handshake_timeout_ms }))
                 })
             })
         })
@@ -663,12 +676,18 @@ fn plain_tcp(socket: &Socket) -> NetResult<TcpStream> {
 
 /// Hosted function: Host.tls_wrap_client!
 #[no_mangle]
-pub extern "C" fn roc_tls_wrap_client(socket: *mut u64, server_name: RocStr, ca_file: RocStr) -> HostSocketAcceptResult {
+pub extern "C" fn roc_tls_wrap_client(
+    socket: *mut u64,
+    server_name: RocStr,
+    ca_file: RocStr,
+    timeout_ms: u64,
+) -> HostSocketAcceptResult {
+    let deadline = deadline_after(timeout_ms);
     let result = with_str(server_name, |server_name| {
         with_str(ca_file, |ca_file| {
             with_socket(socket, |socket| {
                 let tcp = plain_tcp(socket)?;
-                open_socket(|| Ok(Socket::Tls(crate::tls::client(tcp, server_name, ca_file, None)?)))
+                open_socket(|| Ok(Socket::Tls(crate::tls::client(tcp, server_name, ca_file, deadline)?)))
             })
         })
     });
@@ -677,13 +696,19 @@ pub extern "C" fn roc_tls_wrap_client(socket: *mut u64, server_name: RocStr, ca_
 
 /// Hosted function: Host.tls_wrap_server!
 #[no_mangle]
-pub extern "C" fn roc_tls_wrap_server(socket: *mut u64, cert_file: RocStr, key_file: RocStr) -> HostSocketAcceptResult {
+pub extern "C" fn roc_tls_wrap_server(
+    socket: *mut u64,
+    cert_file: RocStr,
+    key_file: RocStr,
+    handshake_timeout_ms: u64,
+) -> HostSocketAcceptResult {
+    let deadline = deadline_after(handshake_timeout_ms);
     let result = with_str(cert_file, |cert_file| {
         with_str(key_file, |key_file| {
             with_socket(socket, |socket| {
                 let tcp = plain_tcp(socket)?;
                 let config = crate::tls::server_config(cert_file, key_file)?;
-                open_socket(|| Ok(Socket::Tls(crate::tls::server(tcp, config)?)))
+                open_socket(|| Ok(Socket::Tls(crate::tls::server(tcp, config, deadline)?)))
             })
         })
     });

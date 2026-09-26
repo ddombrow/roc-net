@@ -21,6 +21,9 @@ pub enum Socket {
 pub struct TlsListener {
     pub listener: TcpListener,
     pub config: std::sync::Arc<rustls::ServerConfig>,
+    /// How long each accepted connection has to finish its handshake
+    /// (0 means no limit).
+    pub handshake_timeout_ms: u64,
 }
 
 /// A Unix listener that deletes its socket file when it closes, so the path

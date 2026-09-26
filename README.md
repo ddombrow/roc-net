@@ -61,6 +61,9 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 - `Tls.connect!`, `Tls.connect_with!`, `Tls.listen!`: TLS over TCP (rustls)
   - `Tls.Stream`: the same methods as `Tcp.Stream`, plus `ignore_unexpected_eof!`
   - `Tls.client_config.with_ca_file(...)`, `.with_server_name(...)`, `.with_timeout(...)`
+  - `Tls.server_config({ cert_file, key_file })`, `.with_handshake_timeout(...)`:
+    clients get 10 seconds by default to finish the handshake, a deadline a
+    slowloris client can't stretch
   - `Tls.wrap_client!`, `Tls.wrap_server!`: upgrade a TCP connection (STARTTLS)
   - Errors are `TlsErr(IOErr)`; certificate problems arrive as `TlsErr(Other(message))`.
 - `Udp.bind!`: UDP sockets

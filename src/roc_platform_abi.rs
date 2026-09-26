@@ -2891,7 +2891,7 @@ pub struct HostTlsIgnoreUnexpectedEofArgs {
 }
 
 /// Arguments for Host.tls_listen!
-/// Roc signature: Str, Str, Str => Try(Host.Socket, IOErr)
+/// Roc signature: Str, Str, Str, U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2899,10 +2899,11 @@ pub struct HostTlsListenArgs {
     pub arg0: RocStr,
     pub arg1: RocStr,
     pub arg2: RocStr,
+    pub arg3: u64,
 }
 
 /// Arguments for Host.tls_wrap_client!
-/// Roc signature: Host.Socket, Str, Str => Try(Host.Socket, IOErr)
+/// Roc signature: Host.Socket, Str, Str, U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2910,10 +2911,11 @@ pub struct HostTlsWrapClientArgs {
     pub arg0: *mut u64,
     pub arg1: RocStr,
     pub arg2: RocStr,
+    pub arg3: u64,
 }
 
 /// Arguments for Host.tls_wrap_server!
-/// Roc signature: Host.Socket, Str, Str => Try(Host.Socket, IOErr)
+/// Roc signature: Host.Socket, Str, Str, U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2921,6 +2923,7 @@ pub struct HostTlsWrapServerArgs {
     pub arg0: *mut u64,
     pub arg1: RocStr,
     pub arg2: RocStr,
+    pub arg3: u64,
 }
 
 /// Arguments for Host.udp_bind!
@@ -4099,34 +4102,34 @@ unsafe extern "C" {
     pub fn roc_tls_ignore_unexpected_eof(arg0: *mut u64, arg1: bool) -> HostSocketSetTimeoutResult;
 
     /// Hosted symbol for Host.tls_listen!
-    /// Roc signature: Str, Str, Str => Try(Host.Socket, IOErr)
+    /// Roc signature: Str, Str, Str, U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
     ///     unsafe { arg1.decref(roc_host); }
     ///     unsafe { arg2.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tls_listen(arg0: RocStr, arg1: RocStr, arg2: RocStr) -> HostSocketAcceptResult;
+    pub fn roc_tls_listen(arg0: RocStr, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.tls_wrap_client!
-    /// Roc signature: Host.Socket, Str, Str => Try(Host.Socket, IOErr)
+    /// Roc signature: Host.Socket, Str, Str, U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     ///     unsafe { arg1.decref(roc_host); }
     ///     unsafe { arg2.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tls_wrap_client(arg0: *mut u64, arg1: RocStr, arg2: RocStr) -> HostSocketAcceptResult;
+    pub fn roc_tls_wrap_client(arg0: *mut u64, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.tls_wrap_server!
-    /// Roc signature: Host.Socket, Str, Str => Try(Host.Socket, IOErr)
+    /// Roc signature: Host.Socket, Str, Str, U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     ///     unsafe { arg1.decref(roc_host); }
     ///     unsafe { arg2.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tls_wrap_server(arg0: *mut u64, arg1: RocStr, arg2: RocStr) -> HostSocketAcceptResult;
+    pub fn roc_tls_wrap_server(arg0: *mut u64, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.udp_bind!
     /// Roc signature: Str => Try(Host.Socket, IOErr)

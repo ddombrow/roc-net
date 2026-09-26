@@ -17,7 +17,7 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use std::time::Duration;
+use std::time::Instant;
 
 use rustls::{ClientConfig, ClientConnection, Connection, RootCertStore, ServerConfig, ServerConnection};
 use rustls_pki_types::pem::PemObject;
@@ -41,6 +41,8 @@ pub struct TlsStream {
     /// Treat a connection that ends without close_notify as a normal end of
     /// stream, like OpenSSL's SSL_OP_IGNORE_UNEXPECTED_EOF.
     ignore_unexpected_eof: AtomicBool,
+    /// When the handshake must be finished by, if there's a limit.
+    handshake_deadline: Option<Instant>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -53,7 +55,7 @@ fn tls_error(err: rustls::Error) -> io::Error {
 }
 
 impl TlsStream {
-    fn new(tcp: TcpStream, conn: Connection) -> Self {
+    fn new(tcp: TcpStream, conn: Connection, handshake_deadline: Option<Instant>) -> Self {
         TlsStream {
             tcp,
             inner: Mutex::new(Inner { conn, pending: Vec::new() }),
@@ -61,6 +63,7 @@ impl TlsStream {
             write_lock: Mutex::new(()),
             handshaken: AtomicBool::new(false),
             ignore_unexpected_eof: AtomicBool::new(false),
+            handshake_deadline,
         }
     }
 
@@ -72,7 +75,17 @@ impl TlsStream {
         &self.tcp
     }
 
-    /// Run the handshake if it hasn't happened yet.
+    /// Run the handshake if it hasn't happened yet: clients do this when
+    /// connecting, servers on the stream's first read or write.
+    ///
+    /// With a deadline, each socket read and write gets only the time that's
+    /// left, so the handshake as a whole is bounded: a peer that stalls, or
+    /// trickles bytes to keep each read alive (slowloris), fails with
+    /// `TimedOut` once the deadline passes. The socket's own read and write
+    /// timeouts are restored afterwards, whether or not the handshake
+    /// succeeds, so the deadline doesn't affect later reads and writes. (For
+    /// STARTTLS the socket is shared with the plain stream, whose timeouts the
+    /// app may have set.)
     pub fn handshake(&self) -> io::Result<()> {
         if self.handshaken.load(Ordering::Acquire) {
             return Ok(());
@@ -80,12 +93,47 @@ impl TlsStream {
         let _r = lock(&self.read_lock);
         let _w = lock(&self.write_lock);
         let mut inner = lock(&self.inner);
-        while inner.conn.is_handshaking() {
-            inner.conn.complete_io(&mut &self.tcp)?;
+        if self.handshaken.load(Ordering::Acquire) {
+            // Another task finished it while this one waited for the locks.
+            return Ok(());
         }
-        // TLS 1.3 servers send session tickets right after the handshake.
-        while inner.conn.wants_write() {
-            inner.conn.write_tls(&mut &self.tcp)?;
+        let Some(deadline) = self.handshake_deadline else {
+            return self.run_handshake(&mut inner.conn, None);
+        };
+        let saved = (self.tcp.read_timeout()?, self.tcp.write_timeout()?);
+        let result = self.run_handshake(&mut inner.conn, Some(deadline));
+        let restored = self
+            .tcp
+            .set_read_timeout(saved.0)
+            .and_then(|()| self.tcp.set_write_timeout(saved.1));
+        result?;
+        restored
+    }
+
+    fn run_handshake(&self, conn: &mut Connection, deadline: Option<Instant>) -> io::Result<()> {
+        // Also send what's left after the handshake completes, such as the
+        // session tickets TLS 1.3 servers send right after it.
+        while conn.is_handshaking() || conn.wants_write() {
+            if let Some(deadline) = deadline {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "TLS handshake timed out"));
+                }
+                self.tcp.set_read_timeout(Some(left))?;
+                self.tcp.set_write_timeout(Some(left))?;
+            }
+            if conn.wants_write() {
+                conn.write_tls(&mut &self.tcp)?;
+                continue;
+            }
+            if conn.read_tls(&mut &self.tcp)? == 0 {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed during the TLS handshake"));
+            }
+            if let Err(err) = conn.process_new_packets() {
+                // Tell the peer why (a TLS alert), best effort.
+                while conn.wants_write() && conn.write_tls(&mut &self.tcp).is_ok() {}
+                return Err(tls_error(err));
+            }
         }
         self.handshaken.store(true, Ordering::Release);
         Ok(())
@@ -274,26 +322,24 @@ pub fn host_of(address: &str) -> &str {
     }
 }
 
-/// Start a client session over `tcp` and complete the handshake, so a bad
-/// certificate is reported here rather than on the first read or write.
-pub fn client(tcp: TcpStream, server_name: &str, ca_file: &str, timeout: Option<Duration>) -> io::Result<TlsStream> {
+/// Start a client session over `tcp` and complete the handshake before
+/// `deadline`, so a bad certificate or an unresponsive peer is reported here
+/// rather than on the first read or write.
+pub fn client(tcp: TcpStream, server_name: &str, ca_file: &str, deadline: Option<Instant>) -> io::Result<TlsStream> {
     let name = ServerName::try_from(server_name.to_string()).map_err(|err| {
         io::Error::new(io::ErrorKind::InvalidInput, format!("{server_name:?} is not a valid server name: {err}"))
     })?;
     let conn = ClientConnection::new(client_config(ca_file)?, name).map_err(tls_error)?;
-    let stream = TlsStream::new(tcp, Connection::Client(conn));
-    stream.tcp.set_read_timeout(timeout)?;
-    stream.tcp.set_write_timeout(timeout)?;
+    let stream = TlsStream::new(tcp, Connection::Client(conn), deadline);
     stream.handshake()?;
-    stream.tcp.set_read_timeout(None)?;
-    stream.tcp.set_write_timeout(None)?;
     Ok(stream)
 }
 
 /// Start a server session over `tcp`. The handshake happens on the first
 /// read or write, in whichever task uses the stream, so a slow client can't
-/// hold up the task that accepted it.
-pub fn server(tcp: TcpStream, config: Arc<ServerConfig>) -> io::Result<TlsStream> {
+/// hold up the task that accepted it; it must finish by `deadline`, which the
+/// caller counts from when the connection was accepted.
+pub fn server(tcp: TcpStream, config: Arc<ServerConfig>, deadline: Option<Instant>) -> io::Result<TlsStream> {
     let conn = ServerConnection::new(config).map_err(tls_error)?;
-    Ok(TlsStream::new(tcp, Connection::Server(conn)))
+    Ok(TlsStream::new(tcp, Connection::Server(conn), deadline))
 }
