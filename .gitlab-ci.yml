@@ -112,14 +112,16 @@ glibc-link:
     paths: [target/linux/*glibc/]
     expire_in: 1 week
 
-# The test suite. It reads TLS certificates from the repository, which every
-# job has checked out, so it runs from the project directory.
+# The test suite, run by scripts/run_net_tests.sh as everywhere else (twice,
+# failing on unexpected task failures). It reads TLS certificates from the
+# repository, which every job has checked out, so it runs from the project
+# directory.
 suite-musl:
   stage: test
   extends: .per-cpu
   image: alpine:3
   script:
-    - target/linux/${ARCH}musl/net_tests
+    - scripts/run_net_tests.sh target/linux/${ARCH}musl/net_tests
 
 suite-glibc:
   stage: test
@@ -136,7 +138,7 @@ suite-glibc:
   tags: [$RUNNER]
   image: $IMAGE
   script:
-    - target/linux/${ARCH}glibc/net_tests
+    - scripts/run_net_tests.sh target/linux/${ARCH}glibc/net_tests
 
 # The e2e checks (then the resolver-deadline checks), with the example
 # servers in the background of the same job

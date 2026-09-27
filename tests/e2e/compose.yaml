@@ -23,7 +23,7 @@ services:
     volumes:
       - ../..:/work:ro
     working_dir: /work
-    command: ["target/linux/${ROC_TARGET:-arm64musl}/net_tests"]
+    command: ["scripts/run_net_tests.sh", "target/linux/${ROC_TARGET:-arm64musl}/net_tests"]
     # Enough descriptors to fill a Unix listener's queue (the backlog test):
     # Linux queues up to 4,096 connections.
     ulimits:
