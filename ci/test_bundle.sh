@@ -17,9 +17,11 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 server_pid=
 cleanup() {
+    # `|| true`: under `set -e`, a failing command here would become the
+    # script's exit status (the killed server's wait returns 143).
     if [ -n "$server_pid" ]; then
-        kill "$server_pid" 2>/dev/null
-        wait "$server_pid" 2>/dev/null
+        kill "$server_pid" 2>/dev/null || true
+        wait "$server_pid" 2>/dev/null || true
     fi
     rm -rf "$work"
 }
