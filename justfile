@@ -100,6 +100,38 @@ test-bundle:
     ./bundle.sh
     ci/test_bundle.sh ./*.tar.zst
 
+# Publish a GitLab release: test the bundle (just test-bundle), upload it to
+# the project's package registry, and create the release and its tag. Needs a
+# clean tree pushed to GitLab, a CHANGELOG.md section for the version, and
+# `glab auth login`. Asks before uploading anything.
+release version: test-bundle
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version={{version}}
+    project=86936101
+    [ -z "$(git status --porcelain)" ] || { echo "Commit or stash your changes first." >&2; exit 1; }
+    grep -q "^version = \"$version\"$" Cargo.toml || { echo "Cargo.toml's version isn't $version." >&2; exit 1; }
+    git fetch -q gitlab
+    [ "$(git rev-parse HEAD)" = "$(git rev-parse gitlab/main)" ] || { echo "Push HEAD to gitlab/main first." >&2; exit 1; }
+    notes=$(awk -v v="## $version" '$0 == v {on=1; next} /^## / {on=0} on' CHANGELOG.md)
+    [ -n "$notes" ] || { echo "CHANGELOG.md has no '## $version' section." >&2; exit 1; }
+    bundle=$(ls ./*.tar.zst)
+    file=$(basename "$bundle")
+    url="https://gitlab.com/api/v4/projects/$project/packages/generic/roc-net/$version/$file"
+    nightly=$(sed -n 's/.*roc: "\(nightly-[^"]*\)".*/\1/p' platform/main.roc)
+    echo "Release v$version: $file ($(du -h "$bundle" | cut -f1)), built for Roc $nightly"
+    read -r -p "Upload it and create the release? [y/N] " answer
+    [ "$answer" = y ] || exit 1
+    glab api --method PUT "projects/$project/packages/generic/roc-net/$version/$file" --input "$bundle" > /dev/null
+    # The platform URL must serve exactly the bundle, since Roc checks its hash.
+    curl -fsSL "$url" | cmp -s - "$bundle" || { echo "Downloading $url didn't return the bundle." >&2; exit 1; }
+    printf '%s\n\n## Using it\n\n```roc\napp [main!] { roc: "%s", pf: platform "%s" }\n```\n' \
+        "$notes" "$nightly" "$url" > target/release-notes.md
+    glab release create "v$version" --ref "$(git rev-parse HEAD)" --name "roc-net $version" \
+        --notes-file target/release-notes.md \
+        --assets-links "[{\"name\": \"$file\", \"url\": \"$url\", \"link_type\": \"package\"}]"
+    echo "Released v$version. Platform URL: $url"
+
 # Regenerate the third-party license notices for the host (after changing dependencies)
 licenses:
     python3 scripts/rust_notices.py

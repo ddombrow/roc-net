@@ -2,9 +2,62 @@
 
 A [Roc](https://www.roc-lang.org/) platform for networking services, with a host written in Rust.
 
+Write custom TCP, UDP and Unix-socket protocols, servers, clients and
+proxies as ordinary sequential Roc code: connect, read, write, and
+`Task.spawn!` a task per connection. Tasks are lightweight coroutines, so a
+server can hold tens of thousands of connections; there's TLS (rustls),
+framing helpers for line- and length-delimited protocols, channels between
+tasks, DNS, and timeouts on everything.
+
 Started from [roc-platform-template-rust](https://github.com/lukewilliamboswell/roc-platform-template-rust).
 
-## Requirements
+## Using roc-net
+
+Each [release](https://gitlab.com/ddombrow/roc-net/-/releases) lists the
+platform's URL and the Roc nightly it's built for. Use them in your app's
+header:
+
+```roc
+app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "<release URL>" }
+
+import pf.Stdout
+import pf.Tcp
+
+main! : List(Str) => Try({}, _)
+main! = |_args| {
+	stream = Tcp.connect!("example.com:80")?
+	stream.write_str!("HEAD / HTTP/1.0\r\nHost: example.com\r\n\r\n")?
+	reply = stream.read!(4096)?
+	Stdout.line!(Str.from_utf8_lossy(reply))
+}
+```
+
+Roc's new compiler changes quickly, and a release works with exactly the
+nightly it names. Released bundles build for macOS (arm64, x86-64) and
+static Linux (musl: arm64, x86-64; the programs run on any distribution).
+The glibc Linux targets need a build from source (see below).
+
+The API is summarized under [Platform API](#platform-api); `examples/` has
+complete programs, and `just docs` builds the full reference.
+
+### Known limitations
+
+- **Pre-1.0**: the API will change between releases.
+- **Cooperative scheduling**: a task yields when it waits and every 128
+  socket operations, but a long pure computation holds its worker thread
+  (and the other tasks on it) until it finishes.
+- **Fixed task stacks**: 256 KiB each (`ROC_NET_TASK_STACK_KIB`); deeper
+  recursion crashes the program. `main!` gets 8 MiB.
+- **Linux task ceiling**: each task's stack is two memory mappings, so the
+  default `vm.max_map_count` (65,530) allows roughly 30,000 tasks.
+- **macOS isn't tested in CI** (no free macOS runners); releases are tested
+  on it by hand.
+- **No HTTP**: roc-net is for custom protocols. For HTTP services, see
+  basic-webserver.
+
+## Development
+
+### Requirements
 
 - [Rust](https://rustup.rs/) (the toolchain is pinned in `rust-toolchain.toml`)
 - [Zig](https://ziglang.org), only for Linux builds (`just build-all`,
@@ -31,7 +84,7 @@ just linux-test            # suite + e2e for arm64/x64 Linux: musl on Alpine, gl
 `scripts/install_roc.sh` (what `just setup` runs) and `scripts/install_zig.sh`
 install tools from public downloads, so CI needs no credentials.
 
-## CI
+### CI
 
 `.gitlab-ci.yml` builds and tests every Linux target on GitLab's native arm64
 and x86-64 runners: type-check the examples; build the host and link the musl
