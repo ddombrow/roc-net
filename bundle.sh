@@ -16,6 +16,9 @@ done
 test -f runtime/manifest.json || { echo "Missing linker-input provenance metadata; run ./build.sh --all" >&2; exit 1; }
 metadata=()
 while IFS= read -r file; do metadata+=("$file"); done < <(find runtime -type f | sort)
+# License notices for the Rust code in libhost.a (scripts/rust_notices.py).
+test -f licenses/rust-host.txt || { echo "Missing licenses/rust-host.txt; run just licenses" >&2; exit 1; }
+while IFS= read -r file; do metadata+=("$file"); done < <(find licenses -type f | sort)
 
 # Collect all .roc files
 roc_files=(*.roc)
@@ -23,6 +26,9 @@ roc_files=(*.roc)
 # Collect all host libraries and linker inputs from target directories
 lib_files=()
 for lib in targets/*/*.a targets/*/*.o; do
+    # glibc targets aren't released: their inputs are glibc's own files
+    # (platform/main.roc still lists them, for building from source).
+    [[ "$lib" == targets/*glibc/* ]] && continue
     if [[ -f "$lib" ]]; then
         lib_files+=("$lib")
     fi

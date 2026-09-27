@@ -17,6 +17,19 @@ get_rust_triple() {
 # All supported targets
 ALL_TARGETS="x64mac arm64mac x64musl arm64musl"
 
+# Remove what linking an app never uses from the host library: debug info,
+# and the LLVM bitcode Rust's standard library ships with. That's about 70%
+# of it (a musl host goes from 53 MB to 15 MB), which every app build would
+# otherwise download in the platform bundle. Symbol names stay, so crash
+# backtraces keep them.
+strip_host() {
+    local tools
+    tools="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+    "$tools/llvm-objcopy" --strip-debug \
+        --remove-section=.llvmbc --remove-section=.llvmcmd \
+        --remove-section=__LLVM,__bitcode --remove-section=__LLVM,__cmdline "$1"
+}
+
 # Detect native target based on current platform
 detect_native_target() {
     local arch=$(uname -m)
@@ -72,6 +85,7 @@ build_target_cross() {
 
     mkdir -p "platform/targets/$target_name"
     cp "target/$rust_triple/release/libhost.a" "platform/targets/$target_name/"
+    strip_host "platform/targets/$target_name/libhost.a"
     echo "  -> platform/targets/$target_name/libhost.a"
 }
 
@@ -92,11 +106,14 @@ build_target_native() {
         cargo build --release --locked --lib --target "$rust_triple"
         mkdir -p "platform/targets/$target_name"
         cp "target/$rust_triple/release/libhost.a" "platform/targets/$target_name/"
+        strip_host "platform/targets/$target_name/libhost.a"
+    strip_host "platform/targets/$target_name/libhost.a"
     else
         # macOS: native is fine
         cargo build --release --locked --lib
         mkdir -p "platform/targets/$target_name"
         cp "target/release/libhost.a" "platform/targets/$target_name/"
+        strip_host "platform/targets/$target_name/libhost.a"
     fi
 
     echo "  -> platform/targets/$target_name/libhost.a"

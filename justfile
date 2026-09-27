@@ -90,6 +90,20 @@ smoke: build (build-example "tcp_echo_concurrent") (build-example "tcp_client")
     echo "$reply"
     [ "$reply" = "Received: smoke test" ]
 
+# Build every release target's host, bundle the platform, and test the bundle
+# as an app would use it (served over HTTP; see ci/test_bundle.sh)
+test-bundle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./build.sh --all
+    rm -f ./*.tar.zst
+    ./bundle.sh
+    ci/test_bundle.sh ./*.tar.zst
+
+# Regenerate the third-party license notices for the host (after changing dependencies)
+licenses:
+    python3 scripts/rust_notices.py
+
 # Run the network tests (see scripts/run_net_tests.sh), every example's
 # `expect`s, then the smoke test
 test: (build-example "net_tests") smoke

@@ -79,6 +79,8 @@ host:
     - scripts/install_zig.sh && export PATH="$CI_PROJECT_DIR/.tools/zig:$PATH"
     - !reference [.with-roc, before_script]
   script:
+    # The license notices shipped with the host must match Cargo.lock.
+    - python3 scripts/rust_notices.py --check
     # The host library for both C libraries. build.sh fetches the verified
     # musl runtime and uses Zig to compile AWS-LC.
     - ./build.sh --target ${ARCH}musl

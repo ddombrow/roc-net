@@ -7,6 +7,28 @@ and [runtime/README.md](runtime/README.md) for provenance, SBOM and verification
 Exact upstream notices are copied from that distribution into each runtime archive
 and carried into platform bundles under `runtime/licenses/`.
 
+## The host library's Rust dependencies
+
+Files: `platform/targets/*/libhost.a`
+
+The host is Rust, and statically links the Rust standard library and these
+crates: rustls, rustls-webpki, rustls-pki-types, aws-lc-rs and aws-lc-sys
+(TLS and cryptography; aws-lc-sys contains AWS-LC's C code, whose files carry
+ISC, Apache-2.0, MIT, BSD-3-Clause and OpenSSL/SSLeay-derived notices),
+webpki-roots (Mozilla's root certificates, CDLA-Permissive-2.0), corosensei,
+mio and slab (the task scheduler), and libc, log, cfg-if, once_cell,
+scopeguard, subtle, untrusted and zeroize. All are permissively licensed.
+
+Each crate's license expression and full license texts are in
+[platform/licenses/rust-host.txt](platform/licenses/rust-host.txt), generated
+from `Cargo.lock` by `scripts/rust_notices.py` (`just licenses`; CI fails if
+it's out of date), with the standard library's notices in
+`platform/licenses/rust-std-COPYRIGHT.html`. Both ship in platform bundles
+under `licenses/`.
+
+`src/resource.rs` is adapted from basic-webserver (UPL-1.0), like the
+template this platform started from.
+
 ## Zig runtime
 
 Files: `platform/targets/*/libzigc.a`, `platform/targets/*/libcompiler_rt.a`

@@ -1,2 +1,4 @@
 [toolchain]
 channel = "1.95.0"
+# llvm-tools: llvm-objcopy, which build.sh uses to strip the host library.
+components = ["llvm-tools"]
