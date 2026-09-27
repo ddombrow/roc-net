@@ -28,6 +28,7 @@ main! = |_args| {
 		check!("unix round trip", unix_round_trip!),
 		check!("unix half-close, same helper as TCP", unix_half_close!),
 		check!("unix listener removes its socket file", unix_cleanup!),
+		check!("unix connect gives up when the listener's queue stays full", unix_backlog_full!),
 		check!("udp round trip", udp_round_trip!),
 		check!("udp connected", udp_connected!),
 		check!("udp read timeout", udp_read_timeout!),
@@ -262,6 +263,35 @@ unix_cleanup! = || {
 		Err(UnixErr(NotFound)) => Ok({})
 		other => Err(Unexpected(Str.inspect(other)))
 	}
+}
+
+# Connect without ever accepting until the listener's queue is full. Then
+# Linux reports "try again" (the connect retries until its timeout, without
+# blocking the thread) and macOS refuses the connection; either way it must
+# give up promptly.
+unix_backlog_full! = || {
+	path = "/tmp/roc-net-tests-backlog.sock"
+	listener = Unix.listen!(path)?
+	var $held = []
+	for _ in U64.until(0, 5000) {
+		start = Time.now!()
+		result = Unix.connect_timeout!(path, Millis(100))
+		took = start.elapsed!().to_millis()
+		match result {
+			Ok(stream) => {
+				$held = List.append($held, stream)
+			}
+			Err(UnixErr(TimedOut)) | Err(UnixErr(ConnectionRefused)) => {
+				# Keep the listener (and the queue) alive until now.
+				_ = listener.local_addr!()
+				return if took < 2000 Ok({}) else Err(Unexpected("gave up after ${took.to_str()} ms"))
+			}
+			Err(UnixErr(Other(message))) if Str.contains(message, "os error 24") =>
+				return Err(Unexpected("out of file descriptors after ${List.len($held).to_str()} connections, before the queue filled; raise the limit (ulimit -n) above the listener backlog (4,096 on Linux)"))
+			Err(other) => return Err(Unexpected("after ${List.len($held).to_str()} connections: ${Str.inspect(other)}"))
+		}
+	}
+	Err(Unexpected("the queue never filled: ${List.len($held).to_str()} connections"))
 }
 
 listen_on! = |path| {
@@ -1041,9 +1071,13 @@ huge_timeouts! = || {
 	serve_once!(listener, |stream| stream.write_str!("hi"))?
 	_ = Tcp.connect_timeout!(address, Millis(U64.highest))?
 
+	# A full exchange, so the server's task ends normally: a client that left
+	# right after connecting could make it fail sending the session tickets
+	# TLS 1.3 servers send after the handshake (BrokenPipe on Linux).
 	(tls_listener, tls_address) = tls_listen_anywhere!()?
 	serve_length!(tls_listener)?
-	_ = Tls.connect_with!(tls_address, trusting_test_ca.with_timeout(Millis(U64.highest)))?
+	client = Tls.connect_with!(tls_address, trusting_test_ca.with_timeout(Millis(U64.highest)))?
+	expect_eq(exchange!(client, "ping")?, "got 4 bytes")?
 
 	_ = Dns.resolve_timeout!("localhost", Millis(U64.highest))?
 

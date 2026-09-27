@@ -73,6 +73,7 @@ Averages of the two `baseline` runs in `results.csv`. Those runs used
 | `read_into! (buffer reuse)` | New `read_into!`/`read_append!` put what arrived into a buffer the caller passes back, reusing its allocation; the benchmark server uses `read_into!` | macOS: pingpong_1 4.74 to 4.55 µs; bulk_1 ~575 to ~505 µs/MiB (at the edge of its noise). Linux: pingpong_64 ~3.1 to ~2.9 µs, glibc bulk_16 441 to 405-412 µs/MiB; musl bulk_16 430 to 437-452 (no gain, within noise) |
 | `coroutines` | Tasks are coroutines on one worker thread per CPU (`src/sched.rs`), placed round-robin | hold_10000: 10,000 connections (was 6,143, the macOS thread limit). CPU per op up: pingpong_64 11.3 to 13.7 µs, churn 21.7 to 32.4 µs; almost all of it waking sleeping workers, not scheduler code. |
 | `coroutines: local-first placement` | New tasks stay on the spawning worker unless it's busy or over its share | macOS: pingpong_64 10.4 µs, bulk_16 825 µs/MiB at 1,471 MiB/s, churn 15.1 µs: better than the thread server (11.2, 889, 35.3). Linux: churn 12.8 µs (Rust threads 56-88), but pingpong_64 3.4 µs vs 2.5 and bulk_16 440-490 µs/MiB vs 296, at half the Rust server's throughput. |
+| `coroutines: work stealing when saturated` | Per-worker run queues; a worker busy for 500 µs with a backlog wakes one sleeping worker to steal half; sockets move to the thief's event queue | macOS: pingpong_64 10.9 µs, churn 12.3 µs, bulk_16 881 µs/MiB (thread server 11.2, 35.6, 879). Linux: bulk_16 9.0-9.4 GiB/s (local-first 4.1-6.6, Tokio 10.8), pingpong_64 476-653k requests/s at 4.4-5.3 µs (Tokio ~380k at 5.2), churn 12.6-13.0 µs. |
 
 ## Linux
 
@@ -84,19 +85,17 @@ memset is slower than glibc's). mimalloc was tried first and made no
 difference; the plain-Rust server showing no musl/glibc gap pointed at
 roc-net's read path instead. Latest (6-CPU Colima VM):
 
-| CPU per op (throughput) | roc (coroutines) | Rust threads | Tokio |
+| CPU per op (throughput) | roc (work-stealing coroutines) | Rust threads | Tokio |
 | --- | ---: | ---: | ---: |
-| pingpong_1 | 11.5-11.7 µs | 9.9-10.0 µs | 10.9-11.2 µs |
-| pingpong_64 | 3.4-4.9 µs (490-850k/s) | 2.5 µs (1.18M/s) | 5.2-5.5 µs (330-390k/s) |
-| bulk_16 | 444-482 µs/MiB (4.2-6.8 GiB/s) | 303-308 µs/MiB (13.2-13.5 GiB/s) | 367-371 µs/MiB (10.5 GiB/s) |
-| churn_32 | 13.0-13.6 µs | 57-92 µs | 15.8-15.9 µs |
+| pingpong_1 | 11.3-11.5 µs | 9.6-9.8 µs | 10.8-10.9 µs |
+| pingpong_64 | 4.4-5.3 µs (476-653k/s) | 2.5-2.6 µs (1.14-1.17M/s) | 5.2 µs (376-389k/s) |
+| bulk_16 | 450 µs/MiB (9.0-9.4 GiB/s) | 296-305 µs/MiB (13.4-13.7 GiB/s) | 359-363 µs/MiB (10.8 GiB/s) |
+| churn_32 | 12.6-13.0 µs | 56-88 µs | 15.5-15.6 µs |
 
-(Ranges cover the musl and glibc builds; roc's pingpong_64 also varies run
-to run with how connections land on workers.) Against Tokio, the reference
-async runtime, roc-net's coroutines do better on request-response and short
-connections and worse on bulk transfer, where Tokio's work stealing spreads
-busy connections across CPUs; the thread-per-connection server beats both on
-busy connections in this setup.
+(Ranges cover the musl and glibc builds.) Against Tokio, the reference
+async runtime, roc-net does better on request-response and short
+connections and is close on bulk transfer; the thread-per-connection server
+beats both on busy connections in this setup.
 
 This VM is where coroutines look worst: the load generator shares the 6
 CPUs, waking it on another CPU is expensive under virtualization, and

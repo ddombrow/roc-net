@@ -274,6 +274,9 @@ fn run(args: &[String]) -> i32 {
     limits::max_tasks();
     limits::max_sockets();
     limits::max_channels();
+    limits::workers();
+    limits::task_stack_bytes();
+    limits::share_after();
 
     // Leaked so it stays valid for tasks that are still running when `main!` returns.
     let roc_host: &'static mut RocHost = Box::leak(Box::new(RocHost {
@@ -284,5 +287,15 @@ fn run(args: &[String]) -> i32 {
 
     let args_list = build_args_list(args, roc_host);
 
-    sched::run_main(move || unsafe { roc_main(args_list) })
+    // `main!` may resume on another thread (see `sched.rs`); the list is
+    // only ever used by it.
+    struct Args(RocList<RocStr>);
+    unsafe impl Send for Args {}
+    impl Args {
+        fn into_list(self) -> RocList<RocStr> {
+            self.0
+        }
+    }
+    let args = Args(args_list);
+    sched::run_main(move || unsafe { roc_main(args.into_list()) })
 }

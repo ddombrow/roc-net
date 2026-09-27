@@ -21,6 +21,15 @@ pub fn workers() -> usize {
     })
 }
 
+/// `ROC_NET_SHARE_AFTER_US`: how long a worker must have been busy without a
+/// break before its backlog wakes another worker to share it. Lower spreads
+/// load sooner at the cost of more cross-thread wake-ups; 0 shares every
+/// backlog (which tests use to make tasks move between threads often).
+pub fn share_after() -> std::time::Duration {
+    static VALUE: OnceLock<std::time::Duration> = OnceLock::new();
+    *VALUE.get_or_init(|| std::time::Duration::from_micros(from_env("ROC_NET_SHARE_AFTER_US", 500, 0, 10_000_000) as u64))
+}
+
 /// `ROC_NET_TASK_STACK_KIB`: each task's stack size. Memory is only used as
 /// the stack grows into it; this is the most a task can use (deep recursion
 /// past it crashes the program). `main!` gets 8 MiB, like a main thread.

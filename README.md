@@ -120,9 +120,11 @@ The app provides `main! : List(Str) => Try({}, [Exit(I32), ..])`.
 connection rather than stop (`_ = Task.spawn!(|| handle!(stream))`). At the
 socket limit `accept!` waits for a free slot.
 
-Tasks are coroutines, many per thread: `ROC_NET_WORKERS` threads (default one
-per CPU) run them, and a task waiting on a socket, a channel or a sleep costs
-its stack, not a thread. Each task's stack is `ROC_NET_TASK_STACK_KIB`
+Tasks are coroutines, many per thread: up to `ROC_NET_WORKERS` threads
+(default one per CPU) run them, started as load needs them, and a task
+waiting on a socket, a channel or a sleep costs its stack, not a thread. A
+thread that stays busy shares its backlog with idle ones (work stealing,
+after `ROC_NET_SHARE_AFTER_US`, default 500). Each task's stack is `ROC_NET_TASK_STACK_KIB`
 (default 256) of address space, of which it uses only what it touches;
 deeper recursion than that crashes the program. On Linux each stack is two
 memory mappings, so the default `vm.max_map_count` (65,530) allows roughly

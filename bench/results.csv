@@ -956,3 +956,201 @@ time,commit,label,server,scenario,metric,value
 2026-09-26T19:45:03,3188ca7-dirty,coroutines: local-first placement,tokio,hold_10000,hit_limit,False
 2026-09-26T19:45:03,3188ca7-dirty,coroutines: local-first placement,tokio,hold_10000,rss_mib,55.7
 2026-09-26T19:45:03,3188ca7-dirty,coroutines: local-first placement,tokio,hold_10000,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_1,requests_per_sec,65513
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_1,p50_us,15
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_1,p99_us,21
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_1,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_1,rss_mib,3.9
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_1,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_1,cpu_us_per_op,5.42
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_64,requests_per_sec,161295
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_64,p50_us,391
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_64,p99_us,489
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_64,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_64,rss_mib,7.0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_64,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,pingpong_64,cpu_us_per_op,15.04
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_1,mib_per_sec,1929.8
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_1,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_1,rss_mib,3.9
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_1,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_1,cpu_us_per_op,522.83
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_16,mib_per_sec,1793.5
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_16,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_16,rss_mib,4.7
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_16,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,bulk_16,cpu_us_per_op,560.14
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,churn_32,conns_per_sec,39471
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,churn_32,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,churn_32,rss_mib,8.0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,churn_32,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,churn_32,cpu_us_per_op,23.77
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,hold_10000,max_open_conns,10000
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,hold_10000,hit_limit,False
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,hold_10000,rss_mib,33.7
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,roc,hold_10000,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_1,requests_per_sec,69776
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_1,p50_us,14
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_1,p99_us,20
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_1,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_1,rss_mib,1.6
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_1,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_1,cpu_us_per_op,4.34
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_64,requests_per_sec,167304
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_64,p50_us,375
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_64,p99_us,467
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_64,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_64,rss_mib,1.8
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_64,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,pingpong_64,cpu_us_per_op,11.19
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_1,mib_per_sec,2104.4
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_1,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_1,rss_mib,1.6
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_1,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_1,cpu_us_per_op,480.97
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_16,mib_per_sec,1159.5
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_16,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_16,rss_mib,1.6
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_16,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,bulk_16,cpu_us_per_op,871.82
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,churn_32,conns_per_sec,36533
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,churn_32,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,churn_32,rss_mib,1.8
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,churn_32,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,churn_32,cpu_us_per_op,35.37
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,hold_10000,max_open_conns,6143
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,hold_10000,hit_limit,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,hold_10000,rss_mib,16.3
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,threads,hold_10000,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_1,requests_per_sec,65820
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_1,p50_us,14
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_1,p99_us,22
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_1,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_1,rss_mib,2.1
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_1,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_1,cpu_us_per_op,5.11
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_64,requests_per_sec,164084
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_64,p50_us,385
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_64,p99_us,472
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_64,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_64,rss_mib,2.6
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_64,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,pingpong_64,cpu_us_per_op,18.08
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_1,mib_per_sec,1211.0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_1,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_1,rss_mib,2.1
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_1,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_1,cpu_us_per_op,1184.76
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_16,mib_per_sec,1577.8
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_16,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_16,rss_mib,2.3
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_16,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,bulk_16,cpu_us_per_op,1044.51
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,churn_32,conns_per_sec,39430
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,churn_32,errors,0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,churn_32,rss_mib,2.5
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,churn_32,server_survived,True
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,churn_32,cpu_us_per_op,26.0
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,hold_10000,max_open_conns,10000
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,hold_10000,hit_limit,False
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,hold_10000,rss_mib,55.7
+2026-09-26T22:42:52,08a2f5b-dirty,coroutines: work stealing,tokio,hold_10000,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_1,requests_per_sec,65011
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_1,p50_us,15
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_1,p99_us,21
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_1,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_1,rss_mib,4.1
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_1,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_1,cpu_us_per_op,5.57
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_64,requests_per_sec,181496
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_64,p50_us,347
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_64,p99_us,480
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_64,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_64,rss_mib,6.4
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_64,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,pingpong_64,cpu_us_per_op,10.92
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_1,mib_per_sec,1940.3
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_1,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_1,rss_mib,3.9
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_1,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_1,cpu_us_per_op,519.32
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_16,mib_per_sec,1391.6
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_16,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_16,rss_mib,5.6
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_16,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,bulk_16,cpu_us_per_op,881.02
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,churn_32,conns_per_sec,40475
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,churn_32,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,churn_32,rss_mib,6.7
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,churn_32,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,churn_32,cpu_us_per_op,12.28
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,hold_10000,max_open_conns,10000
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,hold_10000,hit_limit,False
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,hold_10000,rss_mib,58.3
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,roc,hold_10000,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_1,requests_per_sec,69324
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_1,p50_us,14
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_1,p99_us,19
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_1,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_1,rss_mib,1.6
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_1,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_1,cpu_us_per_op,4.4
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_64,requests_per_sec,168772
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_64,p50_us,373
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_64,p99_us,458
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_64,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_64,rss_mib,1.8
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_64,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,pingpong_64,cpu_us_per_op,11.25
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_1,mib_per_sec,2172.5
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_1,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_1,rss_mib,1.6
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_1,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_1,cpu_us_per_op,463.14
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_16,mib_per_sec,1149.0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_16,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_16,rss_mib,1.6
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_16,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,bulk_16,cpu_us_per_op,878.53
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,churn_32,conns_per_sec,38768
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,churn_32,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,churn_32,rss_mib,1.9
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,churn_32,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,churn_32,cpu_us_per_op,35.58
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,hold_10000,max_open_conns,6143
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,hold_10000,hit_limit,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,hold_10000,rss_mib,16.4
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,threads,hold_10000,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_1,requests_per_sec,65844
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_1,p50_us,14
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_1,p99_us,21
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_1,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_1,rss_mib,2.1
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_1,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_1,cpu_us_per_op,5.09
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_64,requests_per_sec,163298
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_64,p50_us,386
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_64,p99_us,471
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_64,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_64,rss_mib,2.6
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_64,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,pingpong_64,cpu_us_per_op,18.28
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_1,mib_per_sec,1196.3
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_1,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_1,rss_mib,2.1
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_1,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_1,cpu_us_per_op,1183.4
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_16,mib_per_sec,1492.2
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_16,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_16,rss_mib,2.3
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_16,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,bulk_16,cpu_us_per_op,1099.72
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,churn_32,conns_per_sec,37763
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,churn_32,errors,0
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,churn_32,rss_mib,2.5
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,churn_32,server_survived,True
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,churn_32,cpu_us_per_op,26.32
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,hold_10000,max_open_conns,10000
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,hold_10000,hit_limit,False
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,hold_10000,rss_mib,55.7
+2026-09-26T23:08:02,08a2f5b-dirty,coroutines: work stealing when saturated,tokio,hold_10000,server_survived,True

@@ -90,9 +90,20 @@ smoke: build (build-example "tcp_echo_concurrent") (build-example "tcp_client")
     echo "$reply"
     [ "$reply" = "Received: smoke test" ]
 
-# Run the network tests, every example's `expect`s, then the smoke test
+# Run the network tests (a second time with tasks moving between threads as
+# often as possible), every example's `expect`s, then the smoke test
 test: (build-example "net_tests") smoke
-    {{bin_dir}}/net_tests
+    #!/usr/bin/env bash
+    set -uo pipefail
+    net_tests() {
+        out=$("$@" 2>&1); code=$?
+        echo "$out" | grep -v '^ok'
+        # A task that fails unexpectedly only logs; count that as a failure.
+        [ $code = 0 ] && ! echo "$out" | grep -q '^task failed'
+    }
+    net_tests {{bin_dir}}/net_tests || exit 1
+    echo "== again, stealing work at every backlog"
+    ROC_NET_SHARE_AFTER_US=0 net_tests {{bin_dir}}/net_tests || exit 1
     for f in $(grep -lE '^expect' examples/*/*.roc | xargs -n1 dirname | sort -u); do roc test "$f/main.roc" || exit 1; done
 
 linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline"
@@ -139,14 +150,19 @@ linux-test: (build-linux "arm64musl") (build-linux "arm64glibc") (build-linux "x
         # A stage that hangs fails after 10 minutes instead of blocking the run.
         # -T and </dev/null: timeout runs compose in the background, where
         # reading from the terminal would stop it (SIGTTIN) instead of timing out.
-        ROC_TARGET=$1 ROC_IMAGE=$2 ROC_PLATFORM=$(platform_of "$1") timeout 600 {{compose}} run --rm -T net-tests </dev/null | tail -1
-        [ "${PIPESTATUS[0]}" = 0 ] || { status=1; echo "FAILED (exit ${PIPESTATUS[0]}; 124 means it timed out)"; }
+        out=$(ROC_TARGET=$1 ROC_IMAGE=$2 ROC_PLATFORM=$(platform_of "$1") timeout 600 {{compose}} run --rm -T net-tests </dev/null 2>&1)
+        code=$?
+        echo "$out" | tail -1
+        # A task that fails unexpectedly only logs; count that as a failure.
+        if echo "$out" | grep '^task failed'; then code=1; fi
+        [ $code = 0 ] || { status=1; echo "FAILED (exit $code; 124 means it timed out)"; }
         {{compose}} down -t 1 >/dev/null 2>&1
     }
     resolver() {
         echo "== resolver deadlines: $1 on $2"
         ROC_TARGET=$1 ROC_IMAGE=$2 ROC_PLATFORM=$(platform_of "$1") timeout 600 {{compose}} run --rm -T resolve-deadline </dev/null | tail -1
-        [ "${PIPESTATUS[0]}" = 0 ] || { status=1; echo "FAILED (exit ${PIPESTATUS[0]}; 124 means it timed out)"; }
+        code=${PIPESTATUS[0]}
+        [ $code = 0 ] || { status=1; echo "FAILED (exit $code; 124 means it timed out)"; }
         {{compose}} down -t 1 >/dev/null 2>&1
     }
     e2e() {
@@ -155,7 +171,8 @@ linux-test: (build-linux "arm64musl") (build-linux "arm64glibc") (build-linux "x
         {{compose}} down -t 1 >/dev/null 2>&1
         ROC_TARGET=$1 ROC_IMAGE=$2 ROC_PLATFORM=$(platform_of "$1") timeout 600 {{compose}} up --force-recreate --exit-code-from e2e echo udp lines chat e2e </dev/null 2>/dev/null \
             | sed -n 's/^e2e-1 *| //p' | tail -1
-        [ "${PIPESTATUS[0]}" = 0 ] || { status=1; echo "FAILED (exit ${PIPESTATUS[0]}; 124 means it timed out)"; }
+        code=${PIPESTATUS[0]}
+        [ $code = 0 ] || { status=1; echo "FAILED (exit $code; 124 means it timed out)"; }
         {{compose}} down -t 1 >/dev/null 2>&1
     }
     for arch in arm64 x64; do

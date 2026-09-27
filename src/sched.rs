@@ -1,38 +1,58 @@
-//! Tasks as coroutines on a few worker threads.
+//! Tasks as coroutines on a few worker threads, with work stealing.
 //!
 //! Every task, `main!` included, runs on its own small stack (a corosensei
 //! coroutine). Each worker thread runs many of them: when a task would block
 //! (a socket that isn't ready, a sleep, an empty channel), the hosted function
-//! suspends it and the worker runs another. Sockets are non-blocking; a
-//! worker waits for readiness with one `mio::Poll` (epoll or kqueue) for all
-//! of its tasks, so an idle connection costs a suspended stack, not a thread.
+//! suspends it and the worker runs another. Sockets are non-blocking, and
+//! each worker waits for readiness with its own `mio::Poll` (epoll or
+//! kqueue), so an idle connection costs a suspended stack, not a thread.
 //!
 //! Roc code doesn't change: a hosted function still returns only when its
 //! operation is done. Suspending happens inside it, on the task's stack.
 //!
-//! - A task stays on the worker it started on, so thread-local state (such
-//!   as the read scratch buffer) is safe to use between waits, never across
-//!   one. Nothing may hold a `std::sync::Mutex` across a wait either: another
-//!   task on the same worker taking it would block the whole thread. Code
-//!   that must wait while holding a lock uses [`Lock`].
-//! - New tasks are spread round-robin across workers, started on first use
-//!   (`ROC_NET_WORKERS`, default one per CPU). `main!` runs on the main
-//!   thread, which is worker 0.
-//! - Scheduling is cooperative. A task yields when it waits, and also after
+//! - **Run queues.** Each worker has a queue of tasks ready to run. A new
+//!   task, or one being woken, goes on the queue of the worker doing the
+//!   spawning or waking (a plain thread uses a shared queue instead), which
+//!   keeps request-response traffic on one thread. When a worker is
+//!   saturated (busy without a break for `ROC_NET_SHARE_AFTER_US`, default
+//!   500 µs) and has a backlog,
+//!   it wakes a sleeping worker (at most one at a time, see `SEARCHING`),
+//!   which steals half of some queue. Only woken workers steal: stealing
+//!   whenever a worker ran dry kept moving connections between workers that
+//!   were keeping up. Workers past the first start only when needed, up to
+//!   `ROC_NET_WORKERS` (default one per CPU), so a small tool stays on one
+//!   thread.
+//! - **Tasks move between threads.** A task may resume on a different thread
+//!   than it suspended on. So nothing may hold thread-local state across a
+//!   wait, nor a `std::sync::Mutex` (another task on that thread taking it
+//!   would block the whole worker): code that must wait while holding a lock
+//!   uses [`Lock`]. And because the compiler may keep a thread-local
+//!   variable's address across a call, thread-locals are only reached
+//!   through functions that are never inlined, which look the address up
+//!   again each time (see `with_scratch` in `sockets.rs` too).
+//! - **Sockets.** A task waiting on a socket is recorded with the socket
+//!   ([`IoReg`]), not the worker, so an event wakes it wherever it runs. Each
+//!   socket is watched by one worker's event queue, at first the one it was
+//!   first waited on from; when a task that was stolen waits on it (and
+//!   nobody else is waiting on it), it moves to the thief's queue, so stealing
+//!   rebalances load lastingly rather than for one request.
+//! - **Waking.** Each wait has an id, and a wake-up only counts if it names
+//!   the task's current wait, so a stale one (for a wait that already ended
+//!   by timing out, say) is ignored. A wake-up can arrive before the task has
+//!   finished suspending; the task's state flags make the worker put it back
+//!   on a queue once it has.
+//! - **Fairness.** Cooperative: a task yields when it waits, and after
 //!   [`BUDGET`] socket operations that didn't have to wait, so a task
 //!   streaming data can't starve the others on its worker. Pure computation
 //!   in Roc has no yield points.
-//! - Wake-ups carry the id of the wait they're for, so a stale one (for a
-//!   wait that already ended by timing out, say) is ignored.
 //! - The same functions work outside a task (on a plain thread), by blocking
 //!   that thread instead.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::os::fd::RawFd;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -46,152 +66,181 @@ use slab::Slab;
 /// the others on its worker.
 const BUDGET: u32 = 128;
 
+/// A busy worker checks for socket events and the shared queue after running
+/// this many tasks, so a long queue can't hide them.
+const EVENT_INTERVAL: u32 = 61;
+
 /// Finished tasks' stacks kept for reuse, so spawning doesn't map a new one
 /// each time.
 const MAX_POOLED_STACKS: usize = 256;
 
 const WAKER_TOKEN: Token = Token(usize::MAX);
 
+/// Longest a worker sleeps in `poll` at a time: kqueue rejects very long
+/// timeouts (EINVAL), and waking once an hour to re-check costs nothing.
 const MAX_POLL_WAIT: Duration = Duration::from_secs(3600);
-
-/// How often a worker updates its load measurement.
-const LOAD_WINDOW: Duration = Duration::from_millis(5);
-
-/// A worker running at least this much of the time hands new tasks to less
-/// busy workers.
-const BUSY_PERCENT: u32 = 50;
-
-/// How many more tasks than an even share a worker keeps before handing new
-/// ones to others, even when it isn't busy. Keeping tasks local avoids waking
-/// another thread (the main cost of a hand-off); the cap keeps a burst of
-/// connections, which arrives before the load measurement notices, from
-/// landing on one worker for good (tasks don't move once started).
-const LOCAL_SLACK: usize = 8;
 
 pub type Job = Box<dyn FnOnce() + Send>;
 
-/// Why a task suspended.
-enum Wait {
-    /// Until `fd` is readable (or writable), or the deadline.
-    Io { fd: RawFd, writable: bool, deadline: Option<Instant> },
-    Sleep(Instant),
-    /// Until a [`TaskWaker`] wakes it, or the deadline.
-    Park(Option<Instant>),
-    /// Let other tasks run, then continue.
+/// Why a task handed control back to its worker.
+enum Suspend {
+    /// Waiting: its wakers, and timer if any, are registered.
+    Wait,
+    /// Out of budget: run again after the others in the queue.
     Yield,
 }
 
-/// Why a task resumed.
+/// How a wait ended.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Woke {
-    Ready,
-    TimedOut,
+    Ready = 0,
+    TimedOut = 1,
 }
 
-type Co = Coroutine<Woke, Wait, (), DefaultStack>;
+type Co = Coroutine<(), Suspend, (), DefaultStack>;
 
-thread_local! {
-    /// This thread's worker, if it is one.
-    static WORKER: Cell<*const Worker> = const { Cell::new(std::ptr::null()) };
-    /// The running task's yielder; null when no task is running.
-    static YIELDER: Cell<*const Yielder<Woke, Wait>> = const { Cell::new(std::ptr::null()) };
-    static OPS_LEFT: Cell<u32> = const { Cell::new(0) };
+// --- Tasks ---
+
+/// Task state bits. `RUNNING`: a worker is running it. `NOTIFIED`: it's on a
+/// queue, or (with `RUNNING`) must go back on one when it suspends.
+const RUNNING: u8 = 1;
+const NOTIFIED: u8 = 2;
+const DONE: u8 = 4;
+
+struct Task {
+    /// Resumed only by the worker that set `RUNNING`.
+    co: UnsafeCell<Option<Co>>,
+    state: AtomicU8,
+    /// The id of the wait the task is in (or about to suspend for); 0 once a
+    /// wake-up has claimed it.
+    wait: AtomicU64,
+    /// How the last wait ended.
+    woke: AtomicU8,
+    /// The task's own timer: (worker, key). Touched only by the task itself.
+    timer: UnsafeCell<Option<(usize, (Instant, u64))>>,
+    /// The first task, `main!`: when it returns, the program exits.
+    main: bool,
 }
 
-// --- Workers ---
+// `co` and `timer` are only touched by whoever holds `RUNNING` (the queue
+// handoff orders those accesses); everything else is atomic.
+unsafe impl Send for Task {}
+unsafe impl Sync for Task {}
 
-enum Msg {
-    Spawn(Job, SendStack),
-    Wake { task: usize, wait: u64 },
+static NEXT_WAIT: AtomicU64 = AtomicU64::new(1);
+
+fn new_wait_id() -> u64 {
+    NEXT_WAIT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// The part of a worker other threads use to reach it.
-pub struct Shared {
-    inbox: Mutex<Vec<Msg>>,
-    waker: Waker,
-    /// Set while the worker is (about to be) blocked in `poll`, so senders
-    /// know to wake it; skipping that syscall otherwise matters for
-    /// ping-pong traffic.
-    sleeping: AtomicBool,
-    /// Percentage of recent time spent running (not waiting in `poll`),
-    /// measured over windows of [`LOAD_WINDOW`], for choosing where new
-    /// tasks go.
-    load: AtomicU32,
-    /// Tasks on this worker, started or not.
-    tasks: AtomicUsize,
-}
-
-impl Shared {
-    fn new(waker: Waker) -> Arc<Shared> {
-        Arc::new(Shared {
-            inbox: Mutex::new(Vec::new()),
-            waker,
-            sleeping: AtomicBool::new(false),
-            load: AtomicU32::new(0),
-            tasks: AtomicUsize::new(0),
-        })
+/// End `task`'s wait `wait`, if that's still the wait it's in, and queue it.
+fn wake(task: &Arc<Task>, wait: u64, woke: Woke) {
+    if task.wait.compare_exchange(wait, 0, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+        task.woke.store(woke as u8, Ordering::Release);
+        schedule(task.clone());
     }
+}
 
-    /// Too busy to take new tasks when others could: running most of the
-    /// time. A worker asleep in `poll` isn't busy, whatever its last
-    /// measurement said.
-    fn busy(&self) -> bool {
-        self.load.load(Ordering::Relaxed) >= BUSY_PERCENT && !self.sleeping.load(Ordering::Relaxed)
+/// Put a woken task on a queue, unless it's queued already. If it's still
+/// running (it was woken before it finished suspending), mark it, and its
+/// worker queues it once it has.
+fn schedule(task: Arc<Task>) {
+    let mut state = task.state.load(Ordering::Acquire);
+    loop {
+        if state & (NOTIFIED | DONE) != 0 {
+            return;
+        }
+        let next = state | NOTIFIED;
+        match task.state.compare_exchange_weak(state, next, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) if state & RUNNING != 0 => return,
+            Ok(_) => break,
+            Err(actual) => state = actual,
+        }
     }
+    push(task);
+}
 
-    fn send(&self, msg: Msg) {
-        lock(&self.inbox).push(msg);
-        if self.sleeping.swap(false, Ordering::SeqCst) {
-            let _ = self.waker.wake();
+/// Queue a ready task: on this worker's queue, or from a plain thread on the
+/// shared one.
+fn push(task: Arc<Task>) {
+    match this_worker() {
+        Some(worker) => {
+            let backlog = worker.shared.push(task);
+            if backlog > 1 && worker.saturated() {
+                notify_idle();
+            }
+        }
+        None => {
+            {
+                // The count changes with the queue, under its lock, so a
+                // worker draining the queue can't be overtaken by a stale
+                // increment (a count stuck above zero keeps idle workers
+                // polling without sleeping).
+                let mut inject = lock(&INJECT);
+                inject.push_back(task);
+                INJECT_LEN.store(inject.len(), Ordering::Release);
+            }
+            notify_idle();
         }
     }
 }
 
-struct TaskEntry {
-    /// Taken out while the task runs.
-    co: Option<Co>,
-    /// The id of the wait the task is suspended in; 0 when it isn't waiting.
-    wait: u64,
-    /// The id a [`TaskWaker`] was handed out for, for the next park.
-    next_park: u64,
-    /// The descriptor it waits on, and its timer, so waking removes both.
-    fd: Option<RawFd>,
-    timer: Option<(Instant, u64)>,
-}
+// --- Workers ---
 
-struct IoWaiter {
-    task: usize,
-    wait: u64,
-    writable: bool,
-}
-
-struct Worker {
+/// The part of a worker other threads use: its run queue, timers, and event
+/// queue registry, and how to wake it.
+struct Shared {
     index: usize,
-    shared: Arc<Shared>,
-    poll: RefCell<Poll>,
+    queue: Mutex<VecDeque<Arc<Task>>>,
+    /// `queue`'s length, readable without the lock.
+    queue_len: AtomicUsize,
+    timers: Mutex<BTreeMap<(Instant, u64), (Arc<Task>, u64)>>,
     registry: Registry,
-    tasks: RefCell<Slab<TaskEntry>>,
-    ready: RefCell<VecDeque<(usize, Woke)>>,
-    /// Tasks waiting on each file descriptor, indexed by descriptor.
-    io_waiters: RefCell<Vec<Vec<IoWaiter>>>,
-    timers: RefCell<BTreeMap<(Instant, u64), usize>>,
-    next_wait: Cell<u64>,
-    current: Cell<Option<usize>>,
-    woken: RefCell<Vec<(usize, u64)>>,
+    waker: Waker,
+    /// Set by `notify_idle` when it wakes this worker to look for work; the
+    /// worker then counts as searching until it has looked.
+    notified: AtomicBool,
 }
 
+impl Shared {
+    /// Add to the back of the run queue; returns its new length.
+    fn push(&self, task: Arc<Task>) -> usize {
+        let mut queue = lock(&self.queue);
+        queue.push_back(task);
+        let len = queue.len();
+        self.queue_len.store(len, Ordering::Release);
+        len
+    }
+
+    fn pop(&self) -> Option<Arc<Task>> {
+        if self.queue_len.load(Ordering::Acquire) == 0 {
+            return None;
+        }
+        let mut queue = lock(&self.queue);
+        let task = queue.pop_front();
+        self.queue_len.store(queue.len(), Ordering::Release);
+        task
+    }
+}
+
+/// Workers, by index; started when first needed.
 static WORKERS: OnceLock<Vec<OnceLock<Arc<Shared>>>> = OnceLock::new();
-static NEXT_WORKER: AtomicUsize = AtomicUsize::new(0);
+/// Tasks queued by threads that aren't workers.
+static INJECT: Mutex<VecDeque<Arc<Task>>> = Mutex::new(VecDeque::new());
+/// `INJECT`'s length, readable without the lock; only written while holding it.
+static INJECT_LEN: AtomicUsize = AtomicUsize::new(0);
+/// Workers blocked in `poll`, one bit each.
+static SLEEPING: AtomicU64 = AtomicU64::new(0);
+/// Workers woken to look for work that haven't looked yet. While there are
+/// any, more backlog doesn't wake more workers: one thief at a time, rather
+/// than a stampede for one extra task.
+static SEARCHING: AtomicUsize = AtomicUsize::new(0);
+/// `main!`'s exit code once it has returned.
+static MAIN_RESULT: Mutex<Option<i32>> = Mutex::new(None);
+static MAIN_DONE: AtomicBool = AtomicBool::new(false);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn new_poll() -> (Poll, Waker) {
-    let poll = Poll::new().unwrap_or_else(|err| fatal(&format!("can't create an event queue: {err}")));
-    let waker = Waker::new(poll.registry(), WAKER_TOKEN)
-        .unwrap_or_else(|err| fatal(&format!("can't create an event queue waker: {err}")));
-    (poll, waker)
 }
 
 fn fatal(message: &str) -> ! {
@@ -199,47 +248,84 @@ fn fatal(message: &str) -> ! {
     std::process::exit(1);
 }
 
-/// The worker at `index`, starting its thread if it hasn't started yet;
-/// `None` if the OS won't start another thread.
-fn worker_shared(index: usize) -> Option<&'static Arc<Shared>> {
-    static STARTING: Mutex<()> = Mutex::new(());
-    let workers = WORKERS.get()?;
-    if let Some(shared) = workers[index].get() {
-        return Some(shared);
-    }
-    let _starting = lock(&STARTING);
-    if let Some(shared) = workers[index].get() {
-        return Some(shared);
-    }
-    // Out of file descriptors, say.
-    let queue = Poll::new().and_then(|poll| {
-        let waker = Waker::new(poll.registry(), WAKER_TOKEN)?;
-        let registry = poll.registry().try_clone()?;
-        Ok((poll, waker, registry))
-    });
-    let (poll, waker, registry) = match queue {
-        Ok(queue) => queue,
-        Err(err) => {
-            warn_worker_start(index, &err);
-            return None;
-        }
-    };
-    let shared = Shared::new(waker);
-    let for_thread = shared.clone();
-    let started = std::thread::Builder::new().name(format!("roc-net-worker-{index}")).spawn(move || {
-        let worker = Worker::install(index, for_thread, poll, registry);
-        worker.run(|| false);
-    });
-    if let Err(err) = started {
-        warn_worker_start(index, &err);
-        return None;
-    }
-    let _ = workers[index].set(shared);
-    workers[index].get()
+fn workers() -> &'static [OnceLock<Arc<Shared>>] {
+    WORKERS.get().map_or(&[], Vec::as_slice)
 }
 
-/// Warn once that a worker thread couldn't start; tasks go to the workers
-/// already running instead.
+/// Wake a sleeping worker to steal work, or start another worker if none is
+/// asleep. Does nothing while another woken worker is still looking.
+fn notify_idle() {
+    if SEARCHING.load(Ordering::SeqCst) > 0 {
+        return;
+    }
+    let sleeping = SLEEPING.load(Ordering::SeqCst);
+    if sleeping != 0 {
+        let index = sleeping.trailing_zeros() as usize;
+        let bit = 1u64 << index;
+        if SLEEPING.fetch_and(!bit, Ordering::SeqCst) & bit != 0 {
+            if let Some(shared) = workers().get(index).and_then(OnceLock::get) {
+                SEARCHING.fetch_add(1, Ordering::SeqCst);
+                shared.notified.store(true, Ordering::SeqCst);
+                let _ = shared.waker.wake();
+            }
+        }
+        return;
+    }
+    // Everyone's awake: start another worker, if there are any left.
+    if let Some(index) = workers().iter().position(|w| w.get().is_none()) {
+        start_worker(index);
+    }
+}
+
+/// Start worker `index`'s thread; it begins by looking for work to steal.
+fn start_worker(index: usize) {
+    static STARTING: Mutex<()> = Mutex::new(());
+    let _starting = lock(&STARTING);
+    let Some(slot) = workers().get(index) else { return };
+    if slot.get().is_some() {
+        return;
+    }
+    let (shared, poll) = match new_shared(index) {
+        Ok(created) => created,
+        Err(err) => return warn_worker_start(index, &err),
+    };
+    shared.notified.store(true, Ordering::SeqCst);
+    SEARCHING.fetch_add(1, Ordering::SeqCst);
+    let for_thread = shared.clone();
+    let started = std::thread::Builder::new().name(format!("roc-net-worker-{index}")).spawn(move || {
+        let worker = Worker::install(for_thread, poll);
+        worker.run();
+    });
+    match started {
+        Ok(_) => {
+            let _ = slot.set(shared);
+        }
+        Err(err) => {
+            SEARCHING.fetch_sub(1, Ordering::SeqCst);
+            warn_worker_start(index, &err);
+        }
+    }
+}
+
+fn new_shared(index: usize) -> io::Result<(Arc<Shared>, Poll)> {
+    // Fails when out of file descriptors, say.
+    let poll = Poll::new()?;
+    let waker = Waker::new(poll.registry(), WAKER_TOKEN)?;
+    let registry = poll.registry().try_clone()?;
+    let shared = Arc::new(Shared {
+        index,
+        queue: Mutex::new(VecDeque::new()),
+        queue_len: AtomicUsize::new(0),
+        timers: Mutex::new(BTreeMap::new()),
+        registry,
+        waker,
+        notified: AtomicBool::new(false),
+    });
+    Ok((shared, poll))
+}
+
+/// Warn once that a worker thread couldn't start; the ones already running
+/// carry on.
 fn warn_worker_start(index: usize, err: &io::Error) {
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
@@ -247,226 +333,345 @@ fn warn_worker_start(index: usize, err: &io::Error) {
     }
 }
 
+/// The part of a worker only its own thread uses.
+struct Worker {
+    shared: Arc<Shared>,
+    poll: RefCell<Poll>,
+    events: RefCell<Events>,
+    /// When the worker last woke from sleeping in `poll`: how long it has
+    /// been busy without a break.
+    busy_since: Cell<Instant>,
+}
+
 impl Worker {
     /// Create this thread's worker. It's leaked: it lives as long as the
-    /// process, and a suspended coroutine must never be dropped (that
-    /// unwinds its stack, which `panic = "abort"` turns into an abort).
-    fn install(index: usize, shared: Arc<Shared>, poll: Poll, registry: Registry) -> &'static Worker {
+    /// process.
+    fn install(shared: Arc<Shared>, poll: Poll) -> &'static Worker {
         let worker: &'static Worker = Box::leak(Box::new(Worker {
-            index,
             shared,
             poll: RefCell::new(poll),
-            registry,
-            tasks: RefCell::new(Slab::new()),
-            ready: RefCell::new(VecDeque::new()),
-            io_waiters: RefCell::new(Vec::new()),
-            timers: RefCell::new(BTreeMap::new()),
-            next_wait: Cell::new(1),
-            current: Cell::new(None),
-            woken: RefCell::new(Vec::new()),
+            events: RefCell::new(Events::with_capacity(1024)),
+            busy_since: Cell::new(Instant::now()),
         }));
-        WORKER.set(worker);
+        set_worker(worker);
         worker
     }
 
-    fn add_task(&self, co: Co) {
-        self.shared.tasks.fetch_add(1, Ordering::Relaxed);
-        let id = self.tasks.borrow_mut().insert(TaskEntry { co: Some(co), wait: 0, next_park: 0, fd: None, timer: None });
-        self.ready.borrow_mut().push_back((id, Woke::Ready));
+    /// Busy long enough without a break that its backlog is more than a
+    /// passing batch of events, so it's worth waking another worker to share
+    /// it. Sharing sooner woke thieves for backlogs the owner would have
+    /// cleared by itself in microseconds, and moved connections back and
+    /// forth between workers.
+    fn saturated(&self) -> bool {
+        self.busy_since.get().elapsed() >= crate::limits::share_after()
     }
 
-    fn new_wait_id(&self) -> u64 {
-        let id = self.next_wait.get();
-        self.next_wait.set(id + 1);
-        id
+    fn index(&self) -> usize {
+        self.shared.index
     }
 
-    /// Run tasks until `done()` says to stop (checked after each round).
-    fn run(&self, done: impl Fn() -> bool) {
-        let mut events = Events::with_capacity(1024);
-        let mut window_start = Instant::now();
-        let mut busy = Duration::ZERO;
-        let mut awake_since = window_start;
+    /// Run tasks until `main!` has returned (only worker 0 ever stops).
+    fn run(&self) {
+        // A new worker starts because some worker needed help.
+        self.answer_notification();
+        let mut ticks = 0u32;
         loop {
-            self.drain_inbox();
-            let round = self.ready.borrow().len();
-            for _ in 0..round {
-                let Some((id, woke)) = self.ready.borrow_mut().pop_front() else { break };
-                self.resume(id, woke);
-            }
-            if done() {
+            if self.index() == 0 && MAIN_DONE.load(Ordering::Acquire) {
                 return;
             }
-
-            let mut timeout = if !self.ready.borrow().is_empty() {
-                Some(Duration::ZERO)
-            } else {
-                let now = Instant::now();
-                // Capped: kqueue rejects very long timeouts (EINVAL), and
-                // waking once an hour to re-check costs nothing.
-                self.timers
-                    .borrow()
-                    .first_key_value()
-                    .map(|((at, _), _)| at.saturating_duration_since(now).min(MAX_POLL_WAIT))
-            };
-            let sleeping = timeout != Some(Duration::ZERO);
-            if sleeping {
-                self.shared.sleeping.store(true, Ordering::SeqCst);
-                if !lock(&self.shared.inbox).is_empty() {
-                    timeout = Some(Duration::ZERO);
+            if let Some(task) = self.shared.pop() {
+                self.run_task(task);
+                ticks = ticks.wrapping_add(1);
+                if ticks % EVENT_INTERVAL == 0 {
+                    self.poll_events(Some(Duration::ZERO));
+                    self.fire_timers();
+                    self.take_injected();
                 }
+                continue;
             }
-            let before_poll = Instant::now();
-            busy += before_poll - awake_since;
-            let elapsed = before_poll - window_start;
-            if elapsed >= LOAD_WINDOW {
-                let percent = (busy.as_nanos() * 100 / elapsed.as_nanos().max(1)) as u32;
-                self.shared.load.store(percent, Ordering::Relaxed);
-                window_start = before_poll;
-                busy = Duration::ZERO;
+            if self.take_injected() || self.answer_notification() {
+                continue;
             }
-            let polled = self.poll.borrow_mut().poll(&mut events, timeout);
-            awake_since = Instant::now();
-            if sleeping {
-                self.shared.sleeping.store(false, Ordering::SeqCst);
-            }
-            match polled {
-                Ok(()) => {}
-                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-                Err(err) => fatal(&format!("waiting for socket events failed: {err}")),
-            }
-            for event in events.iter() {
-                if event.token() == WAKER_TOKEN {
-                    continue;
-                }
-                let readable = event.is_readable() || event.is_read_closed() || event.is_error();
-                let writable = event.is_writable() || event.is_write_closed() || event.is_error();
-                self.io_ready(event.token().0 as RawFd, readable, writable);
-            }
-            self.fire_timers();
+            self.park();
         }
     }
 
-    fn drain_inbox(&self) {
-        let messages = std::mem::take(&mut *lock(&self.shared.inbox));
-        for msg in messages {
-            match msg {
-                Msg::Spawn(job, stack) => self.add_task(new_task(job, stack.0)),
-                Msg::Wake { task, wait } => self.wake(task, wait, Woke::Ready),
-            }
-        }
+    /// Sleep in `poll` until a socket event, a timer, or a wake-up.
+    fn park(&self) {
+        let bit = 1u64 << self.index();
+        SLEEPING.fetch_or(bit, Ordering::SeqCst);
+        // Re-check after announcing sleep: work queued for any worker before
+        // `notify_idle` could see the bit would otherwise wait for the next
+        // socket event. (A backlog on another worker isn't checked: its owner
+        // is working through it, and the next push there wakes a thief.
+        // Checking kept idle workers spinning on backlogs that cleared before
+        // they could steal from them.)
+        let work_waiting = INJECT_LEN.load(Ordering::SeqCst) > 0 || (self.index() == 0 && MAIN_DONE.load(Ordering::SeqCst));
+        let timeout = if work_waiting {
+            Some(Duration::ZERO)
+        } else {
+            let now = Instant::now();
+            lock(&self.shared.timers)
+                .first_key_value()
+                .map(|((at, _), _)| at.saturating_duration_since(now).min(MAX_POLL_WAIT))
+        };
+        self.poll_events(timeout);
+        self.busy_since.set(Instant::now());
+        SLEEPING.fetch_and(!bit, Ordering::SeqCst);
+        self.fire_timers();
+        self.answer_notification();
     }
 
-    fn resume(&self, id: usize, woke: Woke) {
-        let Some(mut co) = self.tasks.borrow_mut().get_mut(id).and_then(|task| task.co.take()) else { return };
-        self.current.set(Some(id));
-        OPS_LEFT.set(BUDGET);
-        // Roc runs here, and may call back into this worker through `WORKER`;
-        // no RefCell borrow is held across it.
-        let result = co.resume(woke);
-        YIELDER.set(std::ptr::null());
-        self.current.set(None);
+    /// If `notify_idle` woke this worker to share a backlog, steal now, even
+    /// if it also has work of its own: until it has looked, it counts as
+    /// searching, and no other worker is woken. (Looking only once idle let
+    /// a busy worker hold that off indefinitely, so load stopped spreading.)
+    ///
+    /// Only woken workers steal: stealing whenever a worker ran dry kept
+    /// moving connections, and their event registrations, between workers
+    /// whose owners were keeping up fine.
+    fn answer_notification(&self) -> bool {
+        if !self.shared.notified.swap(false, Ordering::SeqCst) {
+            return false;
+        }
+        let found = self.steal();
+        SEARCHING.fetch_sub(1, Ordering::SeqCst);
+        found
+    }
+
+    fn run_task(&self, task: Arc<Task>) {
+        // Popped from a queue, so it's NOTIFIED; now it's running.
+        task.state.store(RUNNING, Ordering::Release);
+        set_current_task(Arc::as_ptr(&task));
+        set_ops_left(BUDGET);
+        let co = unsafe { (*task.co.get()).as_mut().expect("a task that isn't done has a coroutine") };
+        let result = co.resume(());
+        set_yielder(std::ptr::null());
+        set_current_task(std::ptr::null());
         match result {
-            CoroutineResult::Yield(wait) => {
-                self.tasks.borrow_mut()[id].co = Some(co);
-                self.suspended(id, wait);
+            CoroutineResult::Yield(Suspend::Yield) => {
+                task.state.store(NOTIFIED, Ordering::Release);
+                self.shared.push(task);
+            }
+            CoroutineResult::Yield(Suspend::Wait) => {
+                // Woken while suspending? Then queue it now.
+                if task.state.compare_exchange(RUNNING, 0, Ordering::AcqRel, Ordering::Acquire).is_err() {
+                    task.state.store(NOTIFIED, Ordering::Release);
+                    self.shared.push(task);
+                }
             }
             CoroutineResult::Return(()) => {
-                self.tasks.borrow_mut().remove(id);
-                self.shared.tasks.fetch_sub(1, Ordering::Relaxed);
+                task.state.store(DONE, Ordering::Release);
+                let co = unsafe { (*task.co.get()).take() }.expect("just ran");
                 recycle_stack(co.into_stack());
-            }
-        }
-    }
-
-    /// Record what a task that just suspended is waiting for.
-    fn suspended(&self, id: usize, wait: Wait) {
-        let mut tasks = self.tasks.borrow_mut();
-        let task = &mut tasks[id];
-        let wait_id = match wait {
-            Wait::Park(_) if task.next_park != 0 => task.next_park,
-            _ => self.new_wait_id(),
-        };
-        task.wait = wait_id;
-        let deadline = match wait {
-            Wait::Io { fd, writable, deadline } => {
-                let mut waiters = self.io_waiters.borrow_mut();
-                let index = fd as usize;
-                if waiters.len() <= index {
-                    waiters.resize_with(index + 1, Vec::new);
+                if task.main {
+                    MAIN_DONE.store(true, Ordering::Release);
+                    if let Some(main) = workers().first().and_then(OnceLock::get) {
+                        let _ = main.waker.wake();
+                    }
                 }
-                waiters[index].push(IoWaiter { task: id, wait: wait_id, writable });
-                task.fd = Some(fd);
-                deadline
             }
-            Wait::Sleep(at) => Some(at),
-            Wait::Park(deadline) => deadline,
-            Wait::Yield => {
-                task.wait = 0;
-                self.ready.borrow_mut().push_back((id, Woke::Ready));
-                None
-            }
-        };
-        if let Some(at) = deadline {
-            self.timers.borrow_mut().insert((at, wait_id), id);
-            task.timer = Some((at, wait_id));
         }
     }
 
-    /// End a task's wait, if it's still in the wait `wait_id`.
-    fn wake(&self, id: usize, wait_id: u64, woke: Woke) {
-        let mut tasks = self.tasks.borrow_mut();
-        let Some(task) = tasks.get_mut(id) else { return };
-        if task.wait == 0 || task.wait != wait_id {
+    fn poll_events(&self, timeout: Option<Duration>) {
+        let mut events = self.events.borrow_mut();
+        match self.poll.borrow_mut().poll(&mut events, timeout) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => return,
+            Err(err) => fatal(&format!("waiting for socket events failed: {err}")),
+        }
+        if events.is_empty() {
             return;
         }
-        task.wait = 0;
-        task.next_park = 0;
-        if let Some(key) = task.timer.take() {
-            self.timers.borrow_mut().remove(&key);
-        }
-        if let Some(fd) = task.fd.take() {
-            if let Some(list) = self.io_waiters.borrow_mut().get_mut(fd as usize) {
-                list.retain(|waiter| waiter.wait != wait_id);
+        // Look every socket up at once, so the table's lock is taken once.
+        let ready: Vec<(Arc<IoState>, bool, bool)> = {
+            let table = lock(&IO_TABLE);
+            events
+                .iter()
+                .filter(|event| event.token() != WAKER_TOKEN)
+                .filter_map(|event| {
+                    let token = event.token().0;
+                    let state = table.get(token & KEY_MASK)?;
+                    (state.token == token).then(|| {
+                        let readable = event.is_readable() || event.is_read_closed() || event.is_error();
+                        let writable = event.is_writable() || event.is_write_closed() || event.is_error();
+                        (state.clone(), readable, writable)
+                    })
+                })
+                .collect()
+        };
+        drop(events);
+        for (state, readable, writable) in ready {
+            let woken: Vec<(Arc<Task>, u64)> = {
+                let mut waiters = lock(&state.waiters);
+                let mut woken = Vec::new();
+                waiters.retain(|waiter| {
+                    let hit = if waiter.writable { writable } else { readable };
+                    if hit {
+                        woken.push((waiter.task.clone(), waiter.wait));
+                    }
+                    !hit
+                });
+                woken
+            };
+            for (task, wait) in woken {
+                wake(&task, wait, Woke::Ready);
             }
         }
-        self.ready.borrow_mut().push_back((id, woke));
-    }
-
-    fn io_ready(&self, fd: RawFd, readable: bool, writable: bool) {
-        let mut woken = std::mem::take(&mut *self.woken.borrow_mut());
-        if let Some(list) = self.io_waiters.borrow_mut().get_mut(fd as usize) {
-            list.retain(|waiter| {
-                let hit = if waiter.writable { writable } else { readable };
-                if hit {
-                    woken.push((waiter.task, waiter.wait));
-                }
-                !hit
-            });
-        }
-        for (task, wait) in woken.drain(..) {
-            self.wake(task, wait, Woke::Ready);
-        }
-        *self.woken.borrow_mut() = woken;
     }
 
     fn fire_timers(&self) {
         let now = Instant::now();
-        loop {
-            let due = {
-                let mut timers = self.timers.borrow_mut();
-                match timers.first_key_value() {
-                    Some((&(at, wait), &task)) if at <= now => {
-                        timers.remove(&(at, wait));
-                        Some((task, wait))
-                    }
-                    _ => None,
+        let due: Vec<(Arc<Task>, u64)> = {
+            let mut timers = lock(&self.shared.timers);
+            let mut due = Vec::new();
+            while let Some(entry) = timers.first_entry() {
+                if entry.key().0 > now {
+                    break;
                 }
-            };
-            let Some((task, wait)) = due else { return };
-            self.wake(task, wait, Woke::TimedOut);
+                due.push(entry.remove());
+            }
+            due
+        };
+        for (task, wait) in due {
+            wake(&task, wait, Woke::TimedOut);
         }
     }
+
+    fn take_injected(&self) -> bool {
+        if INJECT_LEN.load(Ordering::Acquire) == 0 {
+            return false;
+        }
+        let mut inject = lock(&INJECT);
+        let task = inject.pop_front();
+        INJECT_LEN.store(inject.len(), Ordering::Release);
+        drop(inject);
+        let Some(task) = task else { return false };
+        self.shared.push(task);
+        true
+    }
+
+    /// Take half of the longest-looking other queue (at least one task).
+    fn steal(&self) -> bool {
+        let all = workers();
+        let start = self.index() + 1;
+        for offset in 0..all.len() {
+            let Some(victim) = all[(start + offset) % all.len()].get() else { continue };
+            if victim.index == self.index() || victim.queue_len.load(Ordering::Acquire) == 0 {
+                continue;
+            }
+            let stolen: Vec<Arc<Task>> = {
+                let mut queue = lock(&victim.queue);
+                let take = queue.len().div_ceil(2);
+                let stolen = queue.drain(..take).collect();
+                victim.queue_len.store(queue.len(), Ordering::Release);
+                stolen
+            };
+            if stolen.is_empty() {
+                continue;
+            }
+            let mut queue = lock(&self.shared.queue);
+            queue.extend(stolen);
+            self.shared.queue_len.store(queue.len(), Ordering::Release);
+            return true;
+        }
+        false
+    }
+}
+
+// --- Thread-local access ---
+//
+// Never inlined: a task may resume on another thread, and code that looked a
+// thread-local's address up before a call must not reuse it after (the
+// compiler assumes a function stays on one thread). A fresh call looks it up
+// again.
+
+thread_local! {
+    static WORKER: Cell<*const Worker> = const { Cell::new(std::ptr::null()) };
+    /// The running task's yielder; null when no task is running.
+    static YIELDER: Cell<*const Yielder<(), Suspend>> = const { Cell::new(std::ptr::null()) };
+    static CURRENT_TASK: Cell<*const Task> = const { Cell::new(std::ptr::null()) };
+    static OPS_LEFT: Cell<u32> = const { Cell::new(0) };
+}
+
+#[inline(never)]
+fn set_worker(worker: *const Worker) {
+    WORKER.set(worker);
+}
+
+#[inline(never)]
+fn yielder() -> *const Yielder<(), Suspend> {
+    YIELDER.get()
+}
+
+#[inline(never)]
+fn set_yielder(yielder: *const Yielder<(), Suspend>) {
+    YIELDER.set(yielder);
+}
+
+#[inline(never)]
+fn set_current_task(task: *const Task) {
+    CURRENT_TASK.set(task);
+}
+
+#[inline(never)]
+fn set_ops_left(ops: u32) {
+    OPS_LEFT.set(ops);
+}
+
+#[inline(never)]
+fn take_op() -> bool {
+    let left = OPS_LEFT.get();
+    if left <= 1 {
+        return false;
+    }
+    OPS_LEFT.set(left - 1);
+    true
+}
+
+/// This thread's worker, if it is one (whether or not a task is running).
+#[inline(never)]
+fn this_worker() -> Option<&'static Worker> {
+    let worker = WORKER.get();
+    (!worker.is_null()).then(|| unsafe { &*worker })
+}
+
+/// This thread's worker, if a task is running on it.
+#[inline(never)]
+fn current_worker() -> Option<&'static Worker> {
+    if YIELDER.get().is_null() {
+        return None;
+    }
+    let worker = WORKER.get();
+    (!worker.is_null()).then(|| unsafe { &*worker })
+}
+
+/// The running task, if any.
+#[inline(never)]
+fn current_task() -> Option<Arc<Task>> {
+    if YIELDER.get().is_null() {
+        return None;
+    }
+    let task = CURRENT_TASK.get();
+    if task.is_null() {
+        return None;
+    }
+    // A new reference to the task the worker holds while running it.
+    unsafe {
+        Arc::increment_strong_count(task);
+        Some(Arc::from_raw(task))
+    }
+}
+
+/// Hand control back to the worker; returns when the task is resumed,
+/// possibly on another thread.
+#[inline(never)]
+fn suspend(why: Suspend) {
+    let yielder = yielder();
+    unsafe { (*yielder).suspend(why) };
+    // Now on whichever thread resumed the task.
+    set_yielder(yielder);
 }
 
 // --- Stacks ---
@@ -491,111 +696,151 @@ fn recycle_stack(stack: DefaultStack) {
     }
 }
 
+fn new_task(job: impl FnOnce() + Send + 'static, stack: DefaultStack, main: bool) -> Arc<Task> {
+    let co = Coroutine::with_stack(stack, move |yielder, ()| {
+        set_yielder(yielder);
+        job();
+    });
+    Arc::new(Task {
+        co: UnsafeCell::new(Some(co)),
+        state: AtomicU8::new(NOTIFIED),
+        wait: AtomicU64::new(0),
+        woke: AtomicU8::new(Woke::Ready as u8),
+        timer: UnsafeCell::new(None),
+        main,
+    })
+}
+
 // --- Starting ---
 
 /// Run `main` as the first task, with this thread as worker 0, until it
 /// returns. Tasks still running then are abandoned (the process exits).
-pub fn run_main(main: impl FnOnce() -> i32 + 'static) -> i32 {
-    let workers = crate::limits::workers();
-    let _ = WORKERS.set((0..workers).map(|_| OnceLock::new()).collect());
-    let (poll, waker) = new_poll();
-    let shared = Shared::new(waker);
-    let _ = WORKERS.get().expect("just set")[0].set(shared.clone());
-    let registry = poll.registry().try_clone().unwrap_or_else(|err| fatal(&format!("can't create an event queue: {err}")));
-    let worker = Worker::install(0, shared, poll, registry);
+pub fn run_main(main: impl FnOnce() -> i32 + Send + 'static) -> i32 {
+    let count = crate::limits::workers();
+    let _ = WORKERS.set((0..count).map(|_| OnceLock::new()).collect());
+    let (shared, poll) = new_shared(0).unwrap_or_else(|err| fatal(&format!("can't create an event queue: {err}")));
+    let _ = workers()[0].set(shared.clone());
+    let worker = Worker::install(shared, poll);
 
     // The main thread's usual stack size, since main! used to run on it.
     let stack = DefaultStack::new(8 * 1024 * 1024).unwrap_or_else(|err| fatal(&format!("can't allocate main!'s stack: {err}")));
-    let result = Rc::new(Cell::new(None));
-    let set_result = result.clone();
-    worker.add_task(Coroutine::with_stack(stack, move |yielder, _: Woke| {
-        YIELDER.set(yielder);
-        set_result.set(Some(main()));
-    }));
-    worker.run(|| result.get().is_some());
-    result.get().unwrap_or(1)
+    let task = new_task(move || *lock(&MAIN_RESULT) = Some(main()), stack, true);
+    worker.shared.push(task);
+    worker.run();
+    lock(&MAIN_RESULT).unwrap_or(1)
 }
 
-/// Start `job` as a new task. Fails, returning the job, if no stack can be
+/// Start `job` as a new task, on this worker's queue (other workers steal it
+/// if this one is busy). Fails, returning the job, if no stack can be
 /// allocated for it.
-///
-/// It runs on the current worker unless that one is busy or has more than
-/// its share of tasks (see [`LOCAL_SLACK`]); then on the worker best placed
-/// to take it: not busy, already awake (so no thread needs waking), with the
-/// fewest tasks. A worker that hasn't started yet counts as asleep and empty.
 pub fn spawn(job: Job) -> Result<(), (Job, io::Error)> {
+    if WORKERS.get().is_none() {
+        return Err((job, io::Error::other("the scheduler isn't running")));
+    }
     let stack = match take_stack() {
         Ok(stack) => stack,
         Err(err) => return Err((job, err)),
     };
-    let Some(workers) = WORKERS.get() else {
-        return Err((job, io::Error::other("the scheduler isn't running")));
-    };
-    let local = current_worker();
-    let total: usize = workers.iter().filter_map(OnceLock::get).map(|w| w.tasks.load(Ordering::Relaxed)).sum();
-    if let Some(worker) = local {
-        let share = total / workers.len() + LOCAL_SLACK;
-        if !worker.shared.busy() && worker.shared.tasks.load(Ordering::Relaxed) <= share {
-            worker.add_task(new_task(job, stack));
-            return Ok(());
-        }
-    }
-    let score = |index: usize| match workers[index].get() {
-        Some(w) => (w.busy(), w.sleeping.load(Ordering::Relaxed), w.tasks.load(Ordering::Relaxed)),
-        None => (false, true, 0),
-    };
-    // Start the scan at a rotating point so ties don't all go to worker 0.
-    let start = NEXT_WORKER.fetch_add(1, Ordering::Relaxed);
-    let target = (0..workers.len())
-        .map(|i| (start + i) % workers.len())
-        .filter(|&i| local.is_none_or(|w| w.index != i))
-        .min_by_key(|&i| score(i))
-        .unwrap_or(0);
-    let msg = Msg::Spawn(job, SendStack(stack));
-    match worker_shared(target) {
-        Some(shared) => shared.send(msg),
-        // That worker's thread wouldn't start: this one, or else worker 0,
-        // which is always running (it's the main thread).
-        None => match local {
-            Some(worker) => worker.shared.send(msg),
-            None => workers[0].get().expect("worker 0 runs main!").send(msg),
-        },
-    }
+    push(new_task(job, stack, false));
     Ok(())
 }
 
-fn new_task(job: Job, stack: DefaultStack) -> Co {
-    Coroutine::with_stack(stack, move |yielder, _: Woke| {
-        YIELDER.set(yielder);
-        job();
-    })
-}
-
 // --- Waiting, from inside a task ---
-
-fn current_worker() -> Option<&'static Worker> {
-    if YIELDER.get().is_null() {
-        return None;
-    }
-    let worker = WORKER.get();
-    (!worker.is_null()).then(|| unsafe { &*worker })
-}
-
-fn suspend(wait: Wait) -> Woke {
-    let yielder = YIELDER.get();
-    let woke = unsafe { (*yielder).suspend(wait) };
-    YIELDER.set(yielder);
-    woke
-}
 
 pub fn timed_out() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "timed out")
 }
 
-/// Which workers' event queues a socket is registered with, one bit per
-/// worker. Each socket has one; registration lasts until the socket closes.
+/// Suspend the current task until woken (its wait id is already set) or
+/// `deadline`.
+fn wait_suspended(task: &Arc<Task>, wait: u64, deadline: Option<Instant>) -> Woke {
+    let worker = current_worker().expect("a task is running");
+    if let Some(at) = deadline {
+        let key = (at, wait);
+        lock(&worker.shared.timers).insert(key, (task.clone(), wait));
+        unsafe { *task.timer.get() = Some((worker.index(), key)) };
+    }
+    suspend(Suspend::Wait);
+    // Remove the timer if it didn't fire, from whichever worker holds it.
+    if let Some((index, key)) = unsafe { (*task.timer.get()).take() } {
+        if let Some(shared) = workers().get(index).and_then(OnceLock::get) {
+            lock(&shared.timers).remove(&key);
+        }
+    }
+    if task.woke.load(Ordering::Acquire) == Woke::TimedOut as u8 {
+        Woke::TimedOut
+    } else {
+        Woke::Ready
+    }
+}
+
+/// Start a wait: give the current task a new wait id.
+fn begin_wait(task: &Task) -> u64 {
+    let wait = new_wait_id();
+    task.woke.store(Woke::Ready as u8, Ordering::Relaxed);
+    task.wait.store(wait, Ordering::SeqCst);
+    wait
+}
+
+// --- Sockets ---
+
+/// Sockets being waited on, by token. A token is the socket's key here plus a
+/// generation, so an event that was already collected when its socket closed
+/// can't be mistaken for a newer socket's.
+static IO_TABLE: Mutex<Slab<Arc<IoState>>> = Mutex::new(Slab::new());
+static IO_GENERATION: AtomicU64 = AtomicU64::new(1);
+const KEY_BITS: u32 = 32;
+const KEY_MASK: usize = (1 << KEY_BITS) - 1;
+
+struct IoState {
+    token: usize,
+    fd: RawFd,
+    /// The worker whose event queue watches this socket, plus one; 0: none.
+    owner: AtomicUsize,
+    waiters: Mutex<Vec<IoWaiter>>,
+}
+
+struct IoWaiter {
+    task: Arc<Task>,
+    wait: u64,
+    writable: bool,
+}
+
+/// A socket's scheduling state: the tasks waiting on it, and which worker's
+/// event queue watches it. Each socket has one. It must be dropped before the
+/// socket closes, so the socket leaves the event queue first (closing a
+/// descriptor that has a duplicate, as STARTTLS makes, wouldn't remove it).
 #[derive(Default)]
-pub struct IoReg(AtomicU64);
+pub struct IoReg(OnceLock<Arc<IoState>>);
+
+impl IoReg {
+    fn state(&self, fd: RawFd) -> &Arc<IoState> {
+        self.0.get_or_init(|| {
+            let mut table = lock(&IO_TABLE);
+            let entry = table.vacant_entry();
+            let generation = IO_GENERATION.fetch_add(1, Ordering::Relaxed) as usize;
+            let token = entry.key() | (generation << KEY_BITS);
+            let state = Arc::new(IoState { token, fd, owner: AtomicUsize::new(0), waiters: Mutex::new(Vec::new()) });
+            entry.insert(state.clone());
+            state
+        })
+    }
+}
+
+impl Drop for IoReg {
+    fn drop(&mut self) {
+        let Some(state) = self.0.get() else { return };
+        let owner = state.owner.load(Ordering::Acquire);
+        if let Some(shared) = owner.checked_sub(1).and_then(|index| workers().get(index)).and_then(OnceLock::get) {
+            let _ = shared.registry.deregister(&mut SourceFd(&state.fd));
+        }
+        let mut table = lock(&IO_TABLE);
+        let key = state.token & KEY_MASK;
+        if table.get(key).is_some_and(|entry| entry.token == state.token) {
+            table.remove(key);
+        }
+    }
+}
 
 /// Wait until `fd` is readable (or writable) or `deadline` passes. Call it
 /// after an operation fails with `WouldBlock`, then retry the operation.
@@ -604,25 +849,41 @@ pub fn wait_io(fd: RawFd, reg: &IoReg, writable: bool, deadline: Option<Instant>
     if deadline.is_some_and(|at| Instant::now() >= at) {
         return Err(timed_out());
     }
-    let Some(worker) = current_worker() else {
+    let (Some(worker), Some(task)) = (current_worker(), current_task()) else {
         return wait_io_blocking(fd, writable, deadline);
     };
-    let bit = 1u64 << worker.index;
-    if reg.0.load(Ordering::Acquire) & bit == 0 {
-        let interest = Interest::READABLE | Interest::WRITABLE;
-        let token = Token(fd as usize);
-        match worker.registry.register(&mut SourceFd(&fd), token, interest) {
-            Ok(()) => {}
-            // Registered under a descriptor that was closed while a duplicate
-            // stayed open; take the registration over.
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                worker.registry.reregister(&mut SourceFd(&fd), token, interest)?
+    let state = reg.state(fd);
+    let wait = begin_wait(&task);
+    {
+        let mut waiters = lock(&state.waiters);
+        let owner = state.owner.load(Ordering::Acquire);
+        let mine = worker.index() + 1;
+        // Watch it from this worker's event queue, unless it's watched
+        // elsewhere for another waiting task.
+        if owner != mine && (owner == 0 || waiters.is_empty()) {
+            let token = Token(state.token);
+            let interest = Interest::READABLE | Interest::WRITABLE;
+            if let Some(old) = owner.checked_sub(1).and_then(|index| workers().get(index)).and_then(OnceLock::get) {
+                let _ = old.registry.deregister(&mut SourceFd(&fd));
             }
-            Err(err) => return Err(err),
+            match worker.shared.registry.register(&mut SourceFd(&fd), token, interest) {
+                Ok(()) => {}
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    worker.shared.registry.reregister(&mut SourceFd(&fd), token, interest)?
+                }
+                Err(err) => {
+                    state.owner.store(0, Ordering::Release);
+                    return Err(err);
+                }
+            }
+            state.owner.store(mine, Ordering::Release);
         }
-        reg.0.fetch_or(bit, Ordering::AcqRel);
+        waiters.push(IoWaiter { task: task.clone(), wait, writable });
     }
-    match suspend(Wait::Io { fd, writable, deadline }) {
+    let woke = wait_suspended(&task, wait, deadline);
+    // Gone already if an event woke it; still there if it timed out.
+    lock(&state.waiters).retain(|waiter| waiter.wait != wait);
+    match woke {
         Woke::Ready => Ok(()),
         Woke::TimedOut => Err(timed_out()),
     }
@@ -656,63 +917,73 @@ pub fn consume_budget() {
     if current_worker().is_none() {
         return;
     }
-    let left = OPS_LEFT.get();
-    if left <= 1 {
-        suspend(Wait::Yield);
-    } else {
-        OPS_LEFT.set(left - 1);
+    if !take_op() {
+        suspend(Suspend::Yield);
     }
 }
 
 pub fn sleep(duration: Duration) {
-    if current_worker().is_none() {
+    let Some(task) = current_task() else {
         std::thread::sleep(duration);
         return;
-    }
-    match Instant::now().checked_add(duration) {
-        Some(at) => suspend(Wait::Sleep(at)),
-        // Too far off to represent: that's forever.
-        None => suspend(Wait::Park(None)),
     };
+    // Too far off to represent: that's forever.
+    let deadline = Instant::now().checked_add(duration);
+    // A task can be resumed early (a wake-up for an earlier wait arriving
+    // late), so sleep until the deadline has really passed.
+    loop {
+        let wait = begin_wait(&task);
+        if wait_suspended(&task, wait, deadline) == Woke::TimedOut {
+            return;
+        }
+    }
 }
 
 /// Wakes one particular wait of a task (or a plain thread).
-pub enum TaskWaker {
-    Task { worker: Arc<Shared>, task: usize, wait: u64 },
+pub struct TaskWaker(WakerKind);
+
+enum WakerKind {
+    Task { task: Arc<Task>, wait: u64 },
     Thread(std::thread::Thread),
 }
 
 impl TaskWaker {
     pub fn wake(self) {
-        match self {
-            TaskWaker::Task { worker, task, wait } => worker.send(Msg::Wake { task, wait }),
-            TaskWaker::Thread(thread) => thread.unpark(),
+        match self.0 {
+            WakerKind::Task { task, wait } => wake(&task, wait, Woke::Ready),
+            WakerKind::Thread(thread) => thread.unpark(),
         }
     }
 }
 
-/// A waker for the current task's next [`park`].
+/// A waker for the current task's next [`park`]. Starts the wait, so the
+/// task must park next.
 pub fn waker() -> TaskWaker {
-    let Some(worker) = current_worker() else {
-        return TaskWaker::Thread(std::thread::current());
-    };
-    let task = worker.current.get().expect("a task is running");
-    let wait = worker.new_wait_id();
-    worker.tasks.borrow_mut()[task].next_park = wait;
-    TaskWaker::Task { worker: worker.shared.clone(), task, wait }
+    match current_task() {
+        Some(task) => {
+            let wait = begin_wait(&task);
+            TaskWaker(WakerKind::Task { task, wait })
+        }
+        None => TaskWaker(WakerKind::Thread(std::thread::current())),
+    }
 }
 
 /// Wait until woken by the waker from [`waker`] or until `deadline`. May also
 /// return early for no reason, so callers check their condition in a loop.
 pub fn park(deadline: Option<Instant>) {
-    if current_worker().is_some() {
-        suspend(Wait::Park(deadline));
+    let Some(task) = current_task() else {
+        match deadline {
+            None => std::thread::park(),
+            Some(at) => std::thread::park_timeout(at.saturating_duration_since(Instant::now())),
+        }
+        return;
+    };
+    let wait = task.wait.load(Ordering::Acquire);
+    if wait == 0 {
+        // Already woken (or never given a waker): nothing to wait for.
         return;
     }
-    match deadline {
-        None => std::thread::park(),
-        Some(at) => std::thread::park_timeout(at.saturating_duration_since(Instant::now())),
-    }
+    wait_suspended(&task, wait, deadline);
 }
 
 /// Tasks waiting for some condition, kept inside the state that condition is

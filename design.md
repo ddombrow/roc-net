@@ -98,8 +98,8 @@ reliable point, and `close!` closes at a specific one.
 ## Scheduler
 
 `src/sched.rs`. Every task, `main!` included, runs on its own stack (a
-corosensei coroutine), and each worker thread runs many of them over one
-`mio` event queue (epoll or kqueue). Sockets are non-blocking; a hosted
+corosensei coroutine), and each worker thread runs many of them, with its
+own `mio` event queue (epoll or kqueue). Sockets are non-blocking; a hosted
 function whose operation would block suspends the task inside itself, and
 returns to Roc only when the operation is done, so Roc code is unchanged.
 
@@ -107,23 +107,48 @@ returns to Roc only when the operation is done, so Roc code is unchanged.
   parking until woken (channels, the socket-slot wait, locks, helper-thread
   results). Wake-ups carry the id of the wait they're for, so a stale one is
   ignored; all waits tolerate spurious wake-ups by re-checking.
-- **Tasks don't move.** A task stays on the worker it started on, so
-  thread-local state (the read scratch buffer) is safe between waits but not
-  across one, and nothing may hold a `std::sync::Mutex` across a wait
-  (another task on the thread taking it would block the whole worker).
-  `sched::Lock` is for locks that must be held across waits (TLS reads and
-  writes). A TLS read that needed the handshake or a lock while holding the
-  scratch buffer was an early bug (also found by a red-team review).
-- **Placement.** A new task starts on the spawning worker, unless that
-  worker is busy (running at least half the time over the last 5 ms) or holds
-  more than an even share of tasks plus 8; then on the best other worker:
-  not busy, already awake, fewest tasks. Round-robin placement, the first
-  version, woke a sleeping thread for nearly every task: on macOS, CPU per
-  connection in the churn benchmark was 32 µs, against 15 µs local-first.
-  The share cap is there because tasks never move: a burst of long-lived
-  connections arrives faster than the load measurement notices, and would
-  otherwise stay on one worker for good. Work stealing would remove that
-  compromise; it isn't needed yet.
+- **Tasks move between threads.** A task may resume on a different worker
+  than it suspended on (work stealing, below). So nothing may hold
+  thread-local state or a `std::sync::Mutex` across a wait (another task on
+  the thread taking the mutex would block the whole worker); `sched::Lock`
+  is for locks that must be held across waits (TLS reads and writes). And
+  since the compiler may keep a thread-local variable's address across a
+  call, assuming a function never changes threads, our thread-locals are
+  only reached through functions that are never inlined. (A built program's
+  only other thread-locals are the Rust standard library's, used within
+  single calls; Roc's generated code has none.) A TLS read that needed the
+  handshake or a lock while holding the scratch buffer was an early bug
+  (also found by a red-team review).
+- **Run queues and stealing.** Each worker has a queue. A spawned or woken
+  task goes on the queue of the worker doing the spawning or waking, which
+  keeps request-response traffic and short connections on one thread. A
+  worker that has been busy without a break for 500 µs
+  (`ROC_NET_SHARE_AFTER_US`) and has a backlog wakes one sleeping worker (or
+  starts another, up to `ROC_NET_WORKERS`), which steals half a queue; only
+  one woken worker searches at a time. Only woken workers steal.
+- **Sockets follow their tasks.** Waiting tasks are recorded with the
+  socket, not the worker, so an event wakes them wherever they run. A socket
+  is watched by one worker's event queue; when a stolen task waits on it
+  (and nobody else is), it moves to the thief's, so stealing rebalances for
+  good. Sockets leave the event queue before they close, since closing a
+  descriptor with a duplicate (STARTTLS) wouldn't remove it.
+- **How it got here.** Round-robin placement, the first version, woke a
+  sleeping thread for nearly every new task (macOS churn: 32 µs per
+  connection). Local-first placement without stealing (15 µs) couldn't
+  spread a burst of long-lived connections, so on Linux bulk transfer ran at
+  about half the thread server's throughput. Stealing whenever a queue held
+  two tasks woke thieves for backlogs the owner would have cleared in
+  microseconds, and stealing whenever a worker ran dry kept moving
+  connections, and their event registrations, back and forth (pingpong_64:
+  15 µs per request). Sharing only when saturated, and only through woken
+  workers, fixed both on macOS (10.0 µs; churn 12.2 µs; bulk_16 580 µs/MiB,
+  against the thread server's 11.2, 35 and 870). On Linux, load then often
+  stayed on two workers: a woken worker only looked for work to steal once
+  it ran out of its own, and until it had, it counted as searching, so
+  nobody else was woken or started. A woken worker now steals as soon as it
+  wakes, and bulk_16 went from 2.3-4.2 GiB/s to about 9.5 (Tokio: 10.7). `just test` runs the suite
+  a second time with `ROC_NET_SHARE_AFTER_US=0`, which makes tasks move as
+  often as possible.
 - **Fairness.** Cooperative: a task yields when it waits, and after 128
   socket operations that didn't have to wait, so a task streaming data can't
   starve the others on its worker. Pure computation in Roc has no yield
@@ -318,6 +343,7 @@ protocols it carries.
 | Live tasks | 100,000 | `ROC_NET_MAX_TASKS` |
 | Task threads | one per CPU (at most 64) | `ROC_NET_WORKERS` |
 | Task stack | 256 KiB (`main!`: 8 MiB) | `ROC_NET_TASK_STACK_KIB` |
+| Busy time before sharing work | 500 µs | `ROC_NET_SHARE_AFTER_US` |
 | Helper threads (name lookups, stdin) | 64 | – |
 | Open sockets | 16,384 (at most 65,535) | `ROC_NET_MAX_SOCKETS` |
 | Single read | 64 KiB | – |
