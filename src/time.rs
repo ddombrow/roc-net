@@ -23,5 +23,5 @@ pub extern "C" fn roc_time_now_ns() -> u64 {
 /// Hosted function: Host.time_sleep_ns!
 #[no_mangle]
 pub extern "C" fn roc_time_sleep_ns(ns: u64) {
-    std::thread::sleep(Duration::from_nanos(ns));
+    crate::sched::sleep(Duration::from_nanos(ns));
 }

@@ -17,6 +17,7 @@ mod tls;
 mod net;
 mod random;
 mod resolve;
+mod sched;
 
 use crate::roc_platform_abi::{
     make_roc_host, roc_main, DefaultAllocators, DefaultHandlers, HostStderrLineResult,
@@ -135,11 +136,16 @@ pub extern "C" fn roc_stderr_line(message: RocStr) -> HostStderrLineResult {
 /// Hosted function: Host.stdin_line!
 #[no_mangle]
 pub extern "C" fn roc_stdin_line() -> HostStdinLineResult {
-    let stdin = io::stdin();
-    let mut line = String::new();
+    // On a helper thread, so waiting for input doesn't stall the other
+    // tasks on this worker.
+    let read = sched::blocking(None, || {
+        let mut line = String::new();
+        io::stdin().lock().read_line(&mut line).map(|_| line)
+    })
+    .and_then(|line| line.expect("no deadline"));
 
-    match stdin.lock().read_line(&mut line) {
-        Ok(_) => {
+    match read {
+        Ok(line) => {
             let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
             HostStdinLineResult {
                 payload: HostStdinLineResultPayload {
@@ -278,5 +284,5 @@ fn run(args: &[String]) -> i32 {
 
     let args_list = build_args_list(args, roc_host);
 
-    unsafe { roc_main(args_list) }
+    sched::run_main(move || unsafe { roc_main(args_list) })
 }

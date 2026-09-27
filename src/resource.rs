@@ -17,7 +17,9 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::{offset_of, MaybeUninit};
 use core::sync::atomic::{AtomicIsize, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
+
+use crate::sched::Waiters;
 
 const INDEX_BITS: u32 = 16;
 const INDEX_MASK: u64 = (1 << INDEX_BITS) - 1;
@@ -33,13 +35,13 @@ struct State {
     free: Vec<usize>,
     generations: Vec<u64>,
     live: Vec<bool>,
+    /// Tasks waiting in `reserve` for a slot to be freed.
+    waiters: Waiters,
 }
 
 pub struct ResourceHeap<T> {
     slots: Box<[Slot<T>]>,
     state: Mutex<State>,
-    /// Signalled whenever a slot returns to the free list.
-    slot_freed: Condvar,
 }
 
 // Slot state is guarded by `state`. A live resource is only reached through a
@@ -72,8 +74,8 @@ impl<T> ResourceHeap<T> {
                 free: (0..capacity).rev().collect(),
                 generations: vec![0; capacity],
                 live: vec![false; capacity],
+                waiters: Waiters::new(),
             }),
-            slot_freed: Condvar::new(),
         }
     }
 
@@ -90,16 +92,18 @@ impl<T> ResourceHeap<T> {
             if let Some(index) = state.free.pop() {
                 return Reservation { heap: self, index: Some(index) };
             }
-            state = self
-                .slot_freed
-                .wait(state)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let id = state.waiters.add();
+            drop(state);
+            crate::sched::park(None);
+            state = self.lock();
+            state.waiters.remove(id);
         }
     }
 
     fn free_slot(&self, index: usize) {
-        self.lock().free.push(index);
-        self.slot_freed.notify_one();
+        let mut state = self.lock();
+        state.free.push(index);
+        state.waiters.wake_one();
     }
 
     /// Borrow the resource behind a handle.

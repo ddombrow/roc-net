@@ -24,7 +24,7 @@ main! = |_args| {
 		check!("Dns.resolve_timeout! gives up in time", dns_lookup!),
 		check!("tls with_timeout covers the name lookup", tls_lookup!),
 		check!("several unreachable addresses share one timeout", several_addresses!),
-		check!("at most 64 slow lookups wait at once", pending_cap!),
+		check!("past 64 slow lookups, more still time out on schedule", pending_cap!),
 	]
 	# Keep the silent server open until every check is done.
 	_ = silent_dns.local_addr!()
@@ -113,21 +113,22 @@ several_addresses! = ||
 
 # Each quick lookup times out but leaves its resolver thread waiting on the
 # silent server. Once 64 are pending (counting the checks above), new ones
-# fail at once rather than start another thread.
+# wait for a free helper thread instead of starting another, and still time
+# out on schedule.
 pending_cap! = || {
-	var $instant = 0.U64
+	var $slowest = 0.U64
 	for n in U64.until(0, 70) {
 		start = Time.now!()
 		result = Dns.resolve_timeout!("slow-${n.to_str()}.roc-net.test", Millis(20))
 		took = start.elapsed!().to_millis()
 		match result {
 			Err(DnsErr(TimedOut)) => {
-				if took < 10 {
-					$instant = $instant + 1
+				if took > $slowest {
+					$slowest = took
 				}
 			}
 			other => return Err(Unexpected(Str.inspect(other)))
 		}
 	}
-	if $instant >= 6 Ok({}) else Err(Unexpected("only ${$instant.to_str()} of 70 lookups failed at once"))
+	if $slowest < 500 Ok({}) else Err(Unexpected("a 20 ms lookup took ${$slowest.to_str()} ms"))
 }

@@ -12,8 +12,11 @@ name = "host"
 path = "src/main.rs"
 
 [dependencies]
+corosensei = "0.3.4"
+mio = { version = "1.2.3", features = ["os-poll", "net", "os-ext"] }
 rustls = "0.23.45"
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
+slab = "0.4.12"
 webpki-roots = "1.0.9"
 
 [profile.release]

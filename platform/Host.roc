@@ -21,7 +21,7 @@ Host := [].{
 	## means no limit).
 	tcp_connect! : Str, U64 => Try(Socket, IOErr)
 	unix_listen! : Str, U64, U64 => Try(Socket, IOErr)
-	unix_connect! : Str => Try(Socket, IOErr)
+	unix_connect! : Str, U64 => Try(Socket, IOErr)
 	udp_bind! : Str => Try(Socket, IOErr)
 	## Look up the name, connect, and complete a TLS handshake, all within
 	## `timeout_ms` (0 means no limit). An empty `server_name` means the address's host; an empty
@@ -75,7 +75,7 @@ Host := [].{
 
 	## Nanoseconds on a monotonic clock, counted from when the program started.
 	time_now_ns! : {} => U64
-	## Pause the calling task (thread) for `ns` nanoseconds.
+	## Pause the calling task for `ns` nanoseconds.
 	time_sleep_ns! : U64 => {}
 	## Resolve a host name to IP addresses with the OS resolver, giving up
 	## after `timeout_ms` (0 means no limit).
@@ -98,6 +98,6 @@ Host := [].{
 	## Stop accepting values; receivers still get the queued ones.
 	channel_close! : ChannelEnd => {}
 
-	## Start running a task on a new thread. Returns False at the task limit.
+	## Start running a task. Returns False at the task limit.
 	task_spawn! : Box(() => {}) => Bool
 }

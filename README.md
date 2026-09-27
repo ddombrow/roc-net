@@ -61,7 +61,7 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     to it instead (`Framing` reads this way). Also on `Unix` and `Tls` streams.
   - Errors are `TcpErr(IOErr)`, so you can match specific cases such as
     `Err(TcpErr(ConnectionRefused))` or `Err(TcpErr(TimedOut))`.
-- `Unix.listen!`, `Unix.connect!`: Unix domain stream sockets on a file path
+- `Unix.listen!`, `Unix.connect!` (`connect_timeout!`): Unix domain stream sockets on a file path
   - `Unix.Listener`: `accept!`, `local_addr!`; deletes its socket file when it closes
   - `Unix.Stream`: the same methods as `Tcp.Stream` except `set_nodelay!`
   - Errors are `UnixErr(IOErr)`.
@@ -99,7 +99,7 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   `Duration`s (`Time.millis(500)`, `.to_micros()`, ...)
 - `Dns.resolve!`, `Dns.resolve_timeout!`: a host name's IP addresses, from the
   OS resolver. Connect timeouts include the name lookup.
-- `Task.spawn!`: run a closure concurrently on its own thread
+- `Task.spawn!`: run a closure concurrently, as a lightweight task
 - `Channel.new!(capacity)`: a bounded queue between tasks, returning
   `(sender, receiver)`: `send!`, `try_send!`, `close!`; `receive!`,
   `try_receive!`, `receive_timeout!`. Closes when an end is released.
@@ -114,12 +114,21 @@ The app provides `main! : List(Str) => Try({}, [Exit(I32), ..])`.
 
 ### Limits
 
-`ROC_NET_MAX_TASKS` (default 10,000) caps concurrent tasks, and
+`ROC_NET_MAX_TASKS` (default 100,000) caps concurrent tasks, and
 `ROC_NET_MAX_SOCKETS` (default 16,384) caps open sockets. At the task limit
 `Task.spawn!` fails; a server should ignore that error to drop the one
 connection rather than stop (`_ = Task.spawn!(|| handle!(stream))`). At the
-socket limit `accept!` waits for a free slot. Each task is an OS thread, so
-the OS may allow fewer: about 6,100 on macOS.
+socket limit `accept!` waits for a free slot.
+
+Tasks are coroutines, many per thread: `ROC_NET_WORKERS` threads (default one
+per CPU) run them, and a task waiting on a socket, a channel or a sleep costs
+its stack, not a thread. Each task's stack is `ROC_NET_TASK_STACK_KIB`
+(default 256) of address space, of which it uses only what it touches;
+deeper recursion than that crashes the program. On Linux each stack is two
+memory mappings, so the default `vm.max_map_count` (65,530) allows roughly
+30,000 tasks unless it's raised. Scheduling is cooperative: a task yields
+when it waits and every 128 socket operations, but a long pure computation
+holds its thread until it finishes.
 
 ## Examples
 

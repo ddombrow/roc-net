@@ -183,7 +183,7 @@ bench-linux: (build-linux "arm64musl") (build-linux "arm64glibc")
     docker run --rm --platform linux/arm64 -v "$PWD/bench:/bench" -w /bench -e CARGO_TARGET_DIR=/bench/target-linux rust:1.95-bookworm sh -c '
         rustup target add aarch64-unknown-linux-musl >/dev/null 2>&1
         cargo build -q --release --bins --target aarch64-unknown-linux-musl
-        cargo build -q --release --bin echo-threads --target aarch64-unknown-linux-gnu'
+        cargo build -q --release --bin echo-threads --bin echo-tokio --target aarch64-unknown-linux-gnu'
     docker run --rm --platform linux/arm64 -v "$PWD:/work" rust:1.95-bookworm sh /work/bench/linux.sh
 
 # Show roc-net's recorded benchmark results over time

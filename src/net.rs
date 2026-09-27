@@ -19,7 +19,7 @@ use crate::roc_platform_abi::{
     HostSocketSetTimeoutResultTag, HostUdpRecvFromResult, HostUdpRecvFromResultPayload,
     HostUdpRecvFromResultTag, IOErr, IOErrPayload, IOErrTag, RocBox, RocList, RocListWith, RocStr,
 };
-use crate::sockets::{self, OwnedUnixListener, Socket};
+use crate::sockets::{self, deadline_after, with_scratch, Conn, OwnedUnixListener, ServerTimeouts, Socket};
 
 /// Largest single read buffer, so a huge `max` from Roc cannot force a huge allocation.
 const MAX_READ_BYTES: u64 = 64 * 1024;
@@ -63,8 +63,8 @@ macro_rules! io_err {
                 K::NotConnected => unit($tag::NotConnected),
                 K::NotFound => unit($tag::NotFound),
                 K::PermissionDenied => unit($tag::PermissionDenied),
-                // Sockets are always blocking, so WouldBlock only comes from an
-                // expired SO_RCVTIMEO/SO_SNDTIMEO, which Unix reports as EAGAIN.
+                // Waits that time out report TimedOut; WouldBlock never reaches
+                // Roc (operations retry after waiting), but would mean the same.
                 K::TimedOut | K::WouldBlock => unit($tag::TimedOut),
                 K::UnexpectedEof => unit($tag::UnexpectedEof),
                 K::Unsupported => unit($tag::Unsupported),
@@ -155,26 +155,6 @@ fn unit_result(value: NetResult<()>) -> HostSocketSetTimeoutResult {
     )
 }
 
-/// Run `f` with this thread's read buffer, at least `len` bytes long.
-///
-/// Reusing one buffer per thread avoids allocating and zeroing a fresh one on
-/// every read (then only the bytes that arrived are copied into the Roc list
-/// returned). That per-read allocate-and-zero cost 30-60% extra CPU under
-/// concurrent load with musl, whose memset is slower than glibc's. It grows
-/// to the largest read a thread has asked for, at most `MAX_READ_BYTES`.
-fn with_scratch<T>(len: usize, f: impl FnOnce(&mut [u8]) -> T) -> T {
-    thread_local! {
-        static SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
-    }
-    SCRATCH.with(|scratch| {
-        let mut scratch = scratch.borrow_mut();
-        if scratch.len() < len {
-            scratch.resize(len, 0);
-        }
-        f(&mut scratch[..len])
-    })
-}
-
 fn roc_bytes(bytes: &[u8]) -> RocListWith<u8, false> {
     unsafe { RocListWith::<u8, false>::from_slice(bytes, roc_host()) }
 }
@@ -228,22 +208,22 @@ fn with_str<T>(text: RocStr, f: impl FnOnce(&str) -> T) -> T {
 /// share of the time left, so an unreachable first address (say, IPv6 on a
 /// network without it) can't use up the whole budget before the others get a
 /// turn. Without a deadline, nothing is bounded but the OS's own limits.
-fn tcp_connect(address: &str, deadline: Option<std::time::Instant>) -> NetResult<TcpStream> {
+fn tcp_connect(address: &str, deadline: Option<std::time::Instant>) -> NetResult<Conn<TcpStream>> {
     let addrs = crate::resolve::socket_addrs(address, deadline)?;
     let mut last_err = None;
     for (i, addr) in addrs.iter().enumerate() {
-        let attempt = match deadline {
-            None => TcpStream::connect(addr),
+        let attempt_deadline = match deadline {
+            None => None,
             Some(deadline) => {
                 let left = deadline.saturating_duration_since(std::time::Instant::now());
                 if left.is_zero() {
                     break;
                 }
                 let share = left / (addrs.len() - i) as u32;
-                TcpStream::connect_timeout(addr, share.max(Duration::from_millis(1)))
+                std::time::Instant::now().checked_add(share.max(Duration::from_millis(1)))
             }
         };
-        match attempt {
+        match connect_one(*addr, attempt_deadline) {
             Ok(stream) => return Ok(stream),
             Err(err) => last_err = Some(err),
         }
@@ -257,10 +237,74 @@ fn tcp_connect(address: &str, deadline: Option<std::time::Instant>) -> NetResult
     })))
 }
 
+/// A non-blocking connect: start it, then wait until the socket is writable,
+/// which is when the connection is made or has failed.
+fn connect_one(addr: SocketAddr, deadline: Option<std::time::Instant>) -> io::Result<Conn<TcpStream>> {
+    let stream = Conn::new(TcpStream::from(mio::net::TcpStream::connect(addr)?));
+    loop {
+        stream.wait_writable(deadline)?;
+        if let Some(err) = stream.io.take_error()? {
+            return Err(err);
+        }
+        match stream.io.peer_addr() {
+            Ok(_) => return Ok(stream),
+            // Not connected yet: that wake-up was early.
+            Err(err) if err.kind() == io::ErrorKind::NotConnected => {}
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// Bind a TCP listener, resolving `address` off the worker thread.
+fn tcp_bind(address: &str) -> NetResult<Conn<TcpListener>> {
+    let addrs = crate::resolve::socket_addrs(address, None)?;
+    let listener = TcpListener::bind(&addrs[..])?;
+    listener.set_nonblocking(true)?;
+    Ok(Conn::new(listener))
+}
+
+/// Connect to a Unix socket without blocking the worker, giving up with
+/// `TimedOut` at `deadline`. A local connect finishes (or fails) at once,
+/// except when the listener's queue is full: then Linux reports
+/// `WouldBlock`, with no event to say when there's room, so it retries after
+/// a pause that grows to 50 ms. (macOS refuses the connection instead.)
+fn unix_connect(path: &str, deadline: Option<std::time::Instant>) -> io::Result<Conn<UnixStream>> {
+    let mut pause = Duration::from_millis(1);
+    loop {
+        match mio::net::UnixStream::connect(path) {
+            Ok(stream) => {
+                let stream = Conn::new(UnixStream::from(stream));
+                // Connected already, normally; if still in progress, wait.
+                while let Err(err) = stream.io.peer_addr() {
+                    if err.kind() != io::ErrorKind::NotConnected {
+                        return Err(err);
+                    }
+                    stream.wait_writable(deadline)?;
+                    if let Some(err) = stream.io.take_error()? {
+                        return Err(err);
+                    }
+                }
+                return Ok(stream);
+            }
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                let now = std::time::Instant::now();
+                let pause_until = now + pause;
+                if deadline.is_some_and(|deadline| deadline <= now) {
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, format!("connecting to {path} timed out")));
+                }
+                let wake = deadline.map_or(pause_until, |deadline| deadline.min(pause_until));
+                crate::sched::sleep(wake.saturating_duration_since(now));
+                pause = (pause * 2).min(Duration::from_millis(50));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 /// Bind a Unix listener, replacing a socket file left behind by a program
 /// that exited without cleaning up. A file that some process is still
 /// listening on is left alone, and binding fails with `AddrInUse`.
-fn unix_listen(path: &str, timeouts: crate::sockets::ServerTimeouts) -> NetResult<OwnedUnixListener> {
+fn unix_listen(path: &str, timeouts: ServerTimeouts) -> NetResult<OwnedUnixListener> {
     let listener = match UnixListener::bind(path) {
         Ok(listener) => listener,
         Err(err) if err.kind() == io::ErrorKind::AddrInUse && is_stale_socket(path) => {
@@ -269,24 +313,26 @@ fn unix_listen(path: &str, timeouts: crate::sockets::ServerTimeouts) -> NetResul
         }
         Err(err) => return Err(err.into()),
     };
-    Ok(OwnedUnixListener { listener, path: path.into(), timeouts })
+    listener.set_nonblocking(true)?;
+    Ok(OwnedUnixListener { listener: Conn::new(listener), path: path.into(), timeouts })
 }
 
+/// A socket file nobody is listening on: connecting is refused. Checked with
+/// a non-blocking connect, so a live listener with a full queue (`WouldBlock`)
+/// counts as live without stalling the worker.
 fn is_stale_socket(path: &str) -> bool {
     let is_socket = std::fs::symlink_metadata(path)
         .map(|meta| meta.file_type().is_socket())
         .unwrap_or(false);
     is_socket
-        && matches!(UnixStream::connect(path), Err(err) if err.kind() == io::ErrorKind::ConnectionRefused)
+        && matches!(mio::net::UnixStream::connect(path), Err(err) if err.kind() == io::ErrorKind::ConnectionRefused)
 }
 
 /// Hosted function: Host.tcp_listen!
 #[no_mangle]
 pub extern "C" fn roc_tcp_listen(address: RocStr, idle_ms: u64, write_ms: u64) -> HostSocketAcceptResult {
-    let timeouts = crate::sockets::ServerTimeouts { idle_ms, write_ms };
-    handle_result(with_str(address, |address| {
-        open_socket(|| Ok(Socket::TcpListener(TcpListener::bind(address)?, timeouts)))
-    }))
+    let timeouts = ServerTimeouts { idle_ms, write_ms };
+    handle_result(with_str(address, |address| open_socket(|| Ok(Socket::TcpListener(tcp_bind(address)?, timeouts)))))
 }
 
 /// Hosted function: Host.tcp_connect!
@@ -300,7 +346,7 @@ pub extern "C" fn roc_tcp_connect(address: RocStr, timeout_ms: u64) -> HostSocke
 /// Hosted function: Host.unix_listen!
 #[no_mangle]
 pub extern "C" fn roc_unix_listen(path: RocStr, idle_ms: u64, write_ms: u64) -> HostSocketAcceptResult {
-    let timeouts = crate::sockets::ServerTimeouts { idle_ms, write_ms };
+    let timeouts = ServerTimeouts { idle_ms, write_ms };
     handle_result(with_str(path, |path| {
         open_socket(|| Ok(Socket::UnixListener(unix_listen(path, timeouts)?)))
     }))
@@ -308,16 +354,27 @@ pub extern "C" fn roc_unix_listen(path: RocStr, idle_ms: u64, write_ms: u64) -> 
 
 /// Hosted function: Host.unix_connect!
 #[no_mangle]
-pub extern "C" fn roc_unix_connect(path: RocStr) -> HostSocketAcceptResult {
+pub extern "C" fn roc_unix_connect(path: RocStr, timeout_ms: u64) -> HostSocketAcceptResult {
     handle_result(with_str(path, |path| {
-        open_socket(|| Ok(Socket::UnixStream(UnixStream::connect(path)?)))
+        // Connect first, then claim a socket slot, so a connect that waits
+        // for room in the listener's queue doesn't hold a slot meanwhile. At
+        // the socket limit the new connection is closed again.
+        let stream = unix_connect(path, deadline_after(timeout_ms))?;
+        open_socket(|| Ok(Socket::UnixStream(stream)))
     }))
 }
 
 /// Hosted function: Host.udp_bind!
 #[no_mangle]
 pub extern "C" fn roc_udp_bind(address: RocStr) -> HostSocketAcceptResult {
-    handle_result(with_str(address, |address| open_socket(|| Ok(Socket::Udp(UdpSocket::bind(address)?)))))
+    handle_result(with_str(address, |address| {
+        open_socket(|| {
+            let addrs = crate::resolve::socket_addrs(address, None)?;
+            let socket = UdpSocket::bind(&addrs[..])?;
+            socket.set_nonblocking(true)?;
+            Ok(Socket::Udp(Conn::new(socket)))
+        })
+    }))
 }
 
 // --- Accepting ---
@@ -334,16 +391,26 @@ fn warn_out_of_fds() {
     }
 }
 
-/// Call `accept` until it succeeds or fails for a real reason. Errors that
-/// only mean "try again" are retried here rather than returned, so a
-/// server's accept loop doesn't end over them.
-fn accept_retrying<T>(mut accept: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+/// Accept a connection, waiting for one to arrive. Errors that only mean
+/// "try again" are retried here rather than returned, so a server's accept
+/// loop doesn't end over them. The new socket is made non-blocking.
+fn accept_retrying<L: std::os::fd::AsRawFd, S>(
+    listener: &Conn<L>,
+    accept: impl Fn(&L) -> io::Result<S>,
+    nonblocking: impl Fn(&S) -> io::Result<()>,
+) -> io::Result<Conn<S>>
+where
+    S: std::os::fd::AsRawFd,
+{
     // EMFILE / ENFILE: this process / the system is out of file descriptors.
     const EMFILE: i32 = 24;
     const ENFILE: i32 = 23;
     loop {
-        match accept() {
-            Ok(accepted) => return Ok(accepted),
+        match listener.retry(false, None, &accept) {
+            Ok(stream) => {
+                nonblocking(&stream)?;
+                return Ok(Conn::new(stream));
+            }
             Err(err)
                 if matches!(
                     err.kind(),
@@ -351,7 +418,7 @@ fn accept_retrying<T>(mut accept: impl FnMut() -> io::Result<T>) -> io::Result<T
                 ) => {}
             Err(err) if matches!(err.raw_os_error(), Some(EMFILE | ENFILE)) => {
                 warn_out_of_fds();
-                std::thread::sleep(Duration::from_millis(50));
+                crate::sched::sleep(Duration::from_millis(50));
             }
             Err(err) => return Err(err),
         }
@@ -366,21 +433,26 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
         // clients wait in the kernel's accept queue instead of being accepted
         // and immediately dropped.
         let slot = sockets::reserve();
+        let tcp_accept = |l: &TcpListener| l.accept().map(|(stream, _)| stream);
+        let tcp_nonblocking = |s: &TcpStream| s.set_nonblocking(true);
         let accepted = match listener {
             Socket::TcpListener(l, timeouts) => {
-                let stream = accept_retrying(|| l.accept())?.0;
-                timeouts.apply(&stream)?;
+                let stream = accept_retrying(l, tcp_accept, tcp_nonblocking)?;
+                timeouts.apply(&stream);
                 Socket::TcpStream(stream)
             }
             Socket::UnixListener(l) => {
-                let stream = accept_retrying(|| l.listener.accept())?.0;
-                l.timeouts.apply_unix(&stream)?;
+                let stream = accept_retrying(
+                    &l.listener,
+                    |l: &UnixListener| l.accept().map(|(stream, _)| stream),
+                    |s: &UnixStream| s.set_nonblocking(true),
+                )?;
+                l.timeouts.apply(&stream);
                 Socket::UnixStream(stream)
             }
             Socket::TlsListener(l) => {
-                let tcp = accept_retrying(|| l.listener.accept())?.0;
-                // The handshake deadline restores these afterwards.
-                l.timeouts.apply(&tcp)?;
+                let tcp = accept_retrying(&l.listener, tcp_accept, tcp_nonblocking)?;
+                l.timeouts.apply(&tcp);
                 // The handshake clock starts now, at accept.
                 let deadline = deadline_after(l.handshake_timeout_ms);
                 Socket::Tls(Box::new(crate::tls::server(tcp, l.config.clone(), deadline)?))
@@ -393,52 +465,71 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
 
 // --- Streams (and connected UDP) ---
 
+/// Read from a stream (or connected UDP socket), waiting until something
+/// arrives or the read timeout passes, and hand what arrived to `got`. At
+/// most `max` bytes, read into this thread's scratch buffer (see
+/// `with_scratch`), which is only borrowed once the socket is ready.
+fn read_stream<R>(socket: &Socket, max: u64, what: &str, mut got: impl FnMut(&[u8]) -> R) -> NetResult<R> {
+    let max = max.min(MAX_READ_BYTES) as usize;
+    Ok(match socket {
+        Socket::TcpStream(s) => s.read_with(|s| {
+            with_scratch(max, |buf| {
+                let len = (&mut &*s).read(buf)?;
+                Ok(got(&buf[..len]))
+            })
+        })?,
+        Socket::UnixStream(s) => s.read_with(|s| {
+            with_scratch(max, |buf| {
+                let len = (&mut &*s).read(buf)?;
+                Ok(got(&buf[..len]))
+            })
+        })?,
+        Socket::Udp(s) if what == "read" => s.read_with(|s| {
+            with_scratch(max, |buf| {
+                let len = s.recv(buf)?;
+                Ok(got(&buf[..len]))
+            })
+        })?,
+        Socket::Tls(s) => loop {
+            let received = with_scratch(max, |buf| {
+                let len = s.try_read(buf)?;
+                io::Result::Ok(len.map(|len| got(&buf[..len])))
+            })?;
+            match received {
+                Some(result) => break result,
+                None => s.fill()?,
+            }
+        },
+        _ => return Err(wrong_kind(what)),
+    })
+}
+
 /// Hosted function: Host.socket_read!
 #[no_mangle]
 pub extern "C" fn roc_socket_read(socket: *mut u64, max: u64) -> HostSocketReadResult {
-    bytes_result(with_socket(socket, |socket| {
-        with_scratch(max.min(MAX_READ_BYTES) as usize, |buf| {
-            let len = match socket {
-                Socket::TcpStream(s) => (&mut &*s).read(buf)?,
-                Socket::UnixStream(s) => (&mut &*s).read(buf)?,
-                Socket::Udp(s) => s.recv(buf)?,
-                Socket::Tls(s) => s.read(buf)?,
-                _ => return Err(wrong_kind("read")),
-            };
-            Ok(roc_bytes(&buf[..len]))
-        })
-    }))
+    bytes_result(with_socket(socket, |socket| read_stream(socket, max, "read", roc_bytes)))
 }
 
-/// Read from a stream into this thread's scratch buffer (see `with_scratch`)
-/// and put what arrived into `list`, replacing its contents or (with `keep`)
-/// after them. On an error the list is released.
+/// Read from a stream and put what arrived into `list`, replacing its
+/// contents or (with `keep`) after them. On an error the list is released.
 fn read_to_list(
     socket: *mut u64,
     list: RocListWith<u8, false>,
     max: u64,
     keep: bool,
 ) -> NetResult<RocListWith<u8, false>> {
-    let max = max.min(MAX_READ_BYTES) as usize;
+    let limit = max.min(MAX_READ_BYTES) as usize;
+    let mut list = Some(list);
     let read = with_socket(socket, |socket| {
-        with_scratch(max, |buf| {
-            let len = match socket {
-                Socket::TcpStream(s) => (&mut &*s).read(buf)?,
-                Socket::UnixStream(s) => (&mut &*s).read(buf)?,
-                Socket::Tls(s) => s.read(buf)?,
-                _ => return Err(wrong_kind("read_into")),
-            };
-            Ok(fill_list(list, keep, &buf[..len], max))
+        read_stream(socket, max, "read_into", |bytes| {
+            fill_list(list.take().expect("filled once"), keep, bytes, limit)
         })
     });
     // `fill_list` took the list on success; on failure it's still ours.
-    match read {
-        Ok(list) => Ok(list),
-        Err(err) => {
-            unsafe { list.decref(roc_host()) };
-            Err(err)
-        }
+    if let Some(list) = list {
+        unsafe { list.decref(roc_host()) };
     }
+    read
 }
 
 /// Put `new_bytes` into `list`, replacing its contents or (with `keep`)
@@ -494,9 +585,9 @@ pub extern "C" fn roc_socket_write(socket: *mut u64, bytes: RocListWith<u8, fals
     let result = with_socket(socket, |socket| {
         let data = bytes.as_slice();
         match socket {
-            Socket::TcpStream(s) => (&mut &*s).write_all(data)?,
-            Socket::UnixStream(s) => (&mut &*s).write_all(data)?,
-            Socket::Udp(s) => check_datagram_sent(s.send(data)?, data.len())?,
+            Socket::TcpStream(s) => s.write_all(data)?,
+            Socket::UnixStream(s) => s.write_all_with(data, |s, data| (&mut &*s).write(data))?,
+            Socket::Udp(s) => check_datagram_sent(s.retry(true, s.write_deadline(), |s| s.send(data))?, data.len())?,
             Socket::Tls(s) => s.write_all(data)?,
             _ => return Err(wrong_kind("write")),
         }
@@ -526,8 +617,8 @@ pub extern "C" fn roc_socket_shutdown(socket: *mut u64, how: u8) -> HostSocketSe
     };
     unit_result(with_socket(socket, |socket| {
         match socket {
-            Socket::TcpStream(s) => s.shutdown(how)?,
-            Socket::UnixStream(s) => s.shutdown(how)?,
+            Socket::TcpStream(s) => s.io.shutdown(how)?,
+            Socket::UnixStream(s) => s.io.shutdown(how)?,
             Socket::Tls(s) => s.shutdown(how)?,
             _ => return Err(wrong_kind("shutdown")),
         }
@@ -538,18 +629,16 @@ pub extern "C" fn roc_socket_shutdown(socket: *mut u64, how: u8) -> HostSocketSe
 /// Hosted function: Host.socket_set_timeout!
 #[no_mangle]
 pub extern "C" fn roc_socket_set_timeout(socket: *mut u64, which: u8, timeout_ms: u64) -> HostSocketSetTimeoutResult {
-    let timeout = (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms));
     let read = which == 0;
     unit_result(with_socket(socket, |socket| {
-        match (socket, read) {
-            (Socket::TcpStream(s), true) => s.set_read_timeout(timeout)?,
-            (Socket::TcpStream(s), false) => s.set_write_timeout(timeout)?,
-            (Socket::UnixStream(s), true) => s.set_read_timeout(timeout)?,
-            (Socket::UnixStream(s), false) => s.set_write_timeout(timeout)?,
-            (Socket::Udp(s), true) => s.set_read_timeout(timeout)?,
-            (Socket::Udp(s), false) => s.set_write_timeout(timeout)?,
-            (Socket::Tls(s), true) => s.tcp().set_read_timeout(timeout)?,
-            (Socket::Tls(s), false) => s.tcp().set_write_timeout(timeout)?,
+        let set = |conn_read: &dyn Fn(u64), conn_write: &dyn Fn(u64)| {
+            if read { conn_read(timeout_ms) } else { conn_write(timeout_ms) }
+        };
+        match socket {
+            Socket::TcpStream(s) => set(&|ms| s.set_read_timeout_ms(ms), &|ms| s.set_write_timeout_ms(ms)),
+            Socket::UnixStream(s) => set(&|ms| s.set_read_timeout_ms(ms), &|ms| s.set_write_timeout_ms(ms)),
+            Socket::Udp(s) => set(&|ms| s.set_read_timeout_ms(ms), &|ms| s.set_write_timeout_ms(ms)),
+            Socket::Tls(s) => set(&|ms| s.conn().set_read_timeout_ms(ms), &|ms| s.conn().set_write_timeout_ms(ms)),
             _ => return Err(wrong_kind("setting a timeout")),
         }
         Ok(())
@@ -567,12 +656,12 @@ fn unix_path(addr: std::os::unix::net::SocketAddr) -> String {
 pub extern "C" fn roc_socket_local_addr(socket: *mut u64) -> HostSocketLocalAddrResult {
     str_result(with_socket(socket, |socket| {
         Ok(match socket {
-            Socket::TcpListener(s, _) => s.local_addr()?.to_string(),
-            Socket::TcpStream(s) => s.local_addr()?.to_string(),
-            Socket::Udp(s) => s.local_addr()?.to_string(),
-            Socket::UnixListener(s) => unix_path(s.listener.local_addr()?),
-            Socket::UnixStream(s) => unix_path(s.local_addr()?),
-            Socket::TlsListener(s) => s.listener.local_addr()?.to_string(),
+            Socket::TcpListener(s, _) => s.io.local_addr()?.to_string(),
+            Socket::TcpStream(s) => s.io.local_addr()?.to_string(),
+            Socket::Udp(s) => s.io.local_addr()?.to_string(),
+            Socket::UnixListener(s) => unix_path(s.listener.io.local_addr()?),
+            Socket::UnixStream(s) => unix_path(s.io.local_addr()?),
+            Socket::TlsListener(s) => s.listener.io.local_addr()?.to_string(),
             Socket::Tls(s) => s.tcp().local_addr()?.to_string(),
         })
     }))
@@ -583,9 +672,9 @@ pub extern "C" fn roc_socket_local_addr(socket: *mut u64) -> HostSocketLocalAddr
 pub extern "C" fn roc_socket_peer_addr(socket: *mut u64) -> HostSocketLocalAddrResult {
     str_result(with_socket(socket, |socket| {
         Ok(match socket {
-            Socket::TcpStream(s) => s.peer_addr()?.to_string(),
-            Socket::Udp(s) => s.peer_addr()?.to_string(),
-            Socket::UnixStream(s) => unix_path(s.peer_addr()?),
+            Socket::TcpStream(s) => s.io.peer_addr()?.to_string(),
+            Socket::Udp(s) => s.io.peer_addr()?.to_string(),
+            Socket::UnixStream(s) => unix_path(s.io.peer_addr()?),
             Socket::Tls(s) => s.tcp().peer_addr()?.to_string(),
             _ => return Err(wrong_kind("peer_addr")),
         })
@@ -596,7 +685,7 @@ pub extern "C" fn roc_socket_peer_addr(socket: *mut u64) -> HostSocketLocalAddrR
 #[no_mangle]
 pub extern "C" fn roc_tcp_set_nodelay(socket: *mut u64, enabled: bool) -> HostSocketSetTimeoutResult {
     unit_result(with_socket(socket, |socket| match socket {
-        Socket::TcpStream(s) => Ok(s.set_nodelay(enabled)?),
+        Socket::TcpStream(s) => Ok(s.io.set_nodelay(enabled)?),
         Socket::Tls(s) => Ok(s.tcp().set_nodelay(enabled)?),
         _ => Err(wrong_kind("set_nodelay")),
     }))
@@ -604,7 +693,7 @@ pub extern "C" fn roc_tcp_set_nodelay(socket: *mut u64, enabled: bool) -> HostSo
 
 // --- UDP ---
 
-fn with_udp<T>(handle: *mut u64, f: impl FnOnce(&UdpSocket) -> NetResult<T>) -> NetResult<T> {
+fn with_udp<T>(handle: *mut u64, f: impl FnOnce(&Conn<UdpSocket>) -> NetResult<T>) -> NetResult<T> {
     with_socket(handle, |socket| match socket {
         Socket::Udp(s) => f(s),
         _ => Err(wrong_kind("this UDP operation")),
@@ -614,7 +703,12 @@ fn with_udp<T>(handle: *mut u64, f: impl FnOnce(&UdpSocket) -> NetResult<T>) -> 
 /// Hosted function: Host.udp_connect!
 #[no_mangle]
 pub extern "C" fn roc_udp_connect(socket: *mut u64, address: RocStr) -> HostSocketSetTimeoutResult {
-    unit_result(with_str(address, |address| with_udp(socket, |s| Ok(s.connect(address)?))))
+    unit_result(with_str(address, |address| {
+        with_udp(socket, |s| {
+            let addrs = crate::resolve::socket_addrs(address, None)?;
+            Ok(s.io.connect(&addrs[..])?)
+        })
+    }))
 }
 
 /// Hosted function: Host.udp_send_to!
@@ -627,7 +721,11 @@ pub extern "C" fn roc_udp_send_to(
     let result = with_str(address, |address| {
         with_udp(socket, |s| {
             let data = bytes.as_slice();
-            check_datagram_sent(s.send_to(data, address)?, data.len())
+            let addrs = crate::resolve::socket_addrs(address, None)?;
+            let Some(addr) = addrs.first() else {
+                return Err(NetErr::Io(io::Error::new(io::ErrorKind::NotFound, format!("{address} did not resolve to any address"))));
+            };
+            check_datagram_sent(s.retry(true, s.write_deadline(), |s| s.send_to(data, addr))?, data.len())
         })
     });
     unsafe { bytes.decref(roc_host()) };
@@ -638,13 +736,15 @@ pub extern "C" fn roc_udp_send_to(
 #[no_mangle]
 pub extern "C" fn roc_udp_recv_from(socket: *mut u64, max: u64) -> HostUdpRecvFromResult {
     let result = with_udp(socket, |s| {
-        with_scratch(max.min(MAX_READ_BYTES) as usize, |buf| {
-            let (len, from): (usize, SocketAddr) = s.recv_from(buf)?;
-            Ok(RocRecvFrom {
-                bytes: roc_bytes(&buf[..len]),
-                from: RocStr::from_str(&from.to_string(), roc_host()),
+        Ok(s.read_with(|s| {
+            with_scratch(max.min(MAX_READ_BYTES) as usize, |buf| {
+                let (len, from): (usize, SocketAddr) = s.recv_from(buf)?;
+                Ok(RocRecvFrom {
+                    bytes: roc_bytes(&buf[..len]),
+                    from: RocStr::from_str(&from.to_string(), roc_host()),
+                })
             })
-        })
+        })?)
     });
     roc_result!(
         HostUdpRecvFromResult,
@@ -658,7 +758,7 @@ pub extern "C" fn roc_udp_recv_from(socket: *mut u64, max: u64) -> HostUdpRecvFr
 /// Hosted function: Host.udp_set_broadcast!
 #[no_mangle]
 pub extern "C" fn roc_udp_set_broadcast(socket: *mut u64, enabled: bool) -> HostSocketSetTimeoutResult {
-    unit_result(with_udp(socket, |s| Ok(s.set_broadcast(enabled)?)))
+    unit_result(with_udp(socket, |s| Ok(s.io.set_broadcast(enabled)?)))
 }
 
 fn multicast_group(group: &str) -> NetResult<IpAddr> {
@@ -676,8 +776,8 @@ pub extern "C" fn roc_udp_join_multicast(socket: *mut u64, group: RocStr) -> Hos
     unit_result(with_str(group, |group| {
         with_udp(socket, |s| {
             match multicast_group(group)? {
-                IpAddr::V4(g) => s.join_multicast_v4(&g, &Ipv4Addr::UNSPECIFIED)?,
-                IpAddr::V6(g) => s.join_multicast_v6(&g, 0)?,
+                IpAddr::V4(g) => s.io.join_multicast_v4(&g, &Ipv4Addr::UNSPECIFIED)?,
+                IpAddr::V6(g) => s.io.join_multicast_v6(&g, 0)?,
             }
             Ok(())
         })
@@ -690,8 +790,8 @@ pub extern "C" fn roc_udp_leave_multicast(socket: *mut u64, group: RocStr) -> Ho
     unit_result(with_str(group, |group| {
         with_udp(socket, |s| {
             match multicast_group(group)? {
-                IpAddr::V4(g) => s.leave_multicast_v4(&g, &Ipv4Addr::UNSPECIFIED)?,
-                IpAddr::V6(g) => s.leave_multicast_v6(&g, 0)?,
+                IpAddr::V4(g) => s.io.leave_multicast_v4(&g, &Ipv4Addr::UNSPECIFIED)?,
+                IpAddr::V6(g) => s.io.leave_multicast_v6(&g, 0)?,
             }
             Ok(())
         })
@@ -743,19 +843,6 @@ pub extern "C" fn roc_dns_resolve(name: RocStr, timeout_ms: u64) -> HostDnsResol
 
 // --- TLS ---
 
-/// The moment `timeout_ms` from now; 0 means no deadline. So does a timeout
-/// too long to represent as a moment, which could never be reached anyway.
-/// (On macOS and Linux, `Instant` counts whole seconds in an i64, which even
-/// `U64.highest` milliseconds can't overflow; `checked_add` keeps that from
-/// mattering elsewhere, where `Instant + ...` would panic and, with
-/// `panic = "abort"`, end the program.)
-fn deadline_after(timeout_ms: u64) -> Option<std::time::Instant> {
-    if timeout_ms == 0 {
-        return None;
-    }
-    std::time::Instant::now().checked_add(Duration::from_millis(timeout_ms))
-}
-
 /// Hosted function: Host.tls_connect!
 #[no_mangle]
 pub extern "C" fn roc_tls_connect(
@@ -791,13 +878,13 @@ pub extern "C" fn roc_tls_listen(
     idle_ms: u64,
     write_ms: u64,
 ) -> HostSocketAcceptResult {
-    let timeouts = crate::sockets::ServerTimeouts { idle_ms, write_ms };
+    let timeouts = ServerTimeouts { idle_ms, write_ms };
     let result = with_str(address, |address| {
         with_str(cert_file, |cert_file| {
             with_str(key_file, |key_file| {
                 open_socket(|| {
                     let config = crate::tls::server_config(cert_file, key_file)?;
-                    let listener = TcpListener::bind(address)?;
+                    let listener = tcp_bind(address)?;
                     Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config, handshake_timeout_ms, timeouts }))
                 })
             })
@@ -810,9 +897,16 @@ pub extern "C" fn roc_tls_listen(
 /// The upgraded stream gets its own handle on the same connection; the plain
 /// handle must not be used afterwards, or it would read or write raw bytes in
 /// the middle of the TLS session.
-fn plain_tcp(socket: &Socket) -> NetResult<TcpStream> {
+fn plain_tcp(socket: &Socket) -> NetResult<Conn<TcpStream>> {
     match socket {
-        Socket::TcpStream(s) => Ok(s.try_clone()?),
+        Socket::TcpStream(s) => {
+            // A duplicate descriptor, so it gets its own event-queue
+            // registrations; it's non-blocking already (that's shared), and
+            // starts with the plain stream's timeouts.
+            let tls = Conn::new(s.io.try_clone()?);
+            s.timeouts().apply(&tls);
+            Ok(tls)
+        }
         _ => Err(wrong_kind("upgrading to TLS")),
     }
 }

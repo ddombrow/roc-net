@@ -3024,12 +3024,13 @@ pub struct HostUdpSetBroadcastArgs {
 }
 
 /// Arguments for Host.unix_connect!
-/// Roc signature: Str => Try(Host.Socket, IOErr)
+/// Roc signature: Str, U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HostUnixConnectArgs {
     pub arg0: RocStr,
+    pub arg1: u64,
 }
 
 /// Arguments for Host.unix_listen!
@@ -4246,12 +4247,12 @@ unsafe extern "C" {
     pub fn roc_udp_set_broadcast(arg0: *mut u64, arg1: bool) -> HostSocketSetTimeoutResult;
 
     /// Hosted symbol for Host.unix_connect!
-    /// Roc signature: Str => Try(Host.Socket, IOErr)
+    /// Roc signature: Str, U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_unix_connect(arg0: RocStr) -> HostSocketAcceptResult;
+    pub fn roc_unix_connect(arg0: RocStr, arg1: u64) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.unix_listen!
     /// Roc signature: Str, U64, U64 => Try(Host.Socket, IOErr)

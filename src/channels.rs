@@ -11,10 +11,11 @@
 //! `Closed` and queued values are dropped.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::resource::ResourceHeap;
+use crate::sched::{self, Waiters};
 use crate::roc_host;
 use crate::roc_platform_abi::{
     decref_erased_callable, AnonStructDfa5943259877aa7 as RocChannelEnds, ClosedOrFullOrSent,
@@ -52,12 +53,13 @@ struct State {
     sending_closed: bool,
     /// Nobody will receive (the receiver end is gone).
     receiver_gone: bool,
+    /// Tasks waiting for a value, and for room.
+    receivers: Waiters,
+    senders: Waiters,
 }
 
 struct Channel {
     state: Mutex<State>,
-    not_empty: Condvar,
-    not_full: Condvar,
 }
 
 impl Channel {
@@ -66,10 +68,11 @@ impl Channel {
     }
 
     fn close_sending(&self) {
-        self.lock().sending_closed = true;
+        let mut state = self.lock();
+        state.sending_closed = true;
         // Wake receivers waiting for values and senders waiting for room.
-        self.not_empty.notify_all();
-        self.not_full.notify_all();
+        state.receivers.wake_all();
+        state.senders.wake_all();
     }
 }
 
@@ -86,9 +89,9 @@ impl Drop for End {
                 let undelivered: Vec<Thunk> = {
                     let mut state = channel.lock();
                     state.receiver_gone = true;
+                    state.senders.wake_all();
                     state.queue.drain(..).collect()
                 };
-                channel.not_full.notify_all();
                 // Dropped outside the lock: freeing a value can run Roc drop
                 // code that releases other handles, even this channel's.
                 drop(undelivered);
@@ -141,9 +144,9 @@ pub extern "C" fn roc_channel_new(capacity: u64) -> HostChannelNewResult {
             capacity: capacity.max(1) as usize,
             sending_closed: false,
             receiver_gone: false,
+            receivers: Waiters::new(),
+            senders: Waiters::new(),
         }),
-        not_empty: Condvar::new(),
-        not_full: Condvar::new(),
     });
     let ends = RocChannelEnds {
         sender: sender_slot.insert(End::Sender(channel.clone())),
@@ -172,8 +175,7 @@ pub extern "C" fn roc_channel_send(end: *mut u64, value: RocErasedCallable, wait
             }
             if state.queue.len() < state.capacity {
                 state.queue.push_back(value);
-                drop(state);
-                channel.not_empty.notify_one();
+                state.receivers.wake_one();
                 return ClosedOrFullOrSent::Sent;
             }
             if !wait {
@@ -181,7 +183,11 @@ pub extern "C" fn roc_channel_send(end: *mut u64, value: RocErasedCallable, wait
                 drop(value);
                 return ClosedOrFullOrSent::Full;
             }
-            state = channel.not_full.wait(state).unwrap_or_else(|poisoned| poisoned.into_inner());
+            let id = state.senders.add();
+            drop(state);
+            sched::park(None);
+            state = channel.lock();
+            state.senders.remove(id);
         }
     })
 }
@@ -208,8 +214,8 @@ pub extern "C" fn roc_channel_receive(end: *mut u64, timeout_ns: u64) -> HostCha
         let mut state = channel.lock();
         loop {
             if let Some(value) = state.queue.pop_front() {
+                state.senders.wake_one();
                 drop(state);
-                channel.not_full.notify_one();
                 return HostChannelReceiveResult {
                     payload: HostChannelReceiveResultPayload {
                         ok: std::mem::ManuallyDrop::new(value.into_raw()),
@@ -220,20 +226,14 @@ pub extern "C" fn roc_channel_receive(end: *mut u64, timeout_ns: u64) -> HostCha
             if state.sending_closed {
                 return receive_err(ClosedOrTimedOut::Closed);
             }
-            state = match deadline {
-                None => channel.not_empty.wait(state).unwrap_or_else(|poisoned| poisoned.into_inner()),
-                Some(deadline) => {
-                    let now = Instant::now();
-                    if now >= deadline {
-                        return receive_err(ClosedOrTimedOut::TimedOut);
-                    }
-                    channel
-                        .not_empty
-                        .wait_timeout(state, deadline - now)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .0
-                }
-            };
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return receive_err(ClosedOrTimedOut::TimedOut);
+            }
+            let id = state.receivers.add();
+            drop(state);
+            sched::park(deadline);
+            state = channel.lock();
+            state.receivers.remove(id);
         }
     })
 }

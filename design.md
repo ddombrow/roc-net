@@ -53,10 +53,10 @@ Task.spawn! : (() => {}) => Try({}, [TaskLimitReached])
   immutable and refcounts are atomic, so this is a constraint on host
   resources, not on Roc values.)
 - Blocking effects block only the calling task.
-- Live tasks are bounded. Spawning past the limit (or when the OS refuses a
-  thread) fails with `TaskLimitReached` and releases the closure, so anything
+- Live tasks are bounded. Spawning past the limit (or when no task stack can
+  be allocated) fails with `TaskLimitReached` and releases the closure, so anything
   it captured, such as a connection, is closed. Spawning never waits or
-  queues: with a thread per task, that deadlocks tasks that depend on each
+  queues: with a bounded number of tasks, that deadlocks tasks that depend on each
   other. A proxy's connection task spawns the task for the other direction;
   if every slot is held by a task waiting to spawn, none ever finishes.
   Servers shed load by ignoring the error in their accept loop
@@ -70,7 +70,7 @@ refcounts by default (`RC_TYPE = .atomic` in `src/builtins/utils.zig`). This is
 the smallest correct implementation, and it scales to low thousands of
 connections.
 
-**Possible phase 2: stackful coroutines.** Tasks become coroutines on a small
+**Phase 2 (done): stackful coroutines.** Tasks became coroutines on a small
 number of Roc threads (a `corosensei` stack per task over a `mio` event loop),
 as roc-ray does with `zio`. This allows many more connections per process. It
 changes no Roc API, which is why the API promises only "may run in parallel",
@@ -94,6 +94,56 @@ A value is released after its last use, but the exact moment within a
 function isn't guaranteed (a value discarded with `_` may live until the
 function returns); returning from the function or task that holds it is the
 reliable point, and `close!` closes at a specific one.
+
+## Scheduler
+
+`src/sched.rs`. Every task, `main!` included, runs on its own stack (a
+corosensei coroutine), and each worker thread runs many of them over one
+`mio` event queue (epoll or kqueue). Sockets are non-blocking; a hosted
+function whose operation would block suspends the task inside itself, and
+returns to Roc only when the operation is done, so Roc code is unchanged.
+
+- **Waits.** Socket readiness (with the operation's deadline), sleeps, and
+  parking until woken (channels, the socket-slot wait, locks, helper-thread
+  results). Wake-ups carry the id of the wait they're for, so a stale one is
+  ignored; all waits tolerate spurious wake-ups by re-checking.
+- **Tasks don't move.** A task stays on the worker it started on, so
+  thread-local state (the read scratch buffer) is safe between waits but not
+  across one, and nothing may hold a `std::sync::Mutex` across a wait
+  (another task on the thread taking it would block the whole worker).
+  `sched::Lock` is for locks that must be held across waits (TLS reads and
+  writes). A TLS read that needed the handshake or a lock while holding the
+  scratch buffer was an early bug (also found by a red-team review).
+- **Placement.** A new task starts on the spawning worker, unless that
+  worker is busy (running at least half the time over the last 5 ms) or holds
+  more than an even share of tasks plus 8; then on the best other worker:
+  not busy, already awake, fewest tasks. Round-robin placement, the first
+  version, woke a sleeping thread for nearly every task: on macOS, CPU per
+  connection in the churn benchmark was 32 µs, against 15 µs local-first.
+  The share cap is there because tasks never move: a burst of long-lived
+  connections arrives faster than the load measurement notices, and would
+  otherwise stay on one worker for good. Work stealing would remove that
+  compromise; it isn't needed yet.
+- **Fairness.** Cooperative: a task yields when it waits, and after 128
+  socket operations that didn't have to wait, so a task streaming data can't
+  starve the others on its worker. Pure computation in Roc has no yield
+  points.
+- **Tried and removed: skipping reads known to find nothing.** After a read
+  that returned less than it asked for, the socket looked drained, so the
+  next read could go straight to waiting instead of first failing with
+  `WouldBlock`, saving a system call per request in request-response
+  traffic (tokio does this). It relies on the end of the stream producing a
+  fresh event even when it arrives right after data already reported, and
+  that didn't hold: on macOS (kqueue) a reader whose peer replied and closed
+  waited forever, and on Linux the half-close tests hung under x64
+  emulation. On Linux, where it seemed safe, it saved nothing measurable
+  (11.09 to 10.95 µs per request, 1 connection; 4.02 to 4.09 µs, 64), so
+  every read is attempted before waiting.
+- **Blocking work** (name lookups, stdin) runs on helper threads, at most 64
+  at once; callers wait for a free one (until their deadline, if any).
+- **Limits.** A task stack is 256 KiB of address space by default
+  (`ROC_NET_TASK_STACK_KIB`), touched lazily; overflow hits a guard page and
+  crashes the program. Finished tasks' stacks are pooled (up to 256).
 
 ## Resources and lifetime
 
@@ -194,8 +244,9 @@ connection attempt, and for TLS the handshake. The system resolver
 (getaddrinfo) blocks and can't be cancelled, so with a deadline the lookup
 runs on a helper thread and the caller stops waiting at the deadline; an
 abandoned lookup finishes in the background when the resolver gives up. At
-most 64 lookups can be pending, so a dead DNS server can't pile up threads;
-past that, lookups with a deadline fail with `TimedOut` at once. IP-address
+most 64 helper threads run at once, abandoned lookups included, so a dead DNS
+server (or attacker-chosen hostnames) can't pile up threads; past that,
+lookups wait for a free one, until their deadline if they have one. IP-address
 literals skip the resolver. When a name has several addresses, each attempt
 gets an equal share of the time left, so an unreachable first address (IPv6
 on a network without it) can't use up the budget; a real Happy Eyeballs
@@ -264,16 +315,21 @@ protocols it carries.
 
 | Limit | Default | Set with |
 | --- | ---: | --- |
-| Live tasks | 10,000 | `ROC_NET_MAX_TASKS` |
+| Live tasks | 100,000 | `ROC_NET_MAX_TASKS` |
+| Task threads | one per CPU (at most 64) | `ROC_NET_WORKERS` |
+| Task stack | 256 KiB (`main!`: 8 MiB) | `ROC_NET_TASK_STACK_KIB` |
+| Helper threads (name lookups, stdin) | 64 | – |
 | Open sockets | 16,384 (at most 65,535) | `ROC_NET_MAX_SOCKETS` |
 | Single read | 64 KiB | – |
 | Read/write timeout | none | `set_read_timeout!`, `set_write_timeout!` |
 | Connect timeout | 30 s | `connect_timeout!` |
 
-The OS may impose lower limits. With a thread per task, macOS allows about
-6,100 concurrent tasks (6,144 threads per process), which is where the
-benchmark's `hold_10000` scenario tops out. Limits are read at startup, and
-an invalid value is reported and replaced by the default.
+The OS may impose lower limits: on Linux, each task's stack is two memory
+mappings, and the default `vm.max_map_count` (65,530) allows roughly 30,000
+tasks. (With a thread per task, macOS allowed about 6,100, which is where
+the benchmark's `hold_10000` scenario topped out before coroutines.) Limits
+are read at startup, and an invalid value is reported and replaced by the
+default.
 
 ## Targets
 
@@ -357,7 +413,7 @@ linker inputs don't cover it.
    handle, so the plain stream must not be used afterwards. Linux builds
    cross-compile AWS-LC with Zig (`scripts/zig-cc`). Programs using TLS are
    about 3.4 MB.
-9. **Coroutine scheduler**, when more concurrent connections are needed.
+9. **Coroutine scheduler (done).** See "Scheduler" below.
 
 `Dns.resolve!` and `Time` (done) were not milestones of their own; they were
 added for `examples/tcp_ping`, which resolves once and then times TCP

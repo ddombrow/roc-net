@@ -12,8 +12,8 @@ Task := [].{
 	## stderr and only that task ends.
 	##
 	## Returns `Err(TaskLimitReached)` without running `task!` when too many
-	## tasks are already running: `ROC_NET_MAX_TASKS` (default 10,000), or fewer
-	## if the OS won't start more threads. Anything `task!` captured is released,
+	## tasks are already running: `ROC_NET_MAX_TASKS` (default 100,000), or fewer
+	## if no more task stacks can be allocated. Anything `task!` captured is released,
 	## so a connection it captured is closed. In a server's accept loop, ignore
 	## the error to shed that one connection rather than stopping the server:
 	##

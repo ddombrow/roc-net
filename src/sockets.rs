@@ -1,18 +1,23 @@
 //! Sockets owned by Roc through `Box(U64)` handles (see `resource.rs`).
 
+use std::io::{self, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use crate::resource::{Full, Reservation, ResourceHeap};
+use crate::sched::IoReg;
 
 pub enum Socket {
-    TcpListener(TcpListener, ServerTimeouts),
-    TcpStream(TcpStream),
+    TcpListener(Conn<TcpListener>, ServerTimeouts),
+    TcpStream(Conn<TcpStream>),
     UnixListener(OwnedUnixListener),
-    UnixStream(UnixStream),
-    Udp(UdpSocket),
+    UnixStream(Conn<UnixStream>),
+    Udp(Conn<UdpSocket>),
     TlsListener(TlsListener),
     /// Boxed: rustls's state is about a kilobyte, and every slot in the
     /// socket heap is sized for the largest kind of socket, so inline it would
@@ -20,9 +25,134 @@ pub enum Socket {
     Tls(Box<crate::tls::TlsStream>),
 }
 
+/// A non-blocking socket, and what's needed to wait for it: its event-queue
+/// registrations and its read and write timeouts (in milliseconds; 0 means
+/// none). Operations that would block suspend the task instead (see
+/// `sched.rs`), until the socket is ready or the timeout passes.
+pub struct Conn<T> {
+    pub io: T,
+    reg: IoReg,
+    read_ms: AtomicU64,
+    write_ms: AtomicU64,
+}
+
+impl<T: AsRawFd> Conn<T> {
+    /// `io` must already be non-blocking.
+    pub fn new(io: T) -> Self {
+        Conn { io, reg: IoReg::default(), read_ms: AtomicU64::new(0), write_ms: AtomicU64::new(0) }
+    }
+
+    pub fn set_read_timeout_ms(&self, ms: u64) {
+        self.read_ms.store(ms, Ordering::Relaxed);
+    }
+
+    pub fn set_write_timeout_ms(&self, ms: u64) {
+        self.write_ms.store(ms, Ordering::Relaxed);
+    }
+
+    pub fn timeouts(&self) -> ServerTimeouts {
+        ServerTimeouts { idle_ms: self.read_ms.load(Ordering::Relaxed), write_ms: self.write_ms.load(Ordering::Relaxed) }
+    }
+
+    /// When a read starting now times out.
+    pub fn read_deadline(&self) -> Option<Instant> {
+        deadline_after(self.read_ms.load(Ordering::Relaxed))
+    }
+
+    pub fn write_deadline(&self) -> Option<Instant> {
+        deadline_after(self.write_ms.load(Ordering::Relaxed))
+    }
+
+    /// Run `op` until it does something other than `WouldBlock`, waiting in
+    /// between for the socket to be readable (or `writable`), until
+    /// `deadline`.
+    pub fn retry<R>(&self, writable: bool, deadline: Option<Instant>, mut op: impl FnMut(&T) -> io::Result<R>) -> io::Result<R> {
+        loop {
+            match op(&self.io) {
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    crate::sched::wait_io(self.io.as_raw_fd(), &self.reg, writable, deadline)?
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                result => {
+                    if result.is_ok() {
+                        crate::sched::consume_budget();
+                    }
+                    return result;
+                }
+            }
+        }
+    }
+
+    /// A read-like operation, under the read timeout.
+    pub fn read_with<R>(&self, op: impl FnMut(&T) -> io::Result<R>) -> io::Result<R> {
+        self.retry(false, self.read_deadline(), op)
+    }
+
+    /// Write all of `data` with `write`. The write timeout limits how long it
+    /// may go without progress, like `SO_SNDTIMEO`, rather than the whole
+    /// write.
+    pub fn write_all_with(&self, mut data: &[u8], mut write: impl FnMut(&T, &[u8]) -> io::Result<usize>) -> io::Result<()> {
+        while !data.is_empty() {
+            let written = self.retry(true, self.write_deadline(), |io| write(io, data))?;
+            if written == 0 {
+                return Err(io::ErrorKind::WriteZero.into());
+            }
+            data = &data[written..];
+        }
+        Ok(())
+    }
+
+    /// Wait until the socket is writable (say, a non-blocking connect has
+    /// finished), until `deadline`.
+    pub fn wait_writable(&self, deadline: Option<Instant>) -> io::Result<()> {
+        crate::sched::wait_io(self.io.as_raw_fd(), &self.reg, true, deadline)
+    }
+}
+
+impl Conn<TcpStream> {
+    pub fn write_all(&self, data: &[u8]) -> io::Result<()> {
+        self.write_all_with(data, |s, data| (&mut &*s).write(data))
+    }
+}
+
+/// The moment `ms` milliseconds from now; 0 means no deadline. So does a
+/// timeout too long to represent as a moment, which could never be reached
+/// anyway. (`checked_add`, because `Instant + ...` would panic and, with
+/// `panic = "abort"`, end the program.)
+pub fn deadline_after(ms: u64) -> Option<Instant> {
+    if ms == 0 {
+        return None;
+    }
+    Instant::now().checked_add(std::time::Duration::from_millis(ms))
+}
+
+/// Run `f` with this thread's read buffer, at least `len` bytes long.
+///
+/// Reusing one buffer per thread avoids allocating and zeroing a fresh one on
+/// every read (then only the bytes that arrived are copied into the Roc list
+/// returned). That per-read allocate-and-zero cost 30-60% extra CPU under
+/// concurrent load with musl, whose memset is slower than glibc's. It grows
+/// to the largest read a thread has asked for.
+///
+/// Tasks share their worker's buffer, so `f` must not wait (suspending
+/// would let another task on the thread ask for the buffer while it's
+/// borrowed): read with it only once the socket is ready.
+pub fn with_scratch<T>(len: usize, f: impl FnOnce(&mut [u8]) -> T) -> T {
+    thread_local! {
+        static SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        if scratch.len() < len {
+            scratch.resize(len, 0);
+        }
+        f(&mut scratch[..len])
+    })
+}
+
 /// A TCP listener whose connections speak TLS with this configuration.
 pub struct TlsListener {
-    pub listener: TcpListener,
+    pub listener: Conn<TcpListener>,
     pub config: std::sync::Arc<rustls::ServerConfig>,
     /// How long each accepted connection has to finish its handshake
     /// (0 means no limit).
@@ -34,7 +164,7 @@ pub struct TlsListener {
 /// A Unix listener that deletes its socket file when it closes, so the path
 /// can be reused.
 pub struct OwnedUnixListener {
-    pub listener: UnixListener,
+    pub listener: Conn<UnixListener>,
     pub path: PathBuf,
     pub timeouts: ServerTimeouts,
 }
@@ -49,19 +179,10 @@ pub struct ServerTimeouts {
 }
 
 impl ServerTimeouts {
-    /// Apply to a newly accepted stream's socket.
-    pub fn apply(self, stream: &TcpStream) -> std::io::Result<()> {
-        stream.set_read_timeout(Self::duration(self.idle_ms))?;
-        stream.set_write_timeout(Self::duration(self.write_ms))
-    }
-
-    pub fn apply_unix(self, stream: &UnixStream) -> std::io::Result<()> {
-        stream.set_read_timeout(Self::duration(self.idle_ms))?;
-        stream.set_write_timeout(Self::duration(self.write_ms))
-    }
-
-    fn duration(ms: u64) -> Option<std::time::Duration> {
-        (ms > 0).then(|| std::time::Duration::from_millis(ms))
+    /// Apply to a newly accepted stream.
+    pub fn apply<T: AsRawFd>(self, stream: &Conn<T>) {
+        stream.set_read_timeout_ms(self.idle_ms);
+        stream.set_write_timeout_ms(self.write_ms);
     }
 }
 

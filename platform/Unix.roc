@@ -162,10 +162,17 @@ Unix := [].{
 			Err(err) => Err(UnixErr(err))
 		}
 
-	## Connect to the socket file at `path`.
+	## Connect to the socket file at `path`, giving up after 30 seconds; see
+	## `connect_timeout!`.
 	connect! : Str => Try(Stream, [UnixErr(IOErr)])
-	connect! = |path|
-		match Host.unix_connect!(path) {
+	connect! = |path| connect_timeout!(path, Millis(30000))
+
+	## Connect to the socket file at `path`, giving up with `TimedOut` after
+	## `timeout`. Connecting normally succeeds or fails at once; it waits only
+	## while the listener's queue of unaccepted connections is full.
+	connect_timeout! : Str, [Millis(U64)] => Try(Stream, [UnixErr(IOErr)])
+	connect_timeout! = |path, Millis(ms)|
+		match Host.unix_connect!(path, timeout_ms(Millis(ms))) {
 			Ok(stream) => Ok(Stream.(stream))
 			Err(err) => Err(UnixErr(err))
 		}

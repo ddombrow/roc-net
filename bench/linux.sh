@@ -1,8 +1,8 @@
 #!/bin/sh
 # Linux benchmark, run in a container by `just bench-linux`: roc-net's echo
 # server built for musl and for glibc, and the plain-Rust thread-per-
-# connection server built for both, with the load generator in the same
-# container. Reports server CPU per operation, read from /proc.
+# connection and Tokio servers built for both, with the load generator in
+# the same container. Reports server CPU per operation, read from /proc.
 set -u
 cd /work
 loadgen=bench/target-linux/aarch64-unknown-linux-musl/release/loadgen
@@ -28,3 +28,5 @@ run "roc musl" target/linux/arm64musl/roc-echo
 run "roc glibc" target/linux/arm64glibc/roc-echo
 run "rust-threads musl" bench/target-linux/aarch64-unknown-linux-musl/release/echo-threads
 run "rust-threads glibc" bench/target-linux/aarch64-unknown-linux-gnu/release/echo-threads
+run "tokio musl" bench/target-linux/aarch64-unknown-linux-musl/release/echo-tokio
+run "tokio glibc" bench/target-linux/aarch64-unknown-linux-gnu/release/echo-tokio
