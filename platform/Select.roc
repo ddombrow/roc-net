@@ -145,9 +145,12 @@ Select := [].{
 					After(ns, _) => started.plus_saturated(ns)
 				}
 			count = List.len(arms)
-			# Start at a different arm each time, so one that's always ready
-			# can't starve the others.
-			first = if count == 0 0 else started % count
+			# Start at the next arm each time, so one that's always ready can't
+			# starve the others. (Not from the clock: some machines' clocks
+			# count in steps of more than a nanosecond, which made the same arm
+			# start every time.)
+			turn = Host.select_turn!({})
+			first = if count == 0 0 else turn % count
 			sources = List.map(arms, |arm| arm.source)
 			while True {
 				for offset in U64.until(0, count) {

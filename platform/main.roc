@@ -58,6 +58,7 @@ platform ""
 		"roc_group_close": Host.group_close!,
 		"roc_channel_close": Host.channel_close!,
 		"roc_select_wait": Host.select_wait!,
+		"roc_select_turn": Host.select_turn!,
 		"roc_channel_new": Host.channel_new!,
 		"roc_channel_receive": Host.channel_receive!,
 		"roc_channel_send": Host.channel_send!,

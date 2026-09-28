@@ -177,7 +177,9 @@ with a callback that turns what happened into the caller's own type, so arms
 of different types (a byte read, a `Str` channel, a timeout) produce one
 value. `wait!` polls every arm without blocking (`try_read!`, `try_accept!`,
 `try_receive!`, `try_send!`), starting at a different arm each time so an
-always-ready one can't starve the rest, and only if none is ready asks the
+always-ready one can't starve the rest (from a host counter: the first
+version took the clock's nanoseconds modulo the arm count, and on a CI
+machine whose clock counts in larger steps the same arm always started), and only if none is ready asks the
 host to wait on all their sources at once (`Host.select_wait!`), then polls
 again. Only the winning arm consumes anything.
 

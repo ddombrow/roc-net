@@ -5320,6 +5320,10 @@ unsafe extern "C" {
     ///     unsafe { decref_list_of_readable_or_receivable_or_sendable_or_writable(arg0, roc_host); }
     pub fn roc_select_wait(arg0: RocList<ReadableOrReceivableOrSendableOrWritable>, arg1: u64) -> CancelledOrReadyOrSourceTimedOutOrTimedOut;
 
+    /// Hosted symbol for Host.select_turn!
+    /// Roc signature: {} => U64
+    pub fn roc_select_turn() -> u64;
+
     /// Hosted symbol for Host.channel_new!
     /// Roc signature: U64 => Try({ receiver : Host.ChannelEnd, sender : Host.ChannelEnd }, [TooManyChannels])
     /// The result is owned by Roc: return exactly one owned reference.

@@ -16,6 +16,13 @@ use crate::roc_platform_abi::{
 use crate::sched::{self, Woke};
 use crate::sockets::Socket;
 
+/// Hosted function: Host.select_turn!
+#[no_mangle]
+pub extern "C" fn roc_select_turn() -> u64 {
+    static TURN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    TURN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Hosted function: Host.select_wait!
 #[no_mangle]
 pub extern "C" fn roc_select_wait(sources: RocList<Source>, timeout_ns: u64) -> Outcome {

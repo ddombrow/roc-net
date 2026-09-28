@@ -114,6 +114,10 @@ Host := [].{
 	## handshake deadline), as a blocking read of it would have.
 	select_wait! : List(WaitSource), U64 => [Ready, TimedOut, Cancelled, SourceTimedOut(U64)]
 
+	## A number that goes up by one per call, for `Select` to rotate which arm
+	## it tries first.
+	select_turn! : {} => U64
+
 	## A task, for waiting for its result or cancelling it. The task keeps
 	## running when every handle is released.
 	TaskHandle :: Box(U64)
