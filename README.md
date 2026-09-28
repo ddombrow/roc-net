@@ -45,7 +45,11 @@ complete programs, and `just docs` builds the full reference.
 - **Pre-1.0**: the API will change between releases.
 - **Cooperative scheduling**: a task yields when it waits and every 128
   socket operations, but a long pure computation holds its worker thread
-  (and the other tasks on it) until it finishes.
+  (and the other tasks on it) until it finishes, unless it calls
+  `Task.yield!` now and then.
+- **Cooperative cancellation**: `cancel!` ends a task's waits with
+  `Cancelled`, which `?` passes up; a task that ignores the error, or
+  computes without waiting, keeps going (it can check `Task.is_cancelled!`).
 - **Fixed task stacks**: 256 KiB each (`ROC_NET_TASK_STACK_KIB`); deeper
   recursion crashes the program. `main!` gets 8 MiB.
 - **Linux task ceiling**: each task's stack is two memory mappings, so the
