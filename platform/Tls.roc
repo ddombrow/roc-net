@@ -17,6 +17,8 @@ import Tcp
 ## certificates (or a CA file you choose) and its name against the address.
 ## Certificate and protocol failures come back as `TlsErr(Other(message))`,
 ## with rustls's description, such as `"invalid peer certificate: UnknownIssuer"`.
+## So do certificate and key files that can't be used, with the path and the
+## reason, such as `"server.pem: No such file or directory (os error 2)"`.
 ##
 ## Sockets close automatically once nothing refers to them. Every operation
 ## fails with `TlsErr(IOErr)`.
@@ -26,8 +28,8 @@ Tls := [].{
 	Listener :: Host.Socket.{
 
 		## Block until a client connects. The TLS handshake happens on the
-		## stream's first read or write, in whichever task uses it, so a slow
-		## client can't hold up the accept loop.
+		## stream's first read or write (or `handshake!`), in whichever task
+		## uses it, so a slow client can't hold up the accept loop.
 		accept! : Listener => Try(Stream, [TlsErr(IOErr)])
 		accept! = |Listener.(listener)|
 			match Host.socket_accept!(listener) {
@@ -56,6 +58,23 @@ Tls := [].{
 
 	## An encrypted stream.
 	Stream :: Host.Socket.{
+
+		## Complete the TLS handshake now, if it hasn't happened yet. A stream
+		## from `Listener.accept!` or `wrap_server!` otherwise does it on its
+		## first read or write; streams from `connect!` and `wrap_client!` have
+		## already done it, so this returns at once.
+		##
+		## Call it before sharing a stream between tasks (a proxy copying in
+		## both directions, say), so a failed handshake (a bad client, the
+		## handshake timeout) is reported here rather than by whichever task
+		## happened to go first:
+		##
+		## ```roc
+		## client = listener.accept!()?
+		## client.handshake!()?
+		## ```
+		handshake! : Stream => Try({}, [TlsErr(IOErr)])
+		handshake! = |Stream.(stream)| tls_err(Host.tls_handshake!(stream))
 
 		## Read up to `max` decrypted bytes. Returns an empty list once the
 		## peer has ended the session properly; fails with `UnexpectedEof` if
@@ -102,7 +121,8 @@ Tls := [].{
 		write_str! = |stream, text| stream.write!(Str.to_utf8(text))
 
 		## Shut down one or both directions. Shutting down `Write` (or `Both`)
-		## first tells the peer the session is ending on purpose.
+		## first tells the peer the session is ending on purpose. Succeeds if
+		## the peer has already closed the connection.
 		shutdown! : Stream, [Read, Write, Both] => Try({}, [TlsErr(IOErr)])
 		shutdown! = |Stream.(stream), how| {
 			code =
@@ -157,6 +177,11 @@ Tls := [].{
 		## turn this on when the protocol itself marks where the data ends,
 		## such as an HTTP response with `Content-Length`, or when a
 		## truncated result is acceptable.
+		##
+		## A proxy that terminates TLS and forwards plain TCP can usually turn
+		## it on for its client side: many TLS clients close without
+		## close_notify, and the backend only sees a plain close either way,
+		## so failing wouldn't tell it anything more.
 		ignore_unexpected_eof! : Stream, Bool => Try({}, [TlsErr(IOErr)])
 		ignore_unexpected_eof! = |Stream.(stream), ignore| tls_err(Host.tls_ignore_unexpected_eof!(stream, ignore))
 

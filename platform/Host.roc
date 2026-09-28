@@ -32,6 +32,8 @@ Host := [].{
 	## `handshake_timeout_ms` of being accepted (0 means no limit), then has
 	## the given read (idle) and write timeouts.
 	tls_listen! : Str, Str, Str, U64, U64, U64 => Try(Socket, IOErr)
+	## Complete a TLS stream's handshake now if it hasn't happened yet.
+	tls_handshake! : Socket => Try({}, IOErr)
 	## Let a TLS stream treat a connection closed without close_notify as a
 	## normal end of stream.
 	tls_ignore_unexpected_eof! : Socket, Bool => Try({}, IOErr)

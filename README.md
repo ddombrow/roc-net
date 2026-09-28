@@ -124,12 +124,15 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   - Errors are `UnixErr(IOErr)`.
 - `Tls.connect!`, `Tls.connect_with!`, `Tls.listen!`: TLS over TCP (rustls)
   - `Tls.Stream`: the same methods as `Tcp.Stream`, plus `ignore_unexpected_eof!`
+    and `handshake!` (a server stream otherwise finishes its handshake on its
+    first read or write; call it before sharing the stream between tasks)
   - `Tls.client_config.with_ca_file(...)`, `.with_server_name(...)`, `.with_timeout(...)`
   - `Tls.server_config({ cert_file, key_file })`, `.with_handshake_timeout(...)`:
     clients get 10 seconds by default to finish the handshake, a deadline a
     slowloris client can't stretch
   - `Tls.wrap_client!`, `Tls.wrap_server!`: upgrade a TCP connection (STARTTLS)
-  - Errors are `TlsErr(IOErr)`; certificate problems arrive as `TlsErr(Other(message))`.
+  - Errors are `TlsErr(IOErr)`; certificate problems arrive as `TlsErr(Other(message))`,
+    and so do certificate and key files that can't be loaded, naming the file.
 - `Udp.bind!`: UDP sockets
   - `Udp.Socket`: `send_to!`, `recv_from!`, `connect!`, `send!`, `recv!`,
     `set_read_timeout!`, `set_write_timeout!`, `set_broadcast!`,
@@ -162,7 +165,8 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   which `?` passes up, so it unwinds and its sockets close.
   - `Task.scope!(|scope| ...)`: tasks started with `scope.spawn!` can't
     outlive the scope. It waits for them when the body succeeds and cancels
-    them first when it fails.
+    them first when it fails. A task in the scope failing doesn't stop the
+    others; see `Task.scope!`'s docs for stopping them all.
   - `Task.yield!`, `Task.is_cancelled!`: for long computations, which
     otherwise hold their thread
 - `Select`: wait for whichever happens first, with an arm for each thing and

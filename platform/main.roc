@@ -81,6 +81,7 @@ platform ""
 		"roc_tcp_listen": Host.tcp_listen!,
 		"roc_tcp_set_nodelay": Host.tcp_set_nodelay!,
 		"roc_tls_connect": Host.tls_connect!,
+		"roc_tls_handshake": Host.tls_handshake!,
 		"roc_tls_ignore_unexpected_eof": Host.tls_ignore_unexpected_eof!,
 		"roc_tls_listen": Host.tls_listen!,
 		"roc_tls_wrap_client": Host.tls_wrap_client!,

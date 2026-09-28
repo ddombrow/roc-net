@@ -3,7 +3,8 @@
 **Status (2026-09-27):** 0.2.0 is implemented (Select, task handles,
 cancellation, scopes, `Task.yield!`), except `Time.ticker`, which
 `on_timeout` with a remembered deadline covers for now (see
-`examples/chat_server`). See CHANGELOG.md.
+`examples/chat_server`). See CHANGELOG.md. Next: 0.3.0, proxy features
+(SNI, host-side copy, "any stream" code); Crypto + Noise moves to 0.4.
 
 ## Context
 
@@ -159,7 +160,30 @@ Roc (`platform/Task.roc`):
   plain request-response didn't slow down (single-source waits must keep
   their current path).
 
-## 0.3.0: Crypto + Noise (moved from the first draft of this plan)
+## 0.3.0: Proxy features
+
+From building a TLS-terminating reverse proxy on 0.2:
+
+- **SNI**: after the handshake, `stream.server_name!()` returns the name the
+  client asked for (rustls `ServerConnection::server_name()`). Several
+  certificates chosen by name, such as `Tls.server_config_multi([{ name,
+  cert_file, key_file }, ...])` (rustls `ResolvesServerCertUsingSni`), with a
+  default for clients that send no name. ALPN fits here too
+  (`with_alpn([...])`, `stream.alpn_protocol!()`).
+- **Host-side bidirectional copy**: `Stream.copy_both!(a, b)` (or
+  `copy_to!`) doing the proxy loop in Rust: half-close passed through,
+  errors and cancellation handled in one place, no Roc list per chunk
+  (TLS through `fill`/`try_read`), and room for `splice` on Linux later.
+  `examples/tcp_proxy` becomes its test.
+- **Code over "any stream"**: a documented way to annotate functions that
+  take either `Tcp` or `Tls` streams (a `where` clause over the methods, if
+  the compiler allows it), and an example keeping mixed listeners in one
+  list (or a tag union with a small dispatcher).
+- Possibly: a scope helper that stops every task when the first one ends
+  (today: a channel, see `Task.scope!`'s docs), or a `Select` arm for a task
+  finishing.
+
+## 0.4.0: Crypto + Noise (moved from the first draft of this plan)
 
 - `Crypto` from AWS-LC (already linked): SHA-2, HMAC, HKDF, ChaCha20-Poly1305
   and AES-GCM, X25519, Ed25519, constant-time compare; `Bytes` uvarints.
@@ -173,8 +197,8 @@ Roc (`platform/Task.roc`):
 
 ## Later
 
-- 0.4: libp2p over TCP (peer IDs, libp2p-noise, multistream-select, yamux on
+- 0.5: libp2p over TCP (peer IDs, libp2p-noise, multistream-select, yamux on
   Select + scopes, identify, ping), interop with rust-libp2p.
-- 0.5: sans-I/O UDP foundation with QUIC (quinn-proto); libp2p over QUIC.
+- 0.6: sans-I/O UDP foundation with QUIC (quinn-proto); libp2p over QUIC.
 - Then DTLS (rtc-dtls with aws-lc vs dimpl), mDNS/STUN/NAT traversal,
   WebSocket, mTLS/ALPN, graceful shutdown, a deterministic network simulator.

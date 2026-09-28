@@ -545,8 +545,10 @@ fn default_client_config() -> Arc<ClientConfig> {
         .clone()
 }
 
+/// A certificate or key file that can't be used, as `Other("path: reason")`
+/// in Roc: a kind like `NotFound` would lose the path and the reason.
 fn file_error(path: &str, err: impl std::fmt::Display) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, format!("{path}: {err}"))
+    io::Error::other(format!("{path}: {err}"))
 }
 
 fn load_certs(path: &str) -> io::Result<Vec<CertificateDer<'static>>> {
@@ -599,9 +601,8 @@ pub fn host_of(address: &str) -> &str {
 /// `deadline`, so a bad certificate or an unresponsive peer is reported here
 /// rather than on the first read or write.
 pub fn client(tcp: Conn<TcpStream>, server_name: &str, ca_file: &str, deadline: Option<Instant>) -> io::Result<TlsStream> {
-    let name = ServerName::try_from(server_name.to_string()).map_err(|err| {
-        io::Error::new(io::ErrorKind::InvalidInput, format!("{server_name:?} is not a valid server name: {err}"))
-    })?;
+    let name = ServerName::try_from(server_name.to_string())
+        .map_err(|err| io::Error::other(format!("{server_name:?} is not a valid server name: {err}")))?;
     let conn = ClientConnection::new(client_config(ca_file)?, name).map_err(tls_error)?;
     let stream = TlsStream::new(tcp, Connection::Client(conn), deadline);
     stream.handshake()?;

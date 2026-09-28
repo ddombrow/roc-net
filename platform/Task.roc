@@ -86,6 +86,32 @@ Task := [].{
 	##     Ok((a.join!()?, b.join!()?))
 	## })
 	## ```
+	##
+	## Only `body!`'s result decides whether the others are cancelled. A task
+	## in the scope that fails just ends: the rest keep running, and the
+	## scope still waits for them. Its error goes wherever it would for any
+	## task: to whoever joins its handle, or, if every handle is released
+	## unjoined, to stderr.
+	##
+	## So with several long-running tasks (one accept loop per listener,
+	## say), decide what one of them ending should mean. If the others should
+	## carry on, let each handle its own errors. To stop them all instead,
+	## have `body!` return an error when the first one ends. Joining handles
+	## in turn won't do that, since `join!` waits for that particular task,
+	## but a channel they each report to will:
+	##
+	## ```roc
+	## Task.scope!(|scope| {
+	##     (done, ended) = Channel.new!(2)?
+	##     _ = scope.spawn!(|| done.send!(serve!(tcp_listener)))?
+	##     _ = scope.spawn!(|| done.send!(serve!(tls_listener)))?
+	##     # Whichever ends first; returning an error cancels the other.
+	##     match ended.receive!()? {
+	##         Ok({}) => Err(ListenerStopped)
+	##         Err(err) => Err(err)
+	##     }
+	## })
+	## ```
 	scope! : (Scope => Try(a, [TaskLimitReached, ..err])) => Try(a, [TaskLimitReached, ..err])
 	scope! = |body!|
 		match Host.group_new!({}) {

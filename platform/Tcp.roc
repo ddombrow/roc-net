@@ -89,6 +89,8 @@ Tcp := [].{
 		## Shut down one or both directions while keeping the stream usable in
 		## the other. `shutdown!(Write)` tells the peer you are done sending (it
 		## reads the end of the stream) and still lets you read its reply.
+		## Succeeds if the peer has already closed the connection, since
+		## there's nothing left to shut down.
 		shutdown! : Stream, [Read, Write, Both] => Try({}, [TcpErr(IOErr)])
 		shutdown! = |Stream.(stream), how| {
 			code =

@@ -3816,6 +3816,15 @@ pub struct HostTlsConnectArgs {
     pub arg3: u64,
 }
 
+/// Arguments for Host.tls_handshake!
+/// Roc signature: Host.Socket => Try({}, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTlsHandshakeArgs {
+    pub arg0: *mut u64,
+}
+
 /// Arguments for Host.tls_ignore_unexpected_eof!
 /// Roc signature: Host.Socket, Bool => Try({}, IOErr)
 /// Refcounted fields are owned by the hosted function.
@@ -3989,6 +3998,9 @@ pub type HostTcpSetNodelayResultTag = HostSocketSetTimeoutResultTag;
 pub type HostTlsConnectResult = HostSocketAcceptResult;
 pub type HostTlsConnectResultPayload = HostSocketAcceptResultPayload;
 pub type HostTlsConnectResultTag = HostSocketAcceptResultTag;
+pub type HostTlsHandshakeResult = HostSocketSetTimeoutResult;
+pub type HostTlsHandshakeResultPayload = HostSocketSetTimeoutResultPayload;
+pub type HostTlsHandshakeResultTag = HostSocketSetTimeoutResultTag;
 pub type HostTlsIgnoreUnexpectedEofResult = HostSocketSetTimeoutResult;
 pub type HostTlsIgnoreUnexpectedEofResultPayload = HostSocketSetTimeoutResultPayload;
 pub type HostTlsIgnoreUnexpectedEofResultTag = HostSocketSetTimeoutResultTag;
@@ -5490,6 +5502,14 @@ unsafe extern "C" {
     ///     unsafe { arg2.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_tls_connect(arg0: RocStr, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostSocketAcceptResult;
+
+    /// Hosted symbol for Host.tls_handshake!
+    /// Roc signature: Host.Socket => Try({}, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tls_handshake(arg0: *mut u64) -> HostSocketSetTimeoutResult;
 
     /// Hosted symbol for Host.tls_ignore_unexpected_eof!
     /// Roc signature: Host.Socket, Bool => Try({}, IOErr)

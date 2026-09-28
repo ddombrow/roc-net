@@ -743,13 +743,18 @@ pub extern "C" fn roc_socket_shutdown(socket: *mut u64, how: u8) -> HostSocketSe
         _ => Shutdown::Both,
     };
     unit_result(with_socket(socket, |socket| {
-        match socket {
-            Socket::TcpStream(s) => s.io.shutdown(how)?,
-            Socket::UnixStream(s) => s.io.shutdown(how)?,
-            Socket::Tls(s) => s.shutdown(how)?,
+        let result = match socket {
+            Socket::TcpStream(s) => s.io.shutdown(how),
+            Socket::UnixStream(s) => s.io.shutdown(how),
+            Socket::Tls(s) => s.shutdown(how),
             _ => return Err(wrong_kind("shutdown")),
+        };
+        match result {
+            // The peer closed first (macOS reports ENOTCONN then): that
+            // direction is shut down already, which is what was asked.
+            Err(err) if err.kind() == io::ErrorKind::NotConnected => Ok(()),
+            result => Ok(result?),
         }
-        Ok(())
     }))
 }
 
@@ -1077,6 +1082,15 @@ pub extern "C" fn roc_tls_wrap_server(
         })
     });
     handle_result(result)
+}
+
+/// Hosted function: Host.tls_handshake!
+#[no_mangle]
+pub extern "C" fn roc_tls_handshake(socket: *mut u64) -> HostSocketSetTimeoutResult {
+    unit_result(with_socket(socket, |socket| match socket {
+        Socket::Tls(s) => Ok(s.handshake()?),
+        _ => Err(wrong_kind("handshake")),
+    }))
 }
 
 /// Hosted function: Host.tls_ignore_unexpected_eof!

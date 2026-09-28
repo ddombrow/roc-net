@@ -118,6 +118,13 @@ main! = |_args| {
 		check!("select: TLS data left by another reader wakes it", select_tls_after_other_reader!),
 		check!("select: watching a stream mid-handshake doesn't block the handshake", select_during_handshake!),
 		check!("tls: a server that speaks first, with a reader running the handshake", tls_server_speaks_first!),
+		check!("tls: handshake! finishes a server stream's handshake", tls_explicit_handshake!),
+		check!("tls: handshake! reports a failed handshake", tls_explicit_handshake_fails!),
+		check!("tls: a missing certificate file names the file", tls_missing_cert!),
+		check!("tls: a key that doesn't match the certificate says so", tls_mismatched_key!),
+		check!("shutdown!: succeeds after the peer closed (tcp, tls)", shutdown_after_peer_closed!),
+		check!("scope: a failing task doesn't stop the others", scope_child_fails!),
+		check!("scope: stop them all when the first one ends", scope_first_ends!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -2004,4 +2011,124 @@ tls_server_speaks_first! = || {
 	client.write_str!("QUIT\r\n")?
 	reply = report.receive_timeout!(Time.seconds(3))
 	expect_eq((Str.from_utf8_lossy(greeting), reply), ("220 hello\r\n", Ok("QUIT\r\n")))
+}
+
+# The server finishes the handshake before using the stream, and sees the
+# client's message afterwards. On a client stream (which shook hands while
+# connecting) it returns at once.
+tls_explicit_handshake! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		shook = stream.handshake!()
+		message = stream.read!(100)?
+		report_tx.send!((shook, Str.from_utf8_lossy(message)))
+	})?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	client.handshake!()?
+	client.write_str!("after the handshake")?
+	match report.receive_timeout!(Time.seconds(3))? {
+		(Ok({}), message) => expect_eq(message, "after the handshake")
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# A client that sends something other than TLS: the error comes from
+# handshake!, not from a later read or write.
+tls_explicit_handshake_fails! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		report_tx.send!(stream.handshake!())
+	})?
+	client = Tcp.connect!(address)?
+	client.write_str!("GET / HTTP/1.1\r\n\r\n")?
+	match report.receive_timeout!(Time.seconds(3))? {
+		Err(TlsErr(_)) => Ok({})
+		other => Err(Unexpected("expected a failed handshake, got ${Str.inspect(other)}"))
+	}
+}
+
+tls_missing_cert! = || {
+	config = Tls.server_config({ cert_file: "examples/net_tests/certs/missing.pem", key_file: "examples/net_tests/certs/server-key.pem" })
+	match Tls.listen!("127.0.0.1:0", config) {
+		Err(TlsErr(Other(message))) if Str.contains(message, "missing.pem") => Ok({})
+		other => Err(Unexpected("expected an error naming missing.pem, got ${Str.inspect(other)}"))
+	}
+}
+
+# The CA's key with the server's certificate.
+tls_mismatched_key! = || {
+	config = Tls.server_config({ cert_file: "examples/net_tests/certs/server.pem", key_file: "examples/net_tests/certs/ca-key.pem" })
+	match Tls.listen!("127.0.0.1:0", config) {
+		Err(TlsErr(Other(message))) if Str.contains(message, "server.pem") => Ok({})
+		other => Err(Unexpected("expected an error naming server.pem, got ${Str.inspect(other)}"))
+	}
+}
+
+# The peer closes first; shutting down this side afterwards, as a proxy does
+# when it passes the close on, is not an error.
+shutdown_after_peer_closed! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.close!()
+		Ok({})
+	})?
+	client = Tcp.connect!(address)?
+	_ = read_to_end!(client)?
+	client.shutdown!(Write)?
+	client.shutdown!(Both)?
+
+	(tls_listener, tls_address) = tls_listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = tls_listener.accept!()?
+		stream.handshake!()?
+		stream.close!()
+		Ok({})
+	})?
+	tls_client = Tls.connect_with!(tls_address, trusting_test_ca)?
+	_ = read_to_end!(tls_client)?
+	tls_client.shutdown!(Write)?
+	tls_client.shutdown!(Both)
+}
+
+# One task fails at once; its sibling still runs to completion, and the
+# scope waits for it.
+scope_child_fails! = || {
+	(done_tx, done) = Channel.new!(1)?
+	result = Task.scope!(|scope| {
+		failing = scope.spawn!(|| fail_unless_empty("nope"))?
+		_ = scope.spawn!(|| {
+			Time.sleep!(Time.millis(50))?
+			done_tx.send!("sibling finished")
+		})?
+		# Only observed, not returned: the body succeeds.
+		Ok(failing.join!())
+	})
+	expect_eq((result, done.try_receive!()), (Ok(Err(Boom("nope"))), Ok("sibling finished")))
+}
+
+# The pattern from `Task.scope!`'s docs: whichever long-running task ends
+# first decides, and the other is cancelled.
+scope_first_ends! = || {
+	start = Time.now!()
+	result = Task.scope!(|scope| {
+		(done, ended) = Channel.new!(2)?
+		_ = scope.spawn!(|| done.send!(sleep_then_fail!(Time.seconds(30), "slow")))?
+		_ = scope.spawn!(|| done.send!(sleep_then_fail!(Time.millis(20), "fast")))?
+		match ended.receive!()? {
+			Ok({}) => Err(Stopped)
+			Err(err) => Err(err)
+		}
+	})
+	took = start.elapsed!().to_millis()
+	expect_eq((result, took < 5000), (Err(Boom("fast")), True))
+}
+
+sleep_then_fail! = |duration, message| {
+	Time.sleep!(duration)?
+	fail_unless_empty(message)
 }

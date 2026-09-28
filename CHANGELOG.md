@@ -9,6 +9,8 @@ Roc nightly it's built for; apps must use that nightly.
 Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,
 x86-64) and static Linux (musl: arm64, x86-64).
 
+Fixes and additions from building a TLS-terminating proxy.
+
 - **Fixed**: a server-side TLS stream could deadlock when one task read from
   it while another wrote before the handshake had finished, such as a proxy
   in front of a server that speaks first (SMTP, SSH). The writer ended up
@@ -16,6 +18,22 @@ x86-64) and static Linux (musl: arm64, x86-64).
   waiting for the greeting. The handshake now has its own lock, so once it's
   done, a writer never queues behind a reader. Code that worked around it by
   writing an empty message first (`stream.write!([])`) can drop that.
+- **`Tls.Stream.handshake!`**: finish a server stream's handshake at a point
+  of your choosing, such as right after `accept!` and before sharing the
+  stream between tasks, so a failed handshake is reported there rather than
+  by whichever task used the stream first.
+- **Fixed**: a certificate, key or CA file that couldn't be loaded failed
+  with a bare `TlsErr(InvalidInput)`. It now fails with
+  `TlsErr(Other("server.pem: No such file or directory (os error 2)"))`,
+  naming the file and the reason, and so does a malformed PEM or a key that
+  doesn't match the certificate. An invalid server name says why too.
+- **Fixed**: `shutdown!` on a stream whose peer had already closed failed
+  with `NotConnected` on macOS, so proxies logged clean sessions as errors.
+  It now succeeds (TCP, Unix and TLS).
+- **Docs**: what happens when a task in a `Task.scope!` fails (the others
+  keep running; only the body's result cancels them), with a pattern for
+  stopping them all when the first one ends; when a TLS-terminating proxy can
+  use `ignore_unexpected_eof!`.
 
 ## 0.2.0
 
