@@ -48,6 +48,7 @@
 //! - The same functions work outside a task (on a plain thread), by blocking
 //!   that thread instead.
 
+use std::any::Any;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
@@ -91,10 +92,22 @@ enum Suspend {
 }
 
 /// How a wait ended.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Woke {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Woke {
     Ready = 0,
     TimedOut = 1,
+    /// The task was cancelled (see [`TaskRef::cancel`]).
+    Cancelled = 2,
+}
+
+impl Woke {
+    fn from_u8(value: u8) -> Woke {
+        match value {
+            1 => Woke::TimedOut,
+            2 => Woke::Cancelled,
+            _ => Woke::Ready,
+        }
+    }
 }
 
 type Co = Coroutine<(), Suspend, (), DefaultStack>;
@@ -120,6 +133,19 @@ struct Task {
     timer: UnsafeCell<Option<(usize, (Instant, u64))>>,
     /// The first task, `main!`: when it returns, the program exits.
     main: bool,
+    /// Cancelled (see [`TaskRef::cancel`]): cancellable waits end at once.
+    cancelled: AtomicBool,
+    /// Whether the current wait may be ended by cancelling (locks can't be).
+    cancellable: AtomicBool,
+    /// Finished, and who's waiting for that (`TaskRef::wait_done`); the flag
+    /// changes under the same lock as the list, so no waiter misses it.
+    finished: Mutex<(bool, Waiters)>,
+    /// The task's result, stored by the task itself before it returns (the
+    /// host's Roc glue decides what's in it).
+    result: Mutex<Option<Box<dyn Any + Send>>>,
+    /// Roc handles to the task (`TaskRef::add_handle`): when none are left,
+    /// nobody can wait for its result.
+    handles: AtomicUsize,
 }
 
 // `co` and `timer` are only touched by whoever holds `RUNNING` (the queue
@@ -134,10 +160,15 @@ fn new_wait_id() -> u64 {
 }
 
 /// End `task`'s wait `wait`, if that's still the wait it's in, and queue it.
-fn wake(task: &Arc<Task>, wait: u64, woke: Woke) {
+/// Returns whether it did (false: that wait already ended, say by timing out
+/// or being cancelled).
+fn wake(task: &Arc<Task>, wait: u64, woke: Woke) -> bool {
     if task.wait.compare_exchange(wait, 0, Ordering::AcqRel, Ordering::Acquire).is_ok() {
         task.woke.store(woke as u8, Ordering::Release);
         schedule(task.clone());
+        true
+    } else {
+        false
     }
 }
 
@@ -464,6 +495,11 @@ impl Worker {
                 task.state.store(DONE, Ordering::Release);
                 let co = unsafe { (*task.co.get()).take() }.expect("just ran");
                 recycle_stack(co.into_stack());
+                {
+                    let mut finished = lock(&task.finished);
+                    finished.0 = true;
+                    finished.1.wake_all();
+                }
                 if task.main {
                     MAIN_DONE.store(true, Ordering::Release);
                     if let Some(main) = workers().first().and_then(OnceLock::get) {
@@ -696,7 +732,7 @@ fn recycle_stack(stack: DefaultStack) {
     }
 }
 
-fn new_task(job: impl FnOnce() + Send + 'static, stack: DefaultStack, main: bool) -> Arc<Task> {
+fn new_task(job: impl FnOnce() + Send + 'static, stack: DefaultStack, main: bool, handles: usize) -> Arc<Task> {
     let co = Coroutine::with_stack(stack, move |yielder, ()| {
         set_yielder(yielder);
         job();
@@ -708,6 +744,11 @@ fn new_task(job: impl FnOnce() + Send + 'static, stack: DefaultStack, main: bool
         woke: AtomicU8::new(Woke::Ready as u8),
         timer: UnsafeCell::new(None),
         main,
+        cancelled: AtomicBool::new(false),
+        cancellable: AtomicBool::new(false),
+        finished: Mutex::new((false, Waiters::new())),
+        result: Mutex::new(None),
+        handles: AtomicUsize::new(handles),
     })
 }
 
@@ -724,7 +765,7 @@ pub fn run_main(main: impl FnOnce() -> i32 + Send + 'static) -> i32 {
 
     // The main thread's usual stack size, since main! used to run on it.
     let stack = DefaultStack::new(8 * 1024 * 1024).unwrap_or_else(|err| fatal(&format!("can't allocate main!'s stack: {err}")));
-    let task = new_task(move || *lock(&MAIN_RESULT) = Some(main()), stack, true);
+    let task = new_task(move || *lock(&MAIN_RESULT) = Some(main()), stack, true, 0);
     worker.shared.push(task);
     worker.run();
     lock(&MAIN_RESULT).unwrap_or(1)
@@ -732,8 +773,9 @@ pub fn run_main(main: impl FnOnce() -> i32 + Send + 'static) -> i32 {
 
 /// Start `job` as a new task, on this worker's queue (other workers steal it
 /// if this one is busy). Fails, returning the job, if no stack can be
-/// allocated for it.
-pub fn spawn(job: Job) -> Result<(), (Job, io::Error)> {
+/// allocated for it. The task starts with one handle (see
+/// [`TaskRef::add_handle`]), counted before it can finish.
+pub fn spawn(job: Job) -> Result<TaskRef, (Job, io::Error)> {
     if WORKERS.get().is_none() {
         return Err((job, io::Error::other("the scheduler isn't running")));
     }
@@ -741,8 +783,86 @@ pub fn spawn(job: Job) -> Result<(), (Job, io::Error)> {
         Ok(stack) => stack,
         Err(err) => return Err((job, err)),
     };
-    push(new_task(job, stack, false));
-    Ok(())
+    let task = new_task(job, stack, false, 1);
+    push(task.clone());
+    Ok(TaskRef(task))
+}
+
+/// A task, for cancelling it or waiting for it to finish.
+#[derive(Clone)]
+pub struct TaskRef(Arc<Task>);
+
+impl TaskRef {
+    /// Ask the task to stop: its current wait, if cancellable, ends now, and
+    /// every cancellable wait it starts from now on ends at once, with
+    /// [`Woke::Cancelled`]. Cooperative: the task decides what to do about
+    /// it (Roc code usually propagates the error, which unwinds the task).
+    pub fn cancel(&self) {
+        let task = &self.0;
+        task.cancelled.store(true, Ordering::SeqCst);
+        let wait = task.wait.load(Ordering::SeqCst);
+        // A wait that starts after this sees `cancelled` (see `begin_wait`).
+        if wait != 0 && task.cancellable.load(Ordering::SeqCst) {
+            wake(task, wait, Woke::Cancelled);
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        lock(&self.0.finished).0
+    }
+
+    /// The running task.
+    pub fn current() -> Option<TaskRef> {
+        current_task().map(TaskRef)
+    }
+
+    pub fn drop_handle(&self) {
+        self.0.handles.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    pub fn has_handles(&self) -> bool {
+        self.0.handles.load(Ordering::Acquire) > 0
+    }
+
+    pub fn set_result(&self, result: Box<dyn Any + Send>) {
+        *lock(&self.0.result) = Some(result);
+    }
+
+    pub fn with_result<R>(&self, f: impl FnOnce(Option<&(dyn Any + Send)>) -> R) -> R {
+        f(lock(&self.0.result).as_deref())
+    }
+
+    /// Wait for the task to finish. `cancellable: false` for waits that
+    /// must complete even if the waiting task is cancelled (a scope waiting
+    /// for its children).
+    pub fn wait_finished(&self, cancellable: bool) -> Woke {
+        let mut finished = lock(&self.0.finished);
+        loop {
+            if finished.0 {
+                return Woke::Ready;
+            }
+            let id = if cancellable { finished.1.add() } else { finished.1.add_uncancellable() };
+            drop(finished);
+            let end = park(None);
+            finished = lock(&self.0.finished);
+            finished.1.remove(id);
+            if end == Woke::Cancelled {
+                return Woke::Cancelled;
+            }
+        }
+    }
+}
+
+/// Whether the running task has been cancelled.
+pub fn is_cancelled() -> bool {
+    current_task().is_some_and(|task| task.cancelled.load(Ordering::SeqCst))
+}
+
+/// Let other tasks on this worker run, then continue.
+pub fn yield_now() {
+    if current_worker().is_some() {
+        suspend(Suspend::Yield);
+    }
 }
 
 // --- Waiting, from inside a task ---
@@ -767,19 +887,42 @@ fn wait_suspended(task: &Arc<Task>, wait: u64, deadline: Option<Instant>) -> Wok
             lock(&shared.timers).remove(&key);
         }
     }
-    if task.woke.load(Ordering::Acquire) == Woke::TimedOut as u8 {
-        Woke::TimedOut
-    } else {
-        Woke::Ready
+    Woke::from_u8(task.woke.load(Ordering::Acquire))
+}
+
+/// Start a wait: give the current task a new wait id. A cancellable wait
+/// of a task that's already cancelled ends at once (the wake-up is queued
+/// before the task even suspends).
+fn begin_wait(task: &Arc<Task>, cancellable: bool) -> u64 {
+    let wait = new_wait_id();
+    task.woke.store(Woke::Ready as u8, Ordering::Relaxed);
+    task.cancellable.store(cancellable, Ordering::SeqCst);
+    task.wait.store(wait, Ordering::SeqCst);
+    // Pairs with `TaskRef::cancel`, which sets the flag before reading `wait`.
+    if cancellable && task.cancelled.load(Ordering::SeqCst) {
+        wake(task, wait, Woke::Cancelled);
+    }
+    wait
+}
+
+/// The error a cancelled I/O wait surfaces as.
+#[derive(Debug)]
+pub struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the task was cancelled")
     }
 }
 
-/// Start a wait: give the current task a new wait id.
-fn begin_wait(task: &Task) -> u64 {
-    let wait = new_wait_id();
-    task.woke.store(Woke::Ready as u8, Ordering::Relaxed);
-    task.wait.store(wait, Ordering::SeqCst);
-    wait
+impl std::error::Error for Cancelled {}
+
+pub fn cancelled() -> io::Error {
+    io::Error::other(Cancelled)
+}
+
+pub fn is_cancelled_error(err: &io::Error) -> bool {
+    err.get_ref().is_some_and(|inner| inner.is::<Cancelled>())
 }
 
 // --- Sockets ---
@@ -852,40 +995,117 @@ pub fn wait_io(fd: RawFd, reg: &IoReg, writable: bool, deadline: Option<Instant>
     let (Some(worker), Some(task)) = (current_worker(), current_task()) else {
         return wait_io_blocking(fd, writable, deadline);
     };
-    let state = reg.state(fd);
-    let wait = begin_wait(&task);
-    {
-        let mut waiters = lock(&state.waiters);
-        let owner = state.owner.load(Ordering::Acquire);
-        let mine = worker.index() + 1;
-        // Watch it from this worker's event queue, unless it's watched
-        // elsewhere for another waiting task.
-        if owner != mine && (owner == 0 || waiters.is_empty()) {
-            let token = Token(state.token);
-            let interest = Interest::READABLE | Interest::WRITABLE;
-            if let Some(old) = owner.checked_sub(1).and_then(|index| workers().get(index)).and_then(OnceLock::get) {
-                let _ = old.registry.deregister(&mut SourceFd(&fd));
-            }
-            match worker.shared.registry.register(&mut SourceFd(&fd), token, interest) {
-                Ok(()) => {}
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                    worker.shared.registry.reregister(&mut SourceFd(&fd), token, interest)?
-                }
-                Err(err) => {
-                    state.owner.store(0, Ordering::Release);
-                    return Err(err);
-                }
-            }
-            state.owner.store(mine, Ordering::Release);
-        }
-        waiters.push(IoWaiter { task: task.clone(), wait, writable });
-    }
+    let state = reg.state(fd).clone();
+    let wait = begin_wait(&task, true);
+    watch_io(worker, &state, &task, wait, writable)?;
     let woke = wait_suspended(&task, wait, deadline);
-    // Gone already if an event woke it; still there if it timed out.
+    // Gone already if an event woke it; still there if it didn't.
     lock(&state.waiters).retain(|waiter| waiter.wait != wait);
     match woke {
         Woke::Ready => Ok(()),
         Woke::TimedOut => Err(timed_out()),
+        Woke::Cancelled => Err(cancelled()),
+    }
+}
+
+/// Add the task's wait `wait` to the socket's waiters, and make sure an
+/// event will come if the socket is (or becomes) ready: watch it from this
+/// worker's event queue, unless another worker's queue watches it for
+/// another waiting task, in which case re-arm it there. (Registering or
+/// re-arming a socket reports readiness that's already there, so an event
+/// that another worker handled just before this waiter was added isn't
+/// lost.)
+fn watch_io(worker: &Worker, state: &Arc<IoState>, task: &Arc<Task>, wait: u64, writable: bool) -> io::Result<()> {
+    let fd = state.fd;
+    let token = Token(state.token);
+    let interest = Interest::READABLE | Interest::WRITABLE;
+    let mut waiters = lock(&state.waiters);
+    let owner = state.owner.load(Ordering::Acquire);
+    let mine = worker.index() + 1;
+    let other = owner.checked_sub(1).and_then(|index| workers().get(index)).and_then(OnceLock::get);
+    waiters.push(IoWaiter { task: task.clone(), wait, writable });
+    if owner == mine {
+        // Events for it are handled by this thread, which can't handle any
+        // until this task suspends.
+        return Ok(());
+    }
+    if owner != 0 && waiters.len() > 1 {
+        if let Some(other) = other {
+            return other.registry.reregister(&mut SourceFd(&fd), token, interest);
+        }
+    }
+    if let Some(old) = other {
+        let _ = old.registry.deregister(&mut SourceFd(&fd));
+    }
+    let registered = match worker.shared.registry.register(&mut SourceFd(&fd), token, interest) {
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            worker.shared.registry.reregister(&mut SourceFd(&fd), token, interest)
+        }
+        result => result,
+    };
+    match registered {
+        Ok(()) => {
+            state.owner.store(mine, Ordering::Release);
+            Ok(())
+        }
+        Err(err) => {
+            state.owner.store(0, Ordering::Release);
+            waiters.retain(|waiter| waiter.wait != wait);
+            Err(err)
+        }
+    }
+}
+
+/// One wait on several sources at once (`Select`): the first to fire wins,
+/// since a wake-up only counts for the wait it names and the wait id is
+/// shared. Sockets are added with [`add_io`](MultiWait::add_io); other
+/// sources (channels) register [`waker`](MultiWait::waker) themselves.
+pub struct MultiWait {
+    task: Arc<Task>,
+    wait: u64,
+    io: Vec<Arc<IoState>>,
+}
+
+/// Start a cancellable wait on several sources; `None` outside a task.
+pub fn begin_multi_wait() -> Option<MultiWait> {
+    current_worker()?;
+    let task = current_task()?;
+    let wait = begin_wait(&task, true);
+    Some(MultiWait { task, wait, io: Vec::new() })
+}
+
+impl MultiWait {
+    pub fn waker(&self) -> TaskWaker {
+        TaskWaker(WakerKind::Task { task: self.task.clone(), wait: self.wait })
+    }
+
+    /// Also wake when `fd` becomes readable (or writable).
+    pub fn add_io(&mut self, fd: RawFd, reg: &IoReg, writable: bool) -> io::Result<()> {
+        let worker = current_worker().expect("a task is running");
+        let state = reg.state(fd).clone();
+        watch_io(worker, &state, &self.task, self.wait, writable)?;
+        self.io.push(state);
+        Ok(())
+    }
+
+    /// Suspend until a source fires, `deadline`, or cancellation.
+    pub fn wait(self, deadline: Option<Instant>) -> Woke {
+        let woke = wait_suspended(&self.task, self.wait, deadline);
+        self.forget_io();
+        woke
+    }
+
+    /// Give up the wait without suspending (a source was ready already):
+    /// later wake-ups for it are ignored.
+    pub fn abandon(self) {
+        let _ = self.task.wait.compare_exchange(self.wait, 0, Ordering::AcqRel, Ordering::Acquire);
+        self.forget_io();
+    }
+
+    fn forget_io(&self) {
+        for state in &self.io {
+            lock(&state.waiters).retain(|waiter| waiter.wait != self.wait);
+        }
     }
 }
 
@@ -922,68 +1142,89 @@ pub fn consume_budget() {
     }
 }
 
-pub fn sleep(duration: Duration) {
+/// Sleep for `duration`; `false` if the task was cancelled first.
+pub fn sleep(duration: Duration) -> bool {
     let Some(task) = current_task() else {
         std::thread::sleep(duration);
-        return;
+        return true;
     };
     // Too far off to represent: that's forever.
     let deadline = Instant::now().checked_add(duration);
     // A task can be resumed early (a wake-up for an earlier wait arriving
     // late), so sleep until the deadline has really passed.
     loop {
-        let wait = begin_wait(&task);
-        if wait_suspended(&task, wait, deadline) == Woke::TimedOut {
-            return;
+        let wait = begin_wait(&task, true);
+        match wait_suspended(&task, wait, deadline) {
+            Woke::TimedOut => return true,
+            Woke::Cancelled => return false,
+            Woke::Ready => {}
         }
     }
 }
 
 /// Wakes one particular wait of a task (or a plain thread).
+#[derive(Clone)]
 pub struct TaskWaker(WakerKind);
 
+#[derive(Clone)]
 enum WakerKind {
     Task { task: Arc<Task>, wait: u64 },
     Thread(std::thread::Thread),
 }
 
 impl TaskWaker {
-    pub fn wake(self) {
+    /// Wake the wait this waker is for. Returns false if that wait had
+    /// already ended, so the wake-up reached nobody.
+    pub fn wake(self) -> bool {
         match self.0 {
             WakerKind::Task { task, wait } => wake(&task, wait, Woke::Ready),
-            WakerKind::Thread(thread) => thread.unpark(),
+            WakerKind::Thread(thread) => {
+                thread.unpark();
+                true
+            }
         }
     }
 }
 
 /// A waker for the current task's next [`park`]. Starts the wait, so the
-/// task must park next.
+/// task must park next. The wait ends early if the task is cancelled.
 pub fn waker() -> TaskWaker {
+    new_waker(true)
+}
+
+/// Like [`waker`], for a wait cancelling mustn't end (such as for a lock the
+/// task needs to make progress).
+pub fn waker_uncancellable() -> TaskWaker {
+    new_waker(false)
+}
+
+fn new_waker(cancellable: bool) -> TaskWaker {
     match current_task() {
         Some(task) => {
-            let wait = begin_wait(&task);
+            let wait = begin_wait(&task, cancellable);
             TaskWaker(WakerKind::Task { task, wait })
         }
         None => TaskWaker(WakerKind::Thread(std::thread::current())),
     }
 }
 
-/// Wait until woken by the waker from [`waker`] or until `deadline`. May also
-/// return early for no reason, so callers check their condition in a loop.
-pub fn park(deadline: Option<Instant>) {
+/// Wait until woken by the waker from [`waker`], until `deadline`, or until
+/// the task is cancelled (if the wait is cancellable). May also return early
+/// for no reason, so callers check their condition in a loop.
+pub fn park(deadline: Option<Instant>) -> Woke {
     let Some(task) = current_task() else {
         match deadline {
             None => std::thread::park(),
             Some(at) => std::thread::park_timeout(at.saturating_duration_since(Instant::now())),
         }
-        return;
+        return Woke::Ready;
     };
     let wait = task.wait.load(Ordering::Acquire);
     if wait == 0 {
-        // Already woken (or never given a waker): nothing to wait for.
-        return;
+        // Already woken: say how.
+        return Woke::from_u8(task.woke.load(Ordering::Acquire));
     }
-    wait_suspended(&task, wait, deadline);
+    wait_suspended(&task, wait, deadline)
 }
 
 /// Tasks waiting for some condition, kept inside the state that condition is
@@ -1015,9 +1256,21 @@ impl Waiters {
         Waiters { list: VecDeque::new(), next: 0 }
     }
 
+    /// Add the current task, starting a (cancellable) wait.
     pub fn add(&mut self) -> u64 {
+        self.add_waker(waker())
+    }
+
+    /// Add the current task for a wait cancelling doesn't end.
+    pub fn add_uncancellable(&mut self) -> u64 {
+        self.add_waker(waker_uncancellable())
+    }
+
+    /// Add a waker for a wait already started, such as one of several
+    /// sources a task waits on at once ([`MultiWait`]).
+    pub fn add_waker(&mut self, waker: TaskWaker) -> u64 {
         self.next += 1;
-        self.list.push_back((self.next, waker()));
+        self.list.push_back((self.next, waker));
         self.next
     }
 
@@ -1025,9 +1278,15 @@ impl Waiters {
         self.list.retain(|(waiter, _)| *waiter != id);
     }
 
+    /// Wake the first task that's still waiting. Entries whose wait already
+    /// ended (a waiter cancelled or timed out, and not yet back to remove
+    /// itself) are dropped on the way: spending the notification on one would
+    /// leave a real waiter asleep.
     pub fn wake_one(&mut self) {
-        if let Some((_, waker)) = self.list.pop_front() {
-            waker.wake();
+        while let Some((_, waker)) = self.list.pop_front() {
+            if waker.wake() {
+                return;
+            }
         }
     }
 
@@ -1051,6 +1310,11 @@ impl Lock {
         Lock { state: Mutex::new((false, Waiters::new())) }
     }
 
+    /// Whether some task holds the lock right now.
+    pub fn is_locked(&self) -> bool {
+        lock(&self.state).0
+    }
+
     /// Take the lock if it's free, without waiting.
     pub fn try_lock(&self) -> Option<LockGuard<'_>> {
         let mut state = lock(&self.state);
@@ -1068,7 +1332,9 @@ impl Lock {
                 state.0 = true;
                 return LockGuard(self);
             }
-            let id = state.1.add();
+            // A task holding up others by being cancelled mid-lock would be
+            // worse than finishing: lock waits aren't cancellable.
+            let id = state.1.add_uncancellable();
             drop(state);
             park(None);
             state = lock(&self.state);
@@ -1105,22 +1371,26 @@ impl Drop for BlockingSlot {
     }
 }
 
-/// Wait for a helper-thread slot until `deadline`.
-fn claim_blocking_slot(deadline: Option<Instant>) -> Option<BlockingSlot> {
+/// Wait for a helper-thread slot until `deadline` (`Err(TimedOut)`) or the
+/// task is cancelled (`Err(Cancelled)`).
+fn claim_blocking_slot(deadline: Option<Instant>) -> Result<BlockingSlot, Woke> {
     let mut state = lock(&BLOCKING);
     loop {
         if state.0 < MAX_BLOCKING_THREADS {
             state.0 += 1;
-            return Some(BlockingSlot);
+            return Ok(BlockingSlot);
         }
         if deadline.is_some_and(|at| Instant::now() >= at) {
-            return None;
+            return Err(Woke::TimedOut);
         }
         let id = state.1.add();
         drop(state);
-        park(deadline);
+        let end = park(deadline);
         state = lock(&BLOCKING);
         state.1.remove(id);
+        if end == Woke::Cancelled {
+            return Err(Woke::Cancelled);
+        }
     }
 }
 
@@ -1128,8 +1398,8 @@ fn claim_blocking_slot(deadline: Option<Instant>) -> Option<BlockingSlot> {
 /// wait for its result until `deadline`: `None` if it isn't done by then
 /// (it finishes in the background, and its result is dropped). At most
 /// [`MAX_BLOCKING_THREADS`] run at once; past that, callers wait for one to
-/// finish, until their deadline. Outside a task, with no deadline, it just
-/// runs `f`.
+/// finish, until their deadline. A cancelled task stops waiting with a
+/// [`cancelled`] error. Outside a task, with no deadline, it just runs `f`.
 pub fn blocking<R: Send + 'static>(
     deadline: Option<Instant>,
     f: impl FnOnce() -> R + Send + 'static,
@@ -1137,8 +1407,10 @@ pub fn blocking<R: Send + 'static>(
     if deadline.is_none() && current_worker().is_none() {
         return Ok(Some(f()));
     }
-    let Some(slot) = claim_blocking_slot(deadline) else {
-        return Ok(None);
+    let slot = match claim_blocking_slot(deadline) {
+        Ok(slot) => slot,
+        Err(Woke::Cancelled) => return Err(cancelled()),
+        Err(_) => return Ok(None),
     };
     let result: Arc<Mutex<(Option<R>, Waiters)>> = Arc::new(Mutex::new((None, Waiters::new())));
     let for_thread = result.clone();
@@ -1159,8 +1431,11 @@ pub fn blocking<R: Send + 'static>(
         }
         let id = state.1.add();
         drop(state);
-        park(deadline);
+        let end = park(deadline);
         state = lock(&result);
         state.1.remove(id);
+        if end == Woke::Cancelled {
+            return Err(cancelled());
+        }
     }
 }

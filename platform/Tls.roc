@@ -35,6 +35,20 @@ Tls := [].{
 				Err(err) => Err(TlsErr(err))
 			}
 
+		## For `Select`: a waiting connection, without waiting for one
+		## (`Ok(NotReady)` if there's none yet).
+		try_accept! : Listener => Try([Accepted(Stream), NotReady], [TlsErr(IOErr)])
+		try_accept! = |Listener.(listener)|
+			match Host.socket_try_accept!(listener) {
+				Accepted(stream) => Ok(Accepted(Stream.(stream)))
+				NotReady => Ok(NotReady)
+				Failed(err) => Err(TlsErr(err))
+			}
+
+		## The host socket, for `Select` to wait on.
+		socket : Listener -> Host.Socket
+		socket = |Listener.(listener)| listener
+
 		## The address this listener is bound to.
 		local_addr! : Listener => Try(Str, [TlsErr(IOErr)])
 		local_addr! = |Listener.(listener)| tls_err(Host.socket_local_addr!(listener))
@@ -99,6 +113,25 @@ Tls := [].{
 				}
 			tls_err(Host.socket_shutdown!(stream, code))
 		}
+
+		## For `Select`: what has arrived, without waiting (`Ok(NotReady)` if
+		## nothing has yet).
+		try_read! : Stream, U64 => Try([Data(List(U8)), NotReady], [TlsErr(IOErr)])
+		try_read! = |Stream.(stream), max|
+			match Host.socket_try_read!(stream, max) {
+				Data(bytes) => Ok(Data(bytes))
+				NotReady => Ok(NotReady)
+				Failed(err) => Err(TlsErr(err))
+			}
+
+		## The host socket, for `Select` to wait on.
+		socket : Stream -> Host.Socket
+		socket = |Stream.(stream)| stream
+
+		## What a read reports when the stream's read timeout passes, for
+		## `Select` to report it the same way.
+		timeout_error : Stream -> [TlsErr(IOErr)]
+		timeout_error = |_| TlsErr(TimedOut)
 
 		## End the session and close the connection now.
 		close! : Stream => {}

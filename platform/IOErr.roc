@@ -6,6 +6,9 @@ IOErr := [
 	AddrInUse,
 	AddrNotAvailable,
 	BrokenPipe,
+	## The task was cancelled (`Task.Handle.cancel!`, or its scope ended)
+	## while waiting.
+	Cancelled,
 	ConnectionAborted,
 	ConnectionRefused,
 	ConnectionReset,

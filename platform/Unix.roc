@@ -23,6 +23,20 @@ Unix := [].{
 				Err(err) => Err(UnixErr(err))
 			}
 
+		## For `Select`: a waiting connection, without waiting for one
+		## (`Ok(NotReady)` if there's none yet).
+		try_accept! : Listener => Try([Accepted(Stream), NotReady], [UnixErr(IOErr)])
+		try_accept! = |Listener.(listener)|
+			match Host.socket_try_accept!(listener) {
+				Accepted(stream) => Ok(Accepted(Stream.(stream)))
+				NotReady => Ok(NotReady)
+				Failed(err) => Err(UnixErr(err))
+			}
+
+		## The host socket, for `Select` to wait on.
+		socket : Listener -> Host.Socket
+		socket = |Listener.(listener)| listener
+
 		## The path this listener is bound to.
 		local_addr! : Listener => Try(Str, [UnixErr(IOErr)])
 		local_addr! = |Listener.(listener)| unix_err(Host.socket_local_addr!(listener))
@@ -85,6 +99,25 @@ Unix := [].{
 				}
 			unix_err(Host.socket_shutdown!(stream, code))
 		}
+
+		## For `Select`: what has arrived, without waiting (`Ok(NotReady)` if
+		## nothing has yet).
+		try_read! : Stream, U64 => Try([Data(List(U8)), NotReady], [UnixErr(IOErr)])
+		try_read! = |Stream.(stream), max|
+			match Host.socket_try_read!(stream, max) {
+				Data(bytes) => Ok(Data(bytes))
+				NotReady => Ok(NotReady)
+				Failed(err) => Err(UnixErr(err))
+			}
+
+		## The host socket, for `Select` to wait on.
+		socket : Stream -> Host.Socket
+		socket = |Stream.(stream)| stream
+
+		## What a read reports when the stream's read timeout passes, for
+		## `Select` to report it the same way.
+		timeout_error : Stream -> [UnixErr(IOErr)]
+		timeout_error = |_| UnixErr(TimedOut)
 
 		## Close the connection now instead of waiting for the stream to be
 		## dropped. Any task blocked reading this stream wakes up and sees the

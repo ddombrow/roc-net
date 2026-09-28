@@ -30,7 +30,7 @@ use rustls::{ClientConfig, ClientConnection, Connection, RootCertStore, ServerCo
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
-use crate::sched::Lock;
+use crate::sched::{Lock, LockGuard, TaskWaker, Waiters};
 use crate::sockets::{with_scratch, Conn};
 
 /// Largest plaintext chunk handed to rustls at once (one TLS record's worth).
@@ -53,6 +53,37 @@ pub struct TlsStream {
     ignore_unexpected_eof: AtomicBool,
     /// When the handshake must be finished by, if there's a limit.
     handshake_deadline: Option<Instant>,
+    /// `Select`s waiting on this stream for progress that doesn't show on
+    /// the socket: a lock being released (another reader may have left
+    /// plaintext, a writer may have made room to send a reply). Woken, all
+    /// of them, each time the read or write lock is released.
+    watchers: Mutex<Waiters>,
+}
+
+/// A held read or write lock that, once released, wakes the stream's
+/// `Select` watchers.
+struct Held<'a> {
+    guard: Option<LockGuard<'a>>,
+    watchers: &'a Mutex<Waiters>,
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        // Release first: a watcher woken before it would find it still held.
+        drop(self.guard.take());
+        lock(self.watchers).wake_all();
+    }
+}
+
+/// Whether a `Select` must wait for a TLS stream, and on what (see
+/// [`TlsStream::watch`]).
+pub enum Watch {
+    /// Progress is possible now: poll again.
+    Ready,
+    /// Registered under this id (remove with [`TlsStream::unwatch`]).
+    /// `wants_write`: rustls has records to send, so also wait for the
+    /// socket to be writable.
+    Waiting { id: u64, wants_write: bool },
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -100,11 +131,76 @@ impl TlsStream {
             handshaken: AtomicBool::new(false),
             ignore_unexpected_eof: AtomicBool::new(false),
             handshake_deadline,
+            watchers: Mutex::new(Waiters::new()),
         }
+    }
+
+    fn held<'a>(&'a self, guard: LockGuard<'a>) -> Held<'a> {
+        Held { guard: Some(guard), watchers: &self.watchers }
+    }
+
+    fn lock_read(&self) -> Held<'_> {
+        self.held(self.read_lock.lock())
+    }
+
+    fn lock_write(&self) -> Held<'_> {
+        self.held(self.write_lock.lock())
+    }
+
+    fn try_lock_read(&self) -> Option<Held<'_>> {
+        self.read_lock.try_lock().map(|guard| self.held(guard))
+    }
+
+    fn try_lock_write(&self) -> Option<Held<'_>> {
+        self.write_lock.try_lock().map(|guard| self.held(guard))
+    }
+
+    /// For a `Select` whose poll of this stream found nothing: register
+    /// `waker` for lock releases, then check (after registering, so a change
+    /// in between isn't missed) whether the stream already holds something
+    /// a poll would take: ciphertext not yet decrypted, decrypted data, or
+    /// the end of the session.
+    pub fn watch(&self, waker: &TaskWaker) -> Watch {
+        let id = lock(&self.watchers).add_waker(waker.clone());
+        // Never wait for `inner`: the handshake holds it across socket waits,
+        // and blocking this thread on it could stop that very handshake from
+        // resuming. Held means a handshake (or a moment's processing) is under
+        // way; its locks' release wakes this watcher.
+        let mut inner = match self.inner.try_lock() {
+            Ok(inner) => inner,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Watch::Waiting { id, wants_write: false },
+        };
+        let buffered = !inner.pending.is_empty()
+            || inner
+                .conn
+                .process_new_packets()
+                .map_or(true, |state| state.plaintext_bytes_to_read() > 0 || state.peer_has_closed());
+        // While another task holds the read lock, a poll couldn't take the
+        // data anyway: wait for the release, which wakes this watcher.
+        if buffered && self.handshaken.load(Ordering::Acquire) && !self.read_lock.is_locked() {
+            drop(inner);
+            self.unwatch(id);
+            return Watch::Ready;
+        }
+        Watch::Waiting { id, wants_write: inner.conn.wants_write() }
+    }
+
+    pub fn unwatch(&self, id: u64) {
+        lock(&self.watchers).remove(id);
     }
 
     pub fn set_ignore_unexpected_eof(&self, ignore: bool) {
         self.ignore_unexpected_eof.store(ignore, Ordering::Release);
+    }
+
+    /// The handshake deadline, while the handshake is still to finish.
+    pub fn pending_handshake_deadline(&self) -> Option<Instant> {
+        if self.handshaken.load(Ordering::Acquire) {
+            None
+        } else {
+            self.handshake_deadline
+        }
     }
 
     pub fn tcp(&self) -> &TcpStream {
@@ -126,8 +222,8 @@ impl TlsStream {
         if self.handshaken.load(Ordering::Acquire) {
             return Ok(());
         }
-        let _r = self.read_lock.lock();
-        let _w = self.write_lock.lock();
+        let _r = self.lock_read();
+        let _w = self.lock_write();
         let mut inner = lock(&self.inner);
         if self.handshaken.load(Ordering::Acquire) {
             // Another task finished it while this one waited for the locks.
@@ -177,7 +273,7 @@ impl TlsStream {
         if !self.handshaken.load(Ordering::Acquire) {
             return Ok(None);
         }
-        let Some(_r) = self.read_lock.try_lock() else {
+        let Some(_r) = self.try_lock_read() else {
             return Ok(None);
         };
         let mut inner = lock(&self.inner);
@@ -217,7 +313,7 @@ impl TlsStream {
         if !self.handshaken.load(Ordering::Acquire) {
             return self.handshake();
         }
-        let _r = self.read_lock.lock();
+        let _r = self.lock_read();
         {
             let mut inner = lock(&self.inner);
             if inner.conn.wants_write() {
@@ -249,10 +345,110 @@ impl TlsStream {
         Ok(())
     }
 
+    /// `fill`, without ever waiting, for `Select`: make whatever progress is
+    /// possible right now (handshake steps, pending records, ciphertext the
+    /// socket already has) and return whether any was made. `Ok(false)` means
+    /// progress needs the socket to become ready, or another task holds a
+    /// lock this needs; the caller waits for the socket and tries again.
+    pub fn fill_now(&self) -> io::Result<bool> {
+        if !self.handshaken.load(Ordering::Acquire) {
+            return self.handshake_now();
+        }
+        let Some(_r) = self.try_lock_read() else { return Ok(false) };
+        let wants_write = lock(&self.inner).conn.wants_write();
+        if wants_write {
+            // Records to send in reply to what was read (an alert, a key
+            // update): write what the socket takes now; rustls keeps the rest.
+            let Some(_w) = self.try_lock_write() else { return Ok(false) };
+            let mut inner = lock(&self.inner);
+            return match inner.conn.write_tls(&mut &self.tcp.io) {
+                Ok(_) => Ok(true),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => Ok(false),
+                Err(err) => Err(err),
+            };
+        }
+        {
+            let mut inner = lock(&self.inner);
+            if !inner.pending.is_empty() {
+                return Ok(true);
+            }
+            let state = inner.conn.process_new_packets().map_err(tls_error)?;
+            if state.plaintext_bytes_to_read() > 0 || state.peer_has_closed() {
+                return Ok(true);
+            }
+        }
+        let read = with_scratch(CHUNK + 2048, |raw| {
+            let n = (&mut &self.tcp.io).read(raw)?;
+            lock(&self.inner).pending.extend_from_slice(&raw[..n]);
+            Ok::<_, io::Error>(n)
+        });
+        match read {
+            Ok(0) => {
+                let mut inner = lock(&self.inner);
+                inner.conn.read_tls(&mut io::empty())?;
+                inner.conn.process_new_packets().map_err(tls_error)?;
+                Ok(true)
+            }
+            Ok(_) => Ok(true),
+            Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// The handshake, as far as it can go without waiting: `Ok(true)` if it
+    /// made progress (or finished), `Ok(false)` if it needs the peer (or the
+    /// socket) first. The handshake deadline is checked on every call; a
+    /// `Select` waiting on the stream bounds the wait itself with its own
+    /// timeout.
+    fn handshake_now(&self) -> io::Result<bool> {
+        let Some(_r) = self.try_lock_read() else { return Ok(false) };
+        let Some(_w) = self.try_lock_write() else { return Ok(false) };
+        let mut inner = lock(&self.inner);
+        if self.handshaken.load(Ordering::Acquire) {
+            return Ok(true);
+        }
+        if self.handshake_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "TLS handshake timed out"));
+        }
+        let conn = &mut inner.conn;
+        let mut progress = false;
+        loop {
+            if !conn.is_handshaking() && !conn.wants_write() {
+                self.handshaken.store(true, Ordering::Release);
+                return Ok(true);
+            }
+            if conn.wants_write() {
+                match conn.write_tls(&mut &self.tcp.io) {
+                    Ok(_) => {
+                        progress = true;
+                        continue;
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(progress),
+                    Err(err) => return Err(err),
+                }
+            }
+            match conn.read_tls(&mut &self.tcp.io) {
+                Ok(0) => {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed during the TLS handshake"))
+                }
+                Ok(_) => {
+                    progress = true;
+                    if let Err(err) = conn.process_new_packets() {
+                        // Tell the peer why (a TLS alert), best effort.
+                        let _ = conn.write_tls(&mut &self.tcp.io);
+                        return Err(tls_error(err));
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(progress),
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
     /// Encrypt and send all of `data`.
     pub fn write_all(&self, data: &[u8]) -> io::Result<()> {
         self.handshake()?;
-        let _w = self.write_lock.lock();
+        let _w = self.lock_write();
         for chunk in data.chunks(CHUNK) {
             let records = {
                 let mut inner = lock(&self.inner);
@@ -266,7 +462,7 @@ impl TlsStream {
 
     /// Send whatever TLS records rustls has queued.
     fn send_pending(&self) -> io::Result<()> {
-        let _w = self.write_lock.lock();
+        let _w = self.lock_write();
         let records = take_records(&mut lock(&self.inner).conn)?;
         self.tcp.write_all(&records)
     }
@@ -275,7 +471,7 @@ impl TlsStream {
     /// knows the data ended on purpose rather than being cut off.
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
         if how != Shutdown::Read && self.handshaken.load(Ordering::Acquire) {
-            let _w = self.write_lock.lock();
+            let _w = self.lock_write();
             let records = {
                 let mut inner = lock(&self.inner);
                 inner.conn.send_close_notify();

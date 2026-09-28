@@ -170,6 +170,99 @@ returns to Roc only when the operation is done, so Roc code is unchanged.
   (`ROC_NET_TASK_STACK_KIB`), touched lazily; overflow hits a guard page and
   crashes the program. Finished tasks' stacks are pooled (up to 256).
 
+## Waiting on several things, and task lifetimes (0.2)
+
+**`Select`** (`platform/Select.roc`) is a builder: each arm pairs a source
+with a callback that turns what happened into the caller's own type, so arms
+of different types (a byte read, a `Str` channel, a timeout) produce one
+value. `wait!` polls every arm without blocking (`try_read!`, `try_accept!`,
+`try_receive!`, `try_send!`), starting at a different arm each time so an
+always-ready one can't starve the rest, and only if none is ready asks the
+host to wait on all their sources at once (`Host.select_wait!`), then polls
+again. Only the winning arm consumes anything.
+
+- In the host, one wait id is registered on every source (socket waiters,
+  channel watcher lists, a timer), and the first wake-up claims it by
+  compare-and-swap, as for single waits (`sched::MultiWait`).
+- Channels keep `Select` watchers in their own lists, woken all at once on
+  every change. Plain waiters are woken one at a time, and each must be a
+  task that will act on the notification; a `Select` may take another arm,
+  and a notification spent on it would be lost.
+- Socket readiness is edge-triggered, so an event that arrives between an
+  arm's poll and the wait must not be lost. Adding a waiter re-arms the
+  socket in the event queue watching it (registering or re-arming reports
+  readiness that's already there). This also fixed an older race in plain
+  reads: a task waiting on a socket watched by another worker (a TLS reader
+  and writer on different workers) could miss the event and wait forever.
+- A TLS stream counts decrypted data it already holds as ready, even with
+  nothing new on the socket. Polling it never waits: locks are only taken if
+  free, the handshake advances step by step on the non-blocking socket, and
+  rustls writes only what the socket accepts now (the first version could
+  block a whole `Select` behind a silent peer's handshake).
+- A `Select` never waits on a stream longer than a blocking read would: the
+  host bounds the wait by each stream's read timeout (counted from the start
+  of the wait) and, for a TLS stream still in its handshake, the handshake
+  deadline. When one of those passes first, `select_wait!` returns
+  `SourceTimedOut(index)`, and that `Select` reports `TimedOut` for that arm
+  (through the stream's `timeout_error`, so it's `TcpErr(TimedOut)` and so
+  on). Without this, a silent client of a TLS listener held a `Select` with
+  no timeout forever. A first version flagged the timeout on the connection
+  instead, which another task selecting on the same stream could consume;
+  the result now belongs to the wait that timed out (both red-team
+  findings). Servers that track silence themselves in a `Select` (the chat
+  example) turn the listener's idle timeout off.
+- TLS can be ready without the socket showing it: another task may release
+  the read lock after leaving decrypted data behind, or the write lock after
+  making room to send a reply. A TLS stream keeps a list of `Select`
+  watchers, woken on every release of either lock (after the release, or a
+  woken watcher could find it still held). Registering checks the stream's
+  buffers afterwards, so a change in between isn't missed, and when rustls
+  has records to send, the `Select` also waits for the socket to be
+  writable. (That last case, a reply stuck behind a full send buffer, has no
+  test: it needs the buffer full at just the wrong moment.) Registering
+  never waits for rustls's state mutex: the blocking handshake holds it
+  across socket waits, and a `Select` blocking its thread on it could stop
+  that same handshake from resuming, a deadlock with one worker (another
+  red-team finding). If it's held, the watcher waits for the handshake's
+  locks to be released. The test suite runs a third time on one worker
+  thread (`scripts/run_net_tests.sh`), where anything that blocks the thread
+  instead of suspending the task hangs the run rather than hiding. `Framing` arms count a complete buffered
+  message as ready; a message that starts arriving is read to its end (under
+  the reader's message timeout), because an arm can't carry a half-read
+  buffer between polls.
+
+**Task handles.** `Task.spawn!` returns a `Handle` (a host resource, like
+sockets). The task stores its result with itself before it returns
+(`task_finish!`); `join!` waits for it and gets another reference, so it can
+be joined more than once. A channel per task would have capped joinable
+tasks at the channel limit. A task whose handles are all gone is detached;
+its failure is printed to stderr, unless it failed because it was
+cancelled.
+
+**Cancellation** is cooperative. `cancel!` sets a flag and ends the task's
+current wait if that wait is cancellable; every cancellable wait it starts
+afterwards ends at once. Waits report `Cancelled`, which surfaces as
+`IOErr.Cancelled` from socket operations, and `Cancelled` from channel sends
+and receives, `Time.sleep!`, `Select.wait!` and `join!`. (A first version let
+`sleep!` return normally, so a sleep loop ran on after `cancel!`; found by a
+red-team review.) Ordinary `?`-style code passes the error up, so the task
+unwinds and its sockets close as its values are dropped. Waits for locks
+(TLS's read and write locks) and a scope waiting for its tasks can't be
+cancelled: giving up there would leave work half done or tasks running.
+
+A cancelled (or timed-out) waiter stays in a waiting list until it runs and
+removes itself, so `wake_one` skips entries whose wait already ended: a
+notification spent on one would leave a real waiter asleep, such as a value
+queued in a channel while its other receiver slept (also from the red-team
+review).
+
+**Scopes.** `Task.scope!` makes a host group of the tasks started with
+`scope.spawn!`. When the body returns, the scope waits for all of them; if
+the body failed, it cancels them first. So "start workers, return" waits for
+the workers, and "return early on an error" doesn't wait out the rest. The
+plan first said to cancel on every exit; that would have made the first
+pattern need explicit joins.
+
 ## Resources and lifetime
 
 Sockets are ARC-owned handles, as in basic-webserver's `host_resource.rs`

@@ -1595,19 +1595,20 @@ pub enum IOErrTag {
     AddrInUse = 0,
     AddrNotAvailable = 1,
     BrokenPipe = 2,
-    ConnectionAborted = 3,
-    ConnectionRefused = 4,
-    ConnectionReset = 5,
-    Interrupted = 6,
-    InvalidInput = 7,
-    NotConnected = 8,
-    NotFound = 9,
-    Other = 10,
-    PermissionDenied = 11,
-    TimedOut = 12,
-    TooManySockets = 13,
-    UnexpectedEof = 14,
-    Unsupported = 15,
+    Cancelled = 3,
+    ConnectionAborted = 4,
+    ConnectionRefused = 5,
+    ConnectionReset = 6,
+    Interrupted = 7,
+    InvalidInput = 8,
+    NotConnected = 9,
+    NotFound = 10,
+    Other = 11,
+    PermissionDenied = 12,
+    TimedOut = 13,
+    TooManySockets = 14,
+    UnexpectedEof = 15,
+    Unsupported = 16,
 }
 
 #[repr(C)]
@@ -1616,6 +1617,7 @@ pub union IOErrPayload {
     pub addr_in_use: [u8; 0],
     pub addr_not_available: [u8; 0],
     pub broken_pipe: [u8; 0],
+    pub cancelled: [u8; 0],
     pub connection_aborted: [u8; 0],
     pub connection_refused: [u8; 0],
     pub connection_reset: [u8; 0],
@@ -1924,6 +1926,264 @@ const _: () = assert!(core::mem::size_of::<HostSocketReadResult>() == 20, "HostS
 const _: () = assert!(core::mem::align_of::<HostSocketReadResult>() == 4, "HostSocketReadResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostSocketReadResult, tag) == 16, "HostSocketReadResult tag offset mismatch");
+
+/// Tag discriminant for DataOrFailedOrNotReady.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataOrFailedOrNotReadyTag {
+    Data = 0,
+    Failed = 1,
+    NotReady = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union DataOrFailedOrNotReadyPayload {
+    pub data: core::mem::ManuallyDrop<RocListWith<u8, false>>,
+    pub failed: core::mem::ManuallyDrop<IOErr>,
+    pub not_ready: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct DataOrFailedOrNotReadyPayloadAlignment;
+
+/// Tag union: DataOrFailedOrNotReady
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DataOrFailedOrNotReady {
+    pub _payload_alignment: [DataOrFailedOrNotReadyPayloadAlignment; 0],
+    pub payload: [u8; 16],
+    pub tag: DataOrFailedOrNotReadyTag,
+}
+
+/// Tag union: DataOrFailedOrNotReady
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DataOrFailedOrNotReady {
+    pub payload: DataOrFailedOrNotReadyPayload,
+    pub tag: DataOrFailedOrNotReadyTag,
+}
+
+impl DataOrFailedOrNotReady {
+    /// Borrow the `Data` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `DataOrFailedOrNotReadyTag::Data` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_data_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(self.payload.as_ptr() as *const RocListWith<u8, false>) }
+    }
+
+    /// Borrow the `Data` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `DataOrFailedOrNotReadyTag::Data` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_data_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(&self.payload.data as *const core::mem::ManuallyDrop<RocListWith<u8, false>> as *const RocListWith<u8, false>) }
+    }
+
+    /// Move the `Data` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `DataOrFailedOrNotReadyTag::Data`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_data_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocListWith<u8, false>) }
+    }
+
+    /// Move the `Data` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `DataOrFailedOrNotReadyTag::Data`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_data_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.data) }
+    }
+
+    /// Borrow the `Failed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `DataOrFailedOrNotReadyTag::Failed` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_failed_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Borrow the `Failed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `DataOrFailedOrNotReadyTag::Failed` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_failed_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.failed as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
+    }
+
+    /// Move the `Failed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `DataOrFailedOrNotReadyTag::Failed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_failed_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Move the `Failed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `DataOrFailedOrNotReadyTag::Failed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_failed_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.failed) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<DataOrFailedOrNotReady>() == 40, "DataOrFailedOrNotReady size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<DataOrFailedOrNotReady>() == 8, "DataOrFailedOrNotReady alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(DataOrFailedOrNotReady, tag) == 32, "DataOrFailedOrNotReady tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<DataOrFailedOrNotReady>() == 20, "DataOrFailedOrNotReady size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<DataOrFailedOrNotReady>() == 4, "DataOrFailedOrNotReady alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(DataOrFailedOrNotReady, tag) == 16, "DataOrFailedOrNotReady tag offset mismatch");
+
+/// Tag discriminant for AcceptedOrFailedOrNotReady.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcceptedOrFailedOrNotReadyTag {
+    Accepted = 0,
+    Failed = 1,
+    NotReady = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union AcceptedOrFailedOrNotReadyPayload {
+    pub accepted: core::mem::ManuallyDrop<*mut u64>,
+    pub failed: core::mem::ManuallyDrop<IOErr>,
+    pub not_ready: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct AcceptedOrFailedOrNotReadyPayloadAlignment;
+
+/// Tag union: AcceptedOrFailedOrNotReady
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AcceptedOrFailedOrNotReady {
+    pub _payload_alignment: [AcceptedOrFailedOrNotReadyPayloadAlignment; 0],
+    pub payload: [u8; 16],
+    pub tag: AcceptedOrFailedOrNotReadyTag,
+}
+
+/// Tag union: AcceptedOrFailedOrNotReady
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AcceptedOrFailedOrNotReady {
+    pub payload: AcceptedOrFailedOrNotReadyPayload,
+    pub tag: AcceptedOrFailedOrNotReadyTag,
+}
+
+impl AcceptedOrFailedOrNotReady {
+    /// Borrow the `Accepted` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `AcceptedOrFailedOrNotReadyTag::Accepted` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_accepted_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Borrow the `Accepted` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `AcceptedOrFailedOrNotReadyTag::Accepted` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_accepted_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(&self.payload.accepted as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
+    }
+
+    /// Move the `Accepted` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `AcceptedOrFailedOrNotReadyTag::Accepted`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_accepted_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Move the `Accepted` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `AcceptedOrFailedOrNotReadyTag::Accepted`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_accepted_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.accepted) }
+    }
+
+    /// Borrow the `Failed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `AcceptedOrFailedOrNotReadyTag::Failed` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_failed_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Borrow the `Failed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `AcceptedOrFailedOrNotReadyTag::Failed` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_failed_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.failed as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
+    }
+
+    /// Move the `Failed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `AcceptedOrFailedOrNotReadyTag::Failed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_failed_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Move the `Failed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `AcceptedOrFailedOrNotReadyTag::Failed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_failed_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.failed) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<AcceptedOrFailedOrNotReady>() == 40, "AcceptedOrFailedOrNotReady size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<AcceptedOrFailedOrNotReady>() == 8, "AcceptedOrFailedOrNotReady alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(AcceptedOrFailedOrNotReady, tag) == 32, "AcceptedOrFailedOrNotReady tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<AcceptedOrFailedOrNotReady>() == 20, "AcceptedOrFailedOrNotReady size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<AcceptedOrFailedOrNotReady>() == 4, "AcceptedOrFailedOrNotReady alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(AcceptedOrFailedOrNotReady, tag) == 16, "AcceptedOrFailedOrNotReady tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -2313,19 +2573,20 @@ pub enum HostIOErrTag {
     AddrInUse = 0,
     AddrNotAvailable = 1,
     BrokenPipe = 2,
-    ConnectionAborted = 3,
-    ConnectionRefused = 4,
-    ConnectionReset = 5,
-    Interrupted = 6,
-    InvalidInput = 7,
-    NotConnected = 8,
-    NotFound = 9,
-    Other = 10,
-    PermissionDenied = 11,
-    TimedOut = 12,
-    TooManySockets = 13,
-    UnexpectedEof = 14,
-    Unsupported = 15,
+    Cancelled = 3,
+    ConnectionAborted = 4,
+    ConnectionRefused = 5,
+    ConnectionReset = 6,
+    Interrupted = 7,
+    InvalidInput = 8,
+    NotConnected = 9,
+    NotFound = 10,
+    Other = 11,
+    PermissionDenied = 12,
+    TimedOut = 13,
+    TooManySockets = 14,
+    UnexpectedEof = 15,
+    Unsupported = 16,
 }
 
 #[repr(C)]
@@ -2334,6 +2595,7 @@ pub union HostIOErrPayload {
     pub addr_in_use: [u8; 0],
     pub addr_not_available: [u8; 0],
     pub broken_pipe: [u8; 0],
+    pub cancelled: [u8; 0],
     pub connection_aborted: [u8; 0],
     pub connection_refused: [u8; 0],
     pub connection_reset: [u8; 0],
@@ -2516,23 +2778,24 @@ const _: () = assert!(core::mem::align_of::<HostChannelNewResult>() == 4, "HostC
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostChannelNewResult, tag) == 8, "HostChannelNewResult tag offset mismatch");
 
-/// Tag union: ClosedOrFullOrSent
+/// Tag union: CancelledOrClosedOrFullOrSent
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClosedOrFullOrSent {
-    Closed = 0,
-    Full = 1,
-    Sent = 2,
+pub enum CancelledOrClosedOrFullOrSent {
+    Cancelled = 0,
+    Closed = 1,
+    Full = 2,
+    Sent = 3,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<ClosedOrFullOrSent>() == 1, "ClosedOrFullOrSent size mismatch");
+const _: () = assert!(core::mem::size_of::<CancelledOrClosedOrFullOrSent>() == 1, "CancelledOrClosedOrFullOrSent size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<ClosedOrFullOrSent>() == 1, "ClosedOrFullOrSent alignment mismatch");
+const _: () = assert!(core::mem::align_of::<CancelledOrClosedOrFullOrSent>() == 1, "CancelledOrClosedOrFullOrSent alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ClosedOrFullOrSent>() == 1, "ClosedOrFullOrSent size mismatch");
+const _: () = assert!(core::mem::size_of::<CancelledOrClosedOrFullOrSent>() == 1, "CancelledOrClosedOrFullOrSent size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<ClosedOrFullOrSent>() == 1, "ClosedOrFullOrSent alignment mismatch");
+const _: () = assert!(core::mem::align_of::<CancelledOrClosedOrFullOrSent>() == 1, "CancelledOrClosedOrFullOrSent alignment mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -2545,7 +2808,7 @@ pub enum HostChannelReceiveResultTag {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union HostChannelReceiveResultPayload {
-    pub err: core::mem::ManuallyDrop<ClosedOrTimedOut>,
+    pub err: core::mem::ManuallyDrop<CancelledOrClosedOrTimedOut>,
     pub ok: core::mem::ManuallyDrop<RocErasedCallable>,
 }
 
@@ -2579,8 +2842,8 @@ impl HostChannelReceiveResult {
     /// # Safety
     /// `self.tag` must be `HostChannelReceiveResultTag::Err` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &ClosedOrTimedOut {
-        unsafe { &*(self.payload.as_ptr() as *const ClosedOrTimedOut) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &CancelledOrClosedOrTimedOut {
+        unsafe { &*(self.payload.as_ptr() as *const CancelledOrClosedOrTimedOut) }
     }
 
     /// Borrow the `Err` payload without creating another owner.
@@ -2588,8 +2851,8 @@ impl HostChannelReceiveResult {
     /// # Safety
     /// `self.tag` must be `HostChannelReceiveResultTag::Err` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &ClosedOrTimedOut {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<ClosedOrTimedOut> as *const ClosedOrTimedOut) }
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &CancelledOrClosedOrTimedOut {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<CancelledOrClosedOrTimedOut> as *const CancelledOrClosedOrTimedOut) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
@@ -2597,8 +2860,8 @@ impl HostChannelReceiveResult {
     /// # Safety
     /// `self.tag` must be `HostChannelReceiveResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> ClosedOrTimedOut {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const ClosedOrTimedOut) }
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> CancelledOrClosedOrTimedOut {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const CancelledOrClosedOrTimedOut) }
     }
 
     /// Move the `Err` payload out of one owned tag-union shell.
@@ -2606,7 +2869,7 @@ impl HostChannelReceiveResult {
     /// # Safety
     /// `self.tag` must be `HostChannelReceiveResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> ClosedOrTimedOut {
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> CancelledOrClosedOrTimedOut {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
     }
 
@@ -2661,22 +2924,594 @@ const _: () = assert!(core::mem::align_of::<HostChannelReceiveResult>() == 4, "H
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostChannelReceiveResult, tag) == 4, "HostChannelReceiveResult tag offset mismatch");
 
-/// Tag union: ClosedOrTimedOut
+/// Tag union: CancelledOrClosedOrTimedOut
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClosedOrTimedOut {
-    Closed = 0,
-    TimedOut = 1,
+pub enum CancelledOrClosedOrTimedOut {
+    Cancelled = 0,
+    Closed = 1,
+    TimedOut = 2,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<ClosedOrTimedOut>() == 1, "ClosedOrTimedOut size mismatch");
+const _: () = assert!(core::mem::size_of::<CancelledOrClosedOrTimedOut>() == 1, "CancelledOrClosedOrTimedOut size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<ClosedOrTimedOut>() == 1, "ClosedOrTimedOut alignment mismatch");
+const _: () = assert!(core::mem::align_of::<CancelledOrClosedOrTimedOut>() == 1, "CancelledOrClosedOrTimedOut alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ClosedOrTimedOut>() == 1, "ClosedOrTimedOut size mismatch");
+const _: () = assert!(core::mem::size_of::<CancelledOrClosedOrTimedOut>() == 1, "CancelledOrClosedOrTimedOut size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<ClosedOrTimedOut>() == 1, "ClosedOrTimedOut alignment mismatch");
+const _: () = assert!(core::mem::align_of::<CancelledOrClosedOrTimedOut>() == 1, "CancelledOrClosedOrTimedOut alignment mismatch");
+
+/// Tag discriminant for CancelledOrReadyOrSourceTimedOutOrTimedOut.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelledOrReadyOrSourceTimedOutOrTimedOutTag {
+    Cancelled = 0,
+    Ready = 1,
+    SourceTimedOut = 2,
+    TimedOut = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union CancelledOrReadyOrSourceTimedOutOrTimedOutPayload {
+    pub cancelled: [u8; 0],
+    pub ready: [u8; 0],
+    pub source_timed_out: core::mem::ManuallyDrop<u64>,
+    pub timed_out: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(8))]
+#[derive(Clone, Copy)]
+pub struct CancelledOrReadyOrSourceTimedOutOrTimedOutPayloadAlignment;
+
+/// Tag union: CancelledOrReadyOrSourceTimedOutOrTimedOut
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CancelledOrReadyOrSourceTimedOutOrTimedOut {
+    pub _payload_alignment: [CancelledOrReadyOrSourceTimedOutOrTimedOutPayloadAlignment; 0],
+    pub payload: [u8; 8],
+    pub tag: CancelledOrReadyOrSourceTimedOutOrTimedOutTag,
+}
+
+/// Tag union: CancelledOrReadyOrSourceTimedOutOrTimedOut
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CancelledOrReadyOrSourceTimedOutOrTimedOut {
+    pub payload: CancelledOrReadyOrSourceTimedOutOrTimedOutPayload,
+    pub tag: CancelledOrReadyOrSourceTimedOutOrTimedOutTag,
+}
+
+impl CancelledOrReadyOrSourceTimedOutOrTimedOut {
+    /// Borrow the `SourceTimedOut` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrReadyOrSourceTimedOutOrTimedOutTag::SourceTimedOut` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_source_timed_out_unchecked(&self) -> &u64 {
+        unsafe { &*(self.payload.as_ptr() as *const u64) }
+    }
+
+    /// Borrow the `SourceTimedOut` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrReadyOrSourceTimedOutOrTimedOutTag::SourceTimedOut` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_source_timed_out_unchecked(&self) -> &u64 {
+        unsafe { &*(&self.payload.source_timed_out as *const core::mem::ManuallyDrop<u64> as *const u64) }
+    }
+
+    /// Move the `SourceTimedOut` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrReadyOrSourceTimedOutOrTimedOutTag::SourceTimedOut`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_source_timed_out_unchecked(&mut self) -> u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u64) }
+    }
+
+    /// Move the `SourceTimedOut` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrReadyOrSourceTimedOutOrTimedOutTag::SourceTimedOut`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_source_timed_out_unchecked(&mut self) -> u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.source_timed_out) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<CancelledOrReadyOrSourceTimedOutOrTimedOut>() == 16, "CancelledOrReadyOrSourceTimedOutOrTimedOut size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<CancelledOrReadyOrSourceTimedOutOrTimedOut>() == 8, "CancelledOrReadyOrSourceTimedOutOrTimedOut alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(CancelledOrReadyOrSourceTimedOutOrTimedOut, tag) == 8, "CancelledOrReadyOrSourceTimedOutOrTimedOut tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<CancelledOrReadyOrSourceTimedOutOrTimedOut>() == 16, "CancelledOrReadyOrSourceTimedOutOrTimedOut size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<CancelledOrReadyOrSourceTimedOutOrTimedOut>() == 8, "CancelledOrReadyOrSourceTimedOutOrTimedOut alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(CancelledOrReadyOrSourceTimedOutOrTimedOut, tag) == 8, "CancelledOrReadyOrSourceTimedOutOrTimedOut tag offset mismatch");
+
+/// Tag discriminant for ReadableOrReceivableOrSendableOrWritable.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadableOrReceivableOrSendableOrWritableTag {
+    Readable = 0,
+    Receivable = 1,
+    Sendable = 2,
+    Writable = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union ReadableOrReceivableOrSendableOrWritablePayload {
+    pub readable: core::mem::ManuallyDrop<*mut u64>,
+    pub receivable: core::mem::ManuallyDrop<*mut u64>,
+    pub sendable: core::mem::ManuallyDrop<*mut u64>,
+    pub writable: core::mem::ManuallyDrop<*mut u64>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct ReadableOrReceivableOrSendableOrWritablePayloadAlignment;
+
+/// Tag union: ReadableOrReceivableOrSendableOrWritable
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ReadableOrReceivableOrSendableOrWritable {
+    pub _payload_alignment: [ReadableOrReceivableOrSendableOrWritablePayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: ReadableOrReceivableOrSendableOrWritableTag,
+}
+
+/// Tag union: ReadableOrReceivableOrSendableOrWritable
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ReadableOrReceivableOrSendableOrWritable {
+    pub payload: ReadableOrReceivableOrSendableOrWritablePayload,
+    pub tag: ReadableOrReceivableOrSendableOrWritableTag,
+}
+
+impl ReadableOrReceivableOrSendableOrWritable {
+    /// Borrow the `Readable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Readable` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_readable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Borrow the `Readable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Readable` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_readable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(&self.payload.readable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
+    }
+
+    /// Move the `Readable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Readable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_readable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Move the `Readable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Readable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_readable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.readable) }
+    }
+
+    /// Borrow the `Receivable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Receivable` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_receivable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Borrow the `Receivable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Receivable` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_receivable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(&self.payload.receivable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
+    }
+
+    /// Move the `Receivable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Receivable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_receivable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Move the `Receivable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Receivable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_receivable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.receivable) }
+    }
+
+    /// Borrow the `Sendable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Sendable` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_sendable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Borrow the `Sendable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Sendable` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_sendable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(&self.payload.sendable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
+    }
+
+    /// Move the `Sendable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Sendable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_sendable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Move the `Sendable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Sendable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_sendable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.sendable) }
+    }
+
+    /// Borrow the `Writable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Writable` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_writable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Borrow the `Writable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Writable` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_writable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(&self.payload.writable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
+    }
+
+    /// Move the `Writable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Writable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_writable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Move the `Writable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Writable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_writable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.writable) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ReadableOrReceivableOrSendableOrWritable>() == 16, "ReadableOrReceivableOrSendableOrWritable size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ReadableOrReceivableOrSendableOrWritable>() == 8, "ReadableOrReceivableOrSendableOrWritable alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(ReadableOrReceivableOrSendableOrWritable, tag) == 8, "ReadableOrReceivableOrSendableOrWritable tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ReadableOrReceivableOrSendableOrWritable>() == 8, "ReadableOrReceivableOrSendableOrWritable size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ReadableOrReceivableOrSendableOrWritable>() == 4, "ReadableOrReceivableOrSendableOrWritable alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(ReadableOrReceivableOrSendableOrWritable, tag) == 4, "ReadableOrReceivableOrSendableOrWritable tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostTaskSpawnResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostTaskSpawnResultPayload {
+    pub err: [u8; 0],
+    pub ok: core::mem::ManuallyDrop<*mut u64>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostTaskSpawnResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTaskSpawnResult {
+    pub _payload_alignment: [HostTaskSpawnResultPayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: HostTaskSpawnResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTaskSpawnResult {
+    pub payload: HostTaskSpawnResultPayload,
+    pub tag: HostTaskSpawnResultTag,
+}
+
+impl HostTaskSpawnResult {
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTaskSpawnResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTaskSpawnResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTaskSpawnResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTaskSpawnResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostTaskSpawnResult>() == 16, "HostTaskSpawnResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostTaskSpawnResult>() == 8, "HostTaskSpawnResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostTaskSpawnResult, tag) == 8, "HostTaskSpawnResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostTaskSpawnResult>() == 8, "HostTaskSpawnResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostTaskSpawnResult>() == 4, "HostTaskSpawnResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostTaskSpawnResult, tag) == 4, "HostTaskSpawnResult tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostTaskJoinResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostTaskJoinResultPayload {
+    pub err: [u8; 0],
+    pub ok: core::mem::ManuallyDrop<RocErasedCallable>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostTaskJoinResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTaskJoinResult {
+    pub _payload_alignment: [HostTaskJoinResultPayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: HostTaskJoinResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTaskJoinResult {
+    pub payload: HostTaskJoinResultPayload,
+    pub tag: HostTaskJoinResultTag,
+}
+
+impl HostTaskJoinResult {
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTaskJoinResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocErasedCallable {
+        unsafe { &*(self.payload.as_ptr() as *const RocErasedCallable) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTaskJoinResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocErasedCallable {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<RocErasedCallable> as *const RocErasedCallable) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTaskJoinResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocErasedCallable {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocErasedCallable) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostTaskJoinResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocErasedCallable {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostTaskJoinResult>() == 16, "HostTaskJoinResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostTaskJoinResult>() == 8, "HostTaskJoinResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostTaskJoinResult, tag) == 8, "HostTaskJoinResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostTaskJoinResult>() == 8, "HostTaskJoinResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostTaskJoinResult>() == 4, "HostTaskJoinResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostTaskJoinResult, tag) == 4, "HostTaskJoinResult tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostGroupNewResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostGroupNewResultPayload {
+    pub err: [u8; 0],
+    pub ok: core::mem::ManuallyDrop<*mut u64>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostGroupNewResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostGroupNewResult {
+    pub _payload_alignment: [HostGroupNewResultPayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: HostGroupNewResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostGroupNewResult {
+    pub payload: HostGroupNewResultPayload,
+    pub tag: HostGroupNewResultTag,
+}
+
+impl HostGroupNewResult {
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostGroupNewResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostGroupNewResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostGroupNewResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostGroupNewResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostGroupNewResult>() == 16, "HostGroupNewResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostGroupNewResult>() == 8, "HostGroupNewResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostGroupNewResult, tag) == 8, "HostGroupNewResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostGroupNewResult>() == 8, "HostGroupNewResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostGroupNewResult>() == 4, "HostGroupNewResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostGroupNewResult, tag) == 4, "HostGroupNewResult tag offset mismatch");
 
 /// Arguments for Host.stderr_line!
 /// Roc signature: Str => Try({}, [StderrErr(Str)])
@@ -2697,12 +3532,59 @@ pub struct HostStdoutLineArgs {
 }
 
 /// Arguments for Host.task_spawn!
-/// Roc signature: Box({} => {}) => Bool
+/// Roc signature: Box({} => {}) => Try(Host.TaskHandle, [TaskLimitReached])
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HostTaskSpawnArgs {
     pub arg0: RocErasedCallable,
+}
+
+/// Arguments for Host.task_finish!
+/// Roc signature: Box({} -> rigid) => Bool
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTaskFinishArgs {
+    pub arg0: RocErasedCallable,
+}
+
+/// Arguments for Host.task_join!
+/// Roc signature: Host.TaskHandle => Try(Box({} -> rigid), [Cancelled])
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTaskJoinArgs {
+    pub arg0: *mut u64,
+}
+
+/// Arguments for Host.task_cancel!
+/// Roc signature: Host.TaskHandle => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTaskCancelArgs {
+    pub arg0: *mut u64,
+}
+
+/// Arguments for Host.group_add!
+/// Roc signature: Host.TaskGroup, Host.TaskHandle => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostGroupAddArgs {
+    pub arg0: *mut u64,
+    pub arg1: *mut u64,
+}
+
+/// Arguments for Host.group_close!
+/// Roc signature: Host.TaskGroup, Bool => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostGroupCloseArgs {
+    pub arg0: *mut u64,
+    pub arg1: bool,
 }
 
 /// Arguments for Host.channel_close!
@@ -2712,6 +3594,16 @@ pub struct HostTaskSpawnArgs {
 #[derive(Clone, Copy)]
 pub struct HostChannelCloseArgs {
     pub arg0: *mut u64,
+}
+
+/// Arguments for Host.select_wait!
+/// Roc signature: List([Readable(Host.Socket), Receivable(Host.ChannelEnd), Sendable(Host.ChannelEnd), Writable(Host.Socket)]), U64 => [Cancelled, Ready, SourceTimedOut(U64), TimedOut]
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSelectWaitArgs {
+    pub arg0: RocList<ReadableOrReceivableOrSendableOrWritable>,
+    pub arg1: u64,
 }
 
 /// Arguments for Host.channel_new!
@@ -2724,7 +3616,7 @@ pub struct HostChannelNewArgs {
 }
 
 /// Arguments for Host.channel_receive!
-/// Roc signature: Host.ChannelEnd, U64 => Try(Box({} -> rigid), [Closed, TimedOut])
+/// Roc signature: Host.ChannelEnd, U64 => Try(Box({} -> rigid), [Cancelled, Closed, TimedOut])
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2734,7 +3626,7 @@ pub struct HostChannelReceiveArgs {
 }
 
 /// Arguments for Host.channel_send!
-/// Roc signature: Host.ChannelEnd, Box({} -> rigid), Bool => [Closed, Full, Sent]
+/// Roc signature: Host.ChannelEnd, Box({} -> rigid), Bool => [Cancelled, Closed, Full, Sent]
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2764,7 +3656,7 @@ pub struct HostRandomBytesArgs {
 }
 
 /// Arguments for Host.time_sleep_ns!
-/// Roc signature: U64 => {}
+/// Roc signature: U64 => Bool
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2807,6 +3699,25 @@ pub struct HostSocketPeerAddrArgs {
 pub struct HostSocketReadArgs {
     pub arg0: *mut u64,
     pub arg1: u64,
+}
+
+/// Arguments for Host.socket_try_read!
+/// Roc signature: Host.Socket, U64 => [Data(List(U8)), Failed(IOErr), NotReady]
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketTryReadArgs {
+    pub arg0: *mut u64,
+    pub arg1: u64,
+}
+
+/// Arguments for Host.socket_try_accept!
+/// Roc signature: Host.Socket => [Accepted(Host.Socket), Failed(IOErr), NotReady]
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketTryAcceptArgs {
+    pub arg0: *mut u64,
 }
 
 /// Arguments for Host.socket_read_append!
@@ -3046,8 +3957,11 @@ pub struct HostUnixListenArgs {
 
 // Platform Type Aliases
 
+pub type HostSelectWaitArg0 = ReadableOrReceivableOrSendableOrWritable;
+pub type HostSelectWaitArg0Payload = ReadableOrReceivableOrSendableOrWritablePayload;
+pub type HostSelectWaitArg0Tag = ReadableOrReceivableOrSendableOrWritableTag;
 pub type HostChannelNewOk = AnonStructDfa5943259877aa7;
-pub type HostChannelReceiveErr = ClosedOrTimedOut;
+pub type HostChannelReceiveErr = CancelledOrClosedOrTimedOut;
 pub type HostSocketPeerAddrResult = HostSocketLocalAddrResult;
 pub type HostSocketPeerAddrResultPayload = HostSocketLocalAddrResultPayload;
 pub type HostSocketPeerAddrResultTag = HostSocketLocalAddrResultTag;
@@ -3311,6 +4225,7 @@ impl IOErr {
             IOErrTag::AddrInUse => {},
             IOErrTag::AddrNotAvailable => {},
             IOErrTag::BrokenPipe => {},
+            IOErrTag::Cancelled => {},
             IOErrTag::ConnectionAborted => {},
             IOErrTag::ConnectionRefused => {},
             IOErrTag::ConnectionReset => {},
@@ -3342,6 +4257,7 @@ impl IOErr {
             IOErrTag::AddrInUse => {},
             IOErrTag::AddrNotAvailable => {},
             IOErrTag::BrokenPipe => {},
+            IOErrTag::Cancelled => {},
             IOErrTag::ConnectionAborted => {},
             IOErrTag::ConnectionRefused => {},
             IOErrTag::ConnectionReset => {},
@@ -3458,6 +4374,108 @@ pub struct HostSocketReadResultRelease;
 
 unsafe impl RocRelease<HostSocketReadResult> for HostSocketReadResultRelease {
     unsafe fn release(value: HostSocketReadResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl DataOrFailedOrNotReady {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            DataOrFailedOrNotReadyTag::Data => {
+                let payload = unsafe { value.take_payload_data_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            DataOrFailedOrNotReadyTag::Failed => {
+                let payload = unsafe { value.take_payload_failed_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            DataOrFailedOrNotReadyTag::NotReady => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            DataOrFailedOrNotReadyTag::Data => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_data_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            DataOrFailedOrNotReadyTag::Failed => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_failed_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            DataOrFailedOrNotReadyTag::NotReady => {},
+        }
+    }
+}
+
+pub struct DataOrFailedOrNotReadyRelease;
+
+unsafe impl RocRelease<DataOrFailedOrNotReady> for DataOrFailedOrNotReadyRelease {
+    unsafe fn release(value: DataOrFailedOrNotReady, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl AcceptedOrFailedOrNotReady {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            AcceptedOrFailedOrNotReadyTag::Accepted => {
+                let payload = unsafe { value.take_payload_accepted_unchecked() };
+                unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+            },
+            AcceptedOrFailedOrNotReadyTag::Failed => {
+                let payload = unsafe { value.take_payload_failed_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            AcceptedOrFailedOrNotReadyTag::NotReady => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            AcceptedOrFailedOrNotReadyTag::Accepted => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_accepted_unchecked()) };
+                unsafe { incref_box(payload as RocBox, amount); }
+            },
+            AcceptedOrFailedOrNotReadyTag::Failed => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_failed_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            AcceptedOrFailedOrNotReadyTag::NotReady => {},
+        }
+    }
+}
+
+pub struct AcceptedOrFailedOrNotReadyRelease;
+
+unsafe impl RocRelease<AcceptedOrFailedOrNotReady> for AcceptedOrFailedOrNotReadyRelease {
+    unsafe fn release(value: AcceptedOrFailedOrNotReady, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -3652,6 +4670,7 @@ impl HostIOErr {
             HostIOErrTag::AddrInUse => {},
             HostIOErrTag::AddrNotAvailable => {},
             HostIOErrTag::BrokenPipe => {},
+            HostIOErrTag::Cancelled => {},
             HostIOErrTag::ConnectionAborted => {},
             HostIOErrTag::ConnectionRefused => {},
             HostIOErrTag::ConnectionReset => {},
@@ -3683,6 +4702,7 @@ impl HostIOErr {
             HostIOErrTag::AddrInUse => {},
             HostIOErrTag::AddrNotAvailable => {},
             HostIOErrTag::BrokenPipe => {},
+            HostIOErrTag::Cancelled => {},
             HostIOErrTag::ConnectionAborted => {},
             HostIOErrTag::ConnectionRefused => {},
             HostIOErrTag::ConnectionReset => {},
@@ -3785,7 +4805,7 @@ unsafe impl RocRelease<AnonStructDfa5943259877aa7> for AnonStructDfa5943259877aa
     }
 }
 
-impl ClosedOrFullOrSent {
+impl CancelledOrClosedOrFullOrSent {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -3806,10 +4826,10 @@ impl ClosedOrFullOrSent {
     }
 }
 
-pub struct ClosedOrFullOrSentRelease;
+pub struct CancelledOrClosedOrFullOrSentRelease;
 
-unsafe impl RocRelease<ClosedOrFullOrSent> for ClosedOrFullOrSentRelease {
-    unsafe fn release(value: ClosedOrFullOrSent, roc_host: &RocHost) {
+unsafe impl RocRelease<CancelledOrClosedOrFullOrSent> for CancelledOrClosedOrFullOrSentRelease {
+    unsafe fn release(value: CancelledOrClosedOrFullOrSent, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -3863,7 +4883,7 @@ unsafe impl RocRelease<HostChannelReceiveResult> for HostChannelReceiveResultRel
     }
 }
 
-impl ClosedOrTimedOut {
+impl CancelledOrClosedOrTimedOut {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -3884,10 +4904,245 @@ impl ClosedOrTimedOut {
     }
 }
 
-pub struct ClosedOrTimedOutRelease;
+pub struct CancelledOrClosedOrTimedOutRelease;
 
-unsafe impl RocRelease<ClosedOrTimedOut> for ClosedOrTimedOutRelease {
-    unsafe fn release(value: ClosedOrTimedOut, roc_host: &RocHost) {
+unsafe impl RocRelease<CancelledOrClosedOrTimedOut> for CancelledOrClosedOrTimedOutRelease {
+    unsafe fn release(value: CancelledOrClosedOrTimedOut, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl CancelledOrReadyOrSourceTimedOutOrTimedOut {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = roc_host;
+        match value.tag {
+            CancelledOrReadyOrSourceTimedOutOrTimedOutTag::Cancelled => {},
+            CancelledOrReadyOrSourceTimedOutOrTimedOutTag::Ready => {},
+            CancelledOrReadyOrSourceTimedOutOrTimedOutTag::SourceTimedOut => {},
+            CancelledOrReadyOrSourceTimedOutOrTimedOutTag::TimedOut => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            CancelledOrReadyOrSourceTimedOutOrTimedOutTag::Cancelled => {},
+            CancelledOrReadyOrSourceTimedOutOrTimedOutTag::Ready => {},
+            CancelledOrReadyOrSourceTimedOutOrTimedOutTag::SourceTimedOut => {},
+            CancelledOrReadyOrSourceTimedOutOrTimedOutTag::TimedOut => {},
+        }
+    }
+}
+
+pub struct CancelledOrReadyOrSourceTimedOutOrTimedOutRelease;
+
+unsafe impl RocRelease<CancelledOrReadyOrSourceTimedOutOrTimedOut> for CancelledOrReadyOrSourceTimedOutOrTimedOutRelease {
+    unsafe fn release(value: CancelledOrReadyOrSourceTimedOutOrTimedOut, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ReadableOrReceivableOrSendableOrWritable {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            ReadableOrReceivableOrSendableOrWritableTag::Readable => {
+                let payload = unsafe { value.take_payload_readable_unchecked() };
+                unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+            },
+            ReadableOrReceivableOrSendableOrWritableTag::Receivable => {
+                let payload = unsafe { value.take_payload_receivable_unchecked() };
+                unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+            },
+            ReadableOrReceivableOrSendableOrWritableTag::Sendable => {
+                let payload = unsafe { value.take_payload_sendable_unchecked() };
+                unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+            },
+            ReadableOrReceivableOrSendableOrWritableTag::Writable => {
+                let payload = unsafe { value.take_payload_writable_unchecked() };
+                unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            ReadableOrReceivableOrSendableOrWritableTag::Readable => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_readable_unchecked()) };
+                unsafe { incref_box(payload as RocBox, amount); }
+            },
+            ReadableOrReceivableOrSendableOrWritableTag::Receivable => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_receivable_unchecked()) };
+                unsafe { incref_box(payload as RocBox, amount); }
+            },
+            ReadableOrReceivableOrSendableOrWritableTag::Sendable => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_sendable_unchecked()) };
+                unsafe { incref_box(payload as RocBox, amount); }
+            },
+            ReadableOrReceivableOrSendableOrWritableTag::Writable => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_writable_unchecked()) };
+                unsafe { incref_box(payload as RocBox, amount); }
+            },
+        }
+    }
+}
+
+pub struct ReadableOrReceivableOrSendableOrWritableRelease;
+
+unsafe impl RocRelease<ReadableOrReceivableOrSendableOrWritable> for ReadableOrReceivableOrSendableOrWritableRelease {
+    unsafe fn release(value: ReadableOrReceivableOrSendableOrWritable, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostTaskSpawnResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostTaskSpawnResultTag::Err => {},
+            HostTaskSpawnResultTag::Ok => {
+                let payload = unsafe { value.take_payload_ok_unchecked() };
+                unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostTaskSpawnResultTag::Err => {},
+            HostTaskSpawnResultTag::Ok => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
+                unsafe { incref_box(payload as RocBox, amount); }
+            },
+        }
+    }
+}
+
+pub struct HostTaskSpawnResultRelease;
+
+unsafe impl RocRelease<HostTaskSpawnResult> for HostTaskSpawnResultRelease {
+    unsafe fn release(value: HostTaskSpawnResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostTaskJoinResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostTaskJoinResultTag::Err => {},
+            HostTaskJoinResultTag::Ok => {
+                let payload = unsafe { value.take_payload_ok_unchecked() };
+                unsafe { decref_erased_callable(payload, roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostTaskJoinResultTag::Err => {},
+            HostTaskJoinResultTag::Ok => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
+                unsafe { incref_erased_callable(payload, amount); }
+            },
+        }
+    }
+}
+
+pub struct HostTaskJoinResultRelease;
+
+unsafe impl RocRelease<HostTaskJoinResult> for HostTaskJoinResultRelease {
+    unsafe fn release(value: HostTaskJoinResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostGroupNewResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostGroupNewResultTag::Err => {},
+            HostGroupNewResultTag::Ok => {
+                let payload = unsafe { value.take_payload_ok_unchecked() };
+                unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostGroupNewResultTag::Err => {},
+            HostGroupNewResultTag::Ok => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
+                unsafe { incref_box(payload as RocBox, amount); }
+            },
+        }
+    }
+}
+
+pub struct HostGroupNewResultRelease;
+
+unsafe impl RocRelease<HostGroupNewResult> for HostGroupNewResultRelease {
+    unsafe fn release(value: HostGroupNewResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -3901,6 +5156,17 @@ unsafe impl RocRelease<ClosedOrTimedOut> for ClosedOrTimedOutRelease {
 /// `value` must own one live Roc list reference.
 pub unsafe fn decref_list_of_str(value: RocList<RocStr>, roc_host: &RocHost) {
     unsafe { value.release_with::<RocStrRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<ReadableOrReceivableOrSendableOrWritable>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_readable_or_receivable_or_sendable_or_writable(value: RocList<ReadableOrReceivableOrSendableOrWritable>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ReadableOrReceivableOrSendableOrWritableRelease>(roc_host); }
 }
 
 
@@ -3983,11 +5249,62 @@ unsafe extern "C" {
     pub fn roc_stdout_line(arg0: RocStr) -> HostStdoutLineResult;
 
     /// Hosted symbol for Host.task_spawn!
-    /// Roc signature: Box({} => {}) => Bool
+    /// Roc signature: Box({} => {}) => Try(Host.TaskHandle, [TaskLimitReached])
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_erased_callable(arg0, roc_host); }
-    pub fn roc_task_spawn(arg0: RocErasedCallable) -> bool;
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_task_spawn(arg0: RocErasedCallable) -> HostTaskSpawnResult;
+
+    /// Hosted symbol for Host.task_finish!
+    /// Roc signature: Box({} -> rigid) => Bool
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_erased_callable(arg0, roc_host); }
+    pub fn roc_task_finish(arg0: RocErasedCallable) -> bool;
+
+    /// Hosted symbol for Host.task_join!
+    /// Roc signature: Host.TaskHandle => Try(Box({} -> rigid), [Cancelled])
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_task_join(arg0: *mut u64) -> HostTaskJoinResult;
+
+    /// Hosted symbol for Host.task_cancel!
+    /// Roc signature: Host.TaskHandle => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    pub fn roc_task_cancel(arg0: *mut u64);
+
+    /// Hosted symbol for Host.task_is_cancelled!
+    /// Roc signature: {} => Bool
+    pub fn roc_task_is_cancelled() -> bool;
+
+    /// Hosted symbol for Host.task_yield!
+    /// Roc signature: {} => {}
+    pub fn roc_task_yield();
+
+    /// Hosted symbol for Host.group_new!
+    /// Roc signature: {} => Try(Host.TaskGroup, [TaskLimitReached])
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_group_new() -> HostGroupNewResult;
+
+    /// Hosted symbol for Host.group_add!
+    /// Roc signature: Host.TaskGroup, Host.TaskHandle => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    ///     unsafe { decref_box_with(arg1 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    pub fn roc_group_add(arg0: *mut u64, arg1: *mut u64);
+
+    /// Hosted symbol for Host.group_close!
+    /// Roc signature: Host.TaskGroup, Bool => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    pub fn roc_group_close(arg0: *mut u64, arg1: bool);
 
     /// Hosted symbol for Host.channel_close!
     /// Roc signature: Host.ChannelEnd => {}
@@ -3996,13 +5313,20 @@ unsafe extern "C" {
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     pub fn roc_channel_close(arg0: *mut u64);
 
+    /// Hosted symbol for Host.select_wait!
+    /// Roc signature: List([Readable(Host.Socket), Receivable(Host.ChannelEnd), Sendable(Host.ChannelEnd), Writable(Host.Socket)]), U64 => [Cancelled, Ready, SourceTimedOut(U64), TimedOut]
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_list_of_readable_or_receivable_or_sendable_or_writable(arg0, roc_host); }
+    pub fn roc_select_wait(arg0: RocList<ReadableOrReceivableOrSendableOrWritable>, arg1: u64) -> CancelledOrReadyOrSourceTimedOutOrTimedOut;
+
     /// Hosted symbol for Host.channel_new!
     /// Roc signature: U64 => Try({ receiver : Host.ChannelEnd, sender : Host.ChannelEnd }, [TooManyChannels])
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_channel_new(arg0: u64) -> HostChannelNewResult;
 
     /// Hosted symbol for Host.channel_receive!
-    /// Roc signature: Host.ChannelEnd, U64 => Try(Box({} -> rigid), [Closed, TimedOut])
+    /// Roc signature: Host.ChannelEnd, U64 => Try(Box({} -> rigid), [Cancelled, Closed, TimedOut])
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
@@ -4010,12 +5334,12 @@ unsafe extern "C" {
     pub fn roc_channel_receive(arg0: *mut u64, arg1: u64) -> HostChannelReceiveResult;
 
     /// Hosted symbol for Host.channel_send!
-    /// Roc signature: Host.ChannelEnd, Box({} -> rigid), Bool => [Closed, Full, Sent]
+    /// Roc signature: Host.ChannelEnd, Box({} -> rigid), Bool => [Cancelled, Closed, Full, Sent]
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     ///     unsafe { decref_erased_callable(arg1, roc_host); }
-    pub fn roc_channel_send(arg0: *mut u64, arg1: RocErasedCallable, arg2: bool) -> ClosedOrFullOrSent;
+    pub fn roc_channel_send(arg0: *mut u64, arg1: RocErasedCallable, arg2: bool) -> CancelledOrClosedOrFullOrSent;
 
     /// Hosted symbol for Host.dns_resolve!
     /// Roc signature: Str, U64 => Try(List(Str), IOErr)
@@ -4035,8 +5359,8 @@ unsafe extern "C" {
     pub fn roc_time_now_ns() -> u64;
 
     /// Hosted symbol for Host.time_sleep_ns!
-    /// Roc signature: U64 => {}
-    pub fn roc_time_sleep_ns(arg0: u64);
+    /// Roc signature: U64 => Bool
+    pub fn roc_time_sleep_ns(arg0: u64) -> bool;
 
     /// Hosted symbol for Host.socket_accept!
     /// Roc signature: Host.Socket => Try(Host.Socket, IOErr)
@@ -4069,6 +5393,22 @@ unsafe extern "C" {
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_socket_read(arg0: *mut u64, arg1: u64) -> HostSocketReadResult;
+
+    /// Hosted symbol for Host.socket_try_read!
+    /// Roc signature: Host.Socket, U64 => [Data(List(U8)), Failed(IOErr), NotReady]
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_socket_try_read(arg0: *mut u64, arg1: u64) -> DataOrFailedOrNotReady;
+
+    /// Hosted symbol for Host.socket_try_accept!
+    /// Roc signature: Host.Socket => [Accepted(Host.Socket), Failed(IOErr), NotReady]
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_socket_try_accept(arg0: *mut u64) -> AcceptedOrFailedOrNotReady;
 
     /// Hosted symbol for Host.socket_read_append!
     /// Roc signature: Host.Socket, List(U8), U64 => Try(List(U8), IOErr)

@@ -18,6 +18,7 @@ mod net;
 mod random;
 mod resolve;
 mod sched;
+mod select;
 
 use crate::roc_platform_abi::{
     make_roc_host, roc_main, DefaultAllocators, DefaultHandlers, HostStderrLineResult,
@@ -195,7 +196,7 @@ pub extern "C" fn roc_dealloc(ptr: *mut c_void, alignment: usize) {
 /// glue helpers (via `RocHost`), comes through here. Socket handles are routed
 /// to the socket heap, which closes them; everything else is ordinary memory.
 extern "C" fn host_dealloc(roc_host: *mut RocHost, ptr: *mut c_void, alignment: usize) {
-    if !sockets::release(ptr) && !channels::release(ptr) {
+    if !sockets::release(ptr) && !channels::release(ptr) && !tasks::release(ptr) {
         DefaultAllocators::roc_dealloc(roc_host, ptr, alignment);
     }
 }

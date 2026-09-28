@@ -61,7 +61,7 @@ connect_when_ready! = |address| {
 				if $attempt >= 50 {
 					return Err(err)
 				}
-				Time.sleep!(Time.millis(200))
+				Time.sleep!(Time.millis(200))?
 			}
 		}
 	}

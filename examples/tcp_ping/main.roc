@@ -62,7 +62,7 @@ main! = |args| {
 		Stdout.line!(line)?
 		if seq + 1 < opts.count {
 			# Keep a steady pace: wait out whatever the attempt didn't use.
-			Time.sleep!(Time.millis(opts.interval_ms).minus(took))
+			Time.sleep!(Time.millis(opts.interval_ms).minus(took))?
 		}
 	}
 

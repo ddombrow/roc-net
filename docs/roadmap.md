@@ -1,5 +1,10 @@
 # roc-net roadmap: 0.2.0 (concurrency) and beyond
 
+**Status (2026-09-27):** 0.2.0 is implemented (Select, task handles,
+cancellation, scopes, `Task.yield!`), except `Time.ticker`, which
+`on_timeout` with a remembered deadline covers for now (see
+`examples/chat_server`). See CHANGELOG.md.
+
 ## Context
 
 Every later goal (yamux and libp2p, gossip, ICE, a chat server with

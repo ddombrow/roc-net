@@ -40,7 +40,7 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Channel, Dns, Framing, IOErr, Random, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
+	exposes [Bytes, Channel, Dns, Framing, IOErr, Random, Select, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
 	packages { roc: "nightly-2026-09-24-f45bfbe" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
@@ -48,7 +48,16 @@ platform ""
 		"roc_stdin_line": Host.stdin_line!,
 		"roc_stdout_line": Host.stdout_line!,
 		"roc_task_spawn": Host.task_spawn!,
+		"roc_task_finish": Host.task_finish!,
+		"roc_task_join": Host.task_join!,
+		"roc_task_cancel": Host.task_cancel!,
+		"roc_task_is_cancelled": Host.task_is_cancelled!,
+		"roc_task_yield": Host.task_yield!,
+		"roc_group_new": Host.group_new!,
+		"roc_group_add": Host.group_add!,
+		"roc_group_close": Host.group_close!,
 		"roc_channel_close": Host.channel_close!,
+		"roc_select_wait": Host.select_wait!,
 		"roc_channel_new": Host.channel_new!,
 		"roc_channel_receive": Host.channel_receive!,
 		"roc_channel_send": Host.channel_send!,
@@ -60,6 +69,8 @@ platform ""
 		"roc_socket_local_addr": Host.socket_local_addr!,
 		"roc_socket_peer_addr": Host.socket_peer_addr!,
 		"roc_socket_read": Host.socket_read!,
+		"roc_socket_try_read": Host.socket_try_read!,
+		"roc_socket_try_accept": Host.socket_try_accept!,
 		"roc_socket_read_append": Host.socket_read_append!,
 		"roc_socket_read_into": Host.socket_read_into!,
 		"roc_socket_set_timeout": Host.socket_set_timeout!,
@@ -112,6 +123,7 @@ import Unix
 import Host
 import IOErr
 import Random
+import Select
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {

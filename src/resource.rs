@@ -85,18 +85,22 @@ impl<T> ResourceHeap<T> {
         Ok(Reservation { heap: self, index: Some(index) })
     }
 
-    /// Claim a free slot, waiting for one to be released if the heap is full.
-    pub fn reserve(&self) -> Reservation<'_, T> {
+    /// Claim a free slot, waiting for one to be released if the heap is full;
+    /// `None` if the waiting task is cancelled.
+    pub fn reserve(&self) -> Option<Reservation<'_, T>> {
         let mut state = self.lock();
         loop {
             if let Some(index) = state.free.pop() {
-                return Reservation { heap: self, index: Some(index) };
+                return Some(Reservation { heap: self, index: Some(index) });
             }
             let id = state.waiters.add();
             drop(state);
-            crate::sched::park(None);
+            let end = crate::sched::park(None);
             state = self.lock();
             state.waiters.remove(id);
+            if end == crate::sched::Woke::Cancelled {
+                return None;
+            }
         }
     }
 

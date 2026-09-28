@@ -7,8 +7,10 @@
 #
 # - Raises the file-descriptor limit if allowed: the Unix backlog test fills a
 #   listener's queue, which Linux lets grow to 4,096 connections.
-# - Runs the suite twice: as configured, then with ROC_NET_SHARE_AFTER_US=0,
-#   which makes tasks move between worker threads as often as possible.
+# - Runs the suite three times: as configured; with ROC_NET_SHARE_AFTER_US=0,
+#   which makes tasks move between worker threads as often as possible; and
+#   with ROC_NET_WORKERS=1, where anything that blocks the thread (rather than
+#   suspending the task) hangs every task instead of hiding behind others.
 # - Fails if a task failed unexpectedly: that's only logged ("task failed:
 #   ..."), so the suite itself would still pass.
 set -u
@@ -32,4 +34,6 @@ run() {
 
 run "$bin" || exit 1
 echo "== again, moving tasks between threads at every backlog"
-run env ROC_NET_SHARE_AFTER_US=0 "$bin"
+run env ROC_NET_SHARE_AFTER_US=0 "$bin" || exit 1
+echo "== again, on one worker thread (anything that blocks the thread hangs)"
+run env ROC_NET_WORKERS=1 "$bin"

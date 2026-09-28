@@ -39,7 +39,12 @@ pub struct Conn<T> {
 impl<T: AsRawFd> Conn<T> {
     /// `io` must already be non-blocking.
     pub fn new(io: T) -> Self {
-        Conn { io, reg: IoReg::default(), read_ms: AtomicU64::new(0), write_ms: AtomicU64::new(0) }
+        Conn {
+            io,
+            reg: IoReg::default(),
+            read_ms: AtomicU64::new(0),
+            write_ms: AtomicU64::new(0),
+        }
     }
 
     pub fn set_read_timeout_ms(&self, ms: u64) {
@@ -100,6 +105,12 @@ impl<T: AsRawFd> Conn<T> {
             data = &data[written..];
         }
         Ok(())
+    }
+
+    /// The descriptor and scheduling state, for waiting on it alongside
+    /// other sources (`Select`).
+    pub fn io_parts(&self) -> (std::os::fd::RawFd, &IoReg) {
+        (self.io.as_raw_fd(), &self.reg)
     }
 
     /// Wait until the socket is writable (say, a non-blocking connect has
@@ -203,9 +214,47 @@ pub fn try_reserve() -> Result<Reservation<'static, Socket>, Full> {
     heap().try_reserve()
 }
 
-/// Claim a slot for a new socket, waiting for one to be released if needed.
-pub fn reserve() -> Reservation<'static, Socket> {
+/// Claim a slot for a new socket, waiting for one to be released if needed;
+/// `None` if the waiting task is cancelled.
+pub fn reserve() -> Option<Reservation<'static, Socket>> {
     heap().reserve()
+}
+
+impl Socket {
+    /// For a `Select` about to wait for this socket to become readable: when
+    /// the wait must end anyway, as a blocking read of it would. That's the
+    /// stream's read timeout, counted from now, or for a TLS stream still in
+    /// its handshake, the handshake deadline if sooner. Listeners have none.
+    pub fn read_wait_deadline(&self) -> Option<Instant> {
+        let conn_deadline = match self {
+            Socket::TcpStream(s) => s.read_deadline(),
+            Socket::UnixStream(s) => s.read_deadline(),
+            Socket::Udp(s) => s.read_deadline(),
+            Socket::Tls(s) => s.conn().read_deadline(),
+            _ => None,
+        };
+        let handshake = match self {
+            Socket::Tls(s) => s.pending_handshake_deadline(),
+            _ => None,
+        };
+        match (conn_deadline, handshake) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// The descriptor and scheduling state to wait on for this socket.
+    pub fn io_parts(&self) -> (std::os::fd::RawFd, &IoReg) {
+        match self {
+            Socket::TcpListener(s, _) => s.io_parts(),
+            Socket::TcpStream(s) => s.io_parts(),
+            Socket::UnixListener(s) => s.listener.io_parts(),
+            Socket::UnixStream(s) => s.io_parts(),
+            Socket::Udp(s) => s.io_parts(),
+            Socket::TlsListener(s) => s.listener.io_parts(),
+            Socket::Tls(s) => s.conn().io_parts(),
+        }
+    }
 }
 
 /// # Safety

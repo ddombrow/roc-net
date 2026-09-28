@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use crate::roc_host;
 use crate::roc_platform_abi::{
-    decref_box_with, AnonStruct4f4f23a245dfe10a as RocRecvFrom, HostDnsResolveResult,
+    decref_box_with, AcceptedOrFailedOrNotReady, AcceptedOrFailedOrNotReadyPayload, AcceptedOrFailedOrNotReadyTag,
+    DataOrFailedOrNotReady, DataOrFailedOrNotReadyPayload, DataOrFailedOrNotReadyTag, AnonStruct4f4f23a245dfe10a as RocRecvFrom, HostDnsResolveResult,
     HostDnsResolveResultPayload, HostDnsResolveResultTag, HostIOErr, HostIOErrPayload,
     HostIOErrTag, HostSocketAcceptResult, HostSocketAcceptResultPayload,
     HostSocketAcceptResultTag, HostSocketLocalAddrResult, HostSocketLocalAddrResultPayload,
@@ -51,6 +52,7 @@ macro_rules! io_err {
         match $err {
             NetErr::TooManySockets => unit($tag::TooManySockets),
             NetErr::Other(message) => other(message),
+            NetErr::Io(err) if crate::sched::is_cancelled_error(&err) => unit($tag::Cancelled),
             NetErr::Io(err) => match err.kind() {
                 K::AddrInUse => unit($tag::AddrInUse),
                 K::AddrNotAvailable => unit($tag::AddrNotAvailable),
@@ -293,7 +295,9 @@ fn unix_connect(path: &str, deadline: Option<std::time::Instant>) -> io::Result<
                     return Err(io::Error::new(io::ErrorKind::TimedOut, format!("connecting to {path} timed out")));
                 }
                 let wake = deadline.map_or(pause_until, |deadline| deadline.min(pause_until));
-                crate::sched::sleep(wake.saturating_duration_since(now));
+                if !crate::sched::sleep(wake.saturating_duration_since(now)) {
+                    return Err(crate::sched::cancelled());
+                }
                 pause = (pause * 2).min(Duration::from_millis(50));
             }
             Err(err) => return Err(err),
@@ -418,7 +422,9 @@ where
                 ) => {}
             Err(err) if matches!(err.raw_os_error(), Some(EMFILE | ENFILE)) => {
                 warn_out_of_fds();
-                crate::sched::sleep(Duration::from_millis(50));
+                if !crate::sched::sleep(Duration::from_millis(50)) {
+                    return Err(crate::sched::cancelled());
+                }
             }
             Err(err) => return Err(err),
         }
@@ -432,7 +438,7 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
         // Wait for a free socket slot before accepting, so at the limit new
         // clients wait in the kernel's accept queue instead of being accepted
         // and immediately dropped.
-        let slot = sockets::reserve();
+        let slot = sockets::reserve().ok_or_else(crate::sched::cancelled)?;
         let tcp_accept = |l: &TcpListener| l.accept().map(|(stream, _)| stream);
         let tcp_nonblocking = |s: &TcpStream| s.set_nonblocking(true);
         let accepted = match listener {
@@ -461,6 +467,127 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
         };
         Ok(slot.insert(accepted))
     }))
+}
+
+/// Accept a connection if one is waiting, without waiting: `None` if none
+/// is. For `Select`.
+fn accept_now(listener: &Socket) -> NetResult<Option<Socket>> {
+    fn once<L, S>(listener: &Conn<L>, accept: impl Fn(&L) -> io::Result<S>) -> io::Result<Option<S>> {
+        loop {
+            match accept(&listener.io) {
+                Ok(stream) => return Ok(Some(stream)),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                Err(err) if matches!(err.kind(), io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted) => {}
+                Err(err) => return Err(err),
+            }
+        }
+    }
+    let tcp_accept = |l: &TcpListener| l.accept().map(|(stream, _)| stream);
+    Ok(match listener {
+        Socket::TcpListener(l, timeouts) => match once(l, tcp_accept)? {
+            None => None,
+            Some(stream) => {
+                stream.set_nonblocking(true)?;
+                let stream = Conn::new(stream);
+                timeouts.apply(&stream);
+                Some(Socket::TcpStream(stream))
+            }
+        },
+        Socket::UnixListener(l) => match once(&l.listener, |l: &UnixListener| l.accept().map(|(stream, _)| stream))? {
+            None => None,
+            Some(stream) => {
+                stream.set_nonblocking(true)?;
+                let stream = Conn::new(stream);
+                l.timeouts.apply(&stream);
+                Some(Socket::UnixStream(stream))
+            }
+        },
+        Socket::TlsListener(l) => match once(&l.listener, tcp_accept)? {
+            None => None,
+            Some(tcp) => {
+                tcp.set_nonblocking(true)?;
+                let tcp = Conn::new(tcp);
+                l.timeouts.apply(&tcp);
+                let deadline = deadline_after(l.handshake_timeout_ms);
+                Some(Socket::Tls(Box::new(crate::tls::server(tcp, l.config.clone(), deadline)?)))
+            }
+        },
+        _ => return Err(wrong_kind("accept")),
+    })
+}
+
+/// Hosted function: Host.socket_try_accept!
+#[no_mangle]
+pub extern "C" fn roc_socket_try_accept(listener: *mut u64) -> AcceptedOrFailedOrNotReady {
+    let result = with_socket(listener, |listener| {
+        let slot = sockets::try_reserve().map_err(|_| NetErr::TooManySockets)?;
+        Ok(accept_now(listener)?.map(|socket| slot.insert(socket)))
+    });
+    match result {
+        Ok(Some(handle)) => AcceptedOrFailedOrNotReady {
+            payload: AcceptedOrFailedOrNotReadyPayload { accepted: ManuallyDrop::new(handle) },
+            tag: AcceptedOrFailedOrNotReadyTag::Accepted,
+        },
+        Ok(None) => AcceptedOrFailedOrNotReady {
+            payload: AcceptedOrFailedOrNotReadyPayload { not_ready: [] },
+            tag: AcceptedOrFailedOrNotReadyTag::NotReady,
+        },
+        Err(err) => AcceptedOrFailedOrNotReady {
+            payload: AcceptedOrFailedOrNotReadyPayload { failed: ManuallyDrop::new(FromNetErr::from_net_err(err)) },
+            tag: AcceptedOrFailedOrNotReadyTag::Failed,
+        },
+    }
+}
+
+/// Read what a stream (or connected UDP socket) has, without waiting: `None`
+/// if nothing has arrived. For `Select`.
+fn read_now(socket: &Socket, max: u64) -> NetResult<Option<RocListWith<u8, false>>> {
+    let max = max.min(MAX_READ_BYTES) as usize;
+    fn once(read: impl Fn(&mut [u8]) -> io::Result<usize>, max: usize) -> io::Result<Option<RocListWith<u8, false>>> {
+        loop {
+            let result = with_scratch(max, |buf| read(buf).map(|len| roc_bytes(&buf[..len])));
+            match result {
+                Ok(bytes) => return Ok(Some(bytes)),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(err) => return Err(err),
+            }
+        }
+    }
+    Ok(match socket {
+        Socket::TcpStream(s) => once(|buf| (&mut &s.io).read(buf), max)?,
+        Socket::UnixStream(s) => once(|buf| (&mut &s.io).read(buf), max)?,
+        Socket::Udp(s) => once(|buf| s.io.recv(buf), max)?,
+        Socket::Tls(s) => loop {
+            let received = with_scratch(max, |buf| s.try_read(buf).map(|len| len.map(|len| roc_bytes(&buf[..len]))))?;
+            if let Some(bytes) = received {
+                break Some(bytes);
+            }
+            if !s.fill_now()? {
+                break None;
+            }
+        },
+        _ => return Err(wrong_kind("read")),
+    })
+}
+
+/// Hosted function: Host.socket_try_read!
+#[no_mangle]
+pub extern "C" fn roc_socket_try_read(socket: *mut u64, max: u64) -> DataOrFailedOrNotReady {
+    match with_socket(socket, |socket| read_now(socket, max)) {
+        Ok(Some(bytes)) => DataOrFailedOrNotReady {
+            payload: DataOrFailedOrNotReadyPayload { data: ManuallyDrop::new(bytes) },
+            tag: DataOrFailedOrNotReadyTag::Data,
+        },
+        Ok(None) => DataOrFailedOrNotReady {
+            payload: DataOrFailedOrNotReadyPayload { not_ready: [] },
+            tag: DataOrFailedOrNotReadyTag::NotReady,
+        },
+        Err(err) => DataOrFailedOrNotReady {
+            payload: DataOrFailedOrNotReadyPayload { failed: ManuallyDrop::new(FromNetErr::from_net_err(err)) },
+            tag: DataOrFailedOrNotReadyTag::Failed,
+        },
+    }
 }
 
 // --- Streams (and connected UDP) ---

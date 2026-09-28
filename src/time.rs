@@ -22,6 +22,6 @@ pub extern "C" fn roc_time_now_ns() -> u64 {
 
 /// Hosted function: Host.time_sleep_ns!
 #[no_mangle]
-pub extern "C" fn roc_time_sleep_ns(ns: u64) {
-    crate::sched::sleep(Duration::from_nanos(ns));
+pub extern "C" fn roc_time_sleep_ns(ns: u64) -> bool {
+    crate::sched::sleep(Duration::from_nanos(ns))
 }

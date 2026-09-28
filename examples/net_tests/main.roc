@@ -5,6 +5,7 @@ import pf.Channel
 import pf.Dns
 import pf.Framing
 import pf.Random
+import pf.Select
 import pf.Stdout
 import pf.Task
 import pf.Tcp
@@ -88,6 +89,34 @@ main! = |_args| {
 		check!("read_into!: a buffer still in use elsewhere is left alone", read_into_shared!),
 		check!("read_append!: appends, and end of stream leaves it unchanged", read_append_basic!),
 		check!("read_into!: a list literal as the buffer is never written to", read_into_literal!),
+		check!("select: the channel that gets a value wins", select_channel_wins!),
+		check!("select: timeout when nothing happens", select_timeout!),
+		check!("select: a closed peer is an empty read", select_read_closed!),
+		check!("select: the losing arm's value stays queued", select_loser_keeps_value!),
+		check!("select: ready arms take turns", select_fairness!),
+		check!("select: accept, and room to send", select_accept_and_send!),
+		check!("select: TLS data already decrypted counts as ready", select_tls_buffered!),
+		check!("select: cancelling the task ends the wait", select_cancelled!),
+		check!("select: Framing lines, split and buffered", select_lines!),
+		check!("select: Framing frames", select_frames!),
+		check!("task: join returns the result, more than once", task_join!),
+		check!("task: join returns the task's error", task_join_error!),
+		check!("task: cancel wakes a blocked read and closes its socket", task_cancel_read!),
+		check!("task: cancel wakes sleep and receive", task_cancel_sleep_receive!),
+		check!("task: cancelling a finished task changes nothing", task_cancel_finished!),
+		check!("scope: waits for its tasks when the body succeeds", scope_waits!),
+		check!("scope: a failing body cancels the rest", scope_cancels_on_error!),
+		check!("scope: nested scopes", scope_nested!),
+		check!("task: is_cancelled! for a computation", task_is_cancelled!),
+		check!("task: a sleep loop stops when cancelled", task_cancel_sleep_loop!),
+		check!("channel: a cancelled receiver doesn't swallow a value", channel_cancelled_waiter!),
+		check!("select: a TLS peer that never shakes hands doesn't block it", select_tls_silent_peer!),
+		check!("select: a server TLS stream shakes hands while polling", select_tls_server_handshake!),
+		check!("select: the TLS handshake deadline ends a wait with no timeout", select_tls_handshake_deadline!),
+		check!("select: a stream's read timeout ends a wait with no timeout", select_read_timeout!),
+		check!("select: two selects on one stream each get their own timeout", select_timeouts_per_select!),
+		check!("select: TLS data left by another reader wakes it", select_tls_after_other_reader!),
+		check!("select: watching a stream mid-handshake doesn't block the handshake", select_during_handshake!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -154,7 +183,7 @@ listen_anywhere! = || {
 # closes) its stream; the client reads until that close.
 round_trip! = || {
 	(listener, address) = listen_anywhere!()?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		bytes = stream.read!(1024)?
 		stream.write!(bytes)
@@ -169,7 +198,7 @@ round_trip! = || {
 # and the client can still read that reply.
 half_close! = || {
 	(listener, address) = listen_anywhere!()?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		request = read_to_end!(stream)?
 		stream.write_str!("got ${Str.count_utf8_bytes(request).to_str()} bytes")
@@ -182,7 +211,7 @@ half_close! = || {
 # The server accepts but never writes, so the client's read must time out.
 read_timeout! = || {
 	(listener, address) = listen_anywhere!()?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		_ = read_to_end!(stream)?
 		Ok({})
@@ -210,7 +239,7 @@ connection_refused! = || {
 # client's own view of its local address.
 addresses! = || {
 	(listener, address) = listen_anywhere!()?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		stream.write_str!(stream.peer_addr!()?)
 	})?
@@ -224,18 +253,19 @@ addresses! = || {
 ## A server that reads a whole request and replies with its length. Works for
 ## TCP and Unix listeners alike.
 serve_length! = |listener| {
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		request = read_to_end!(stream)?
 		stream.write_str!("got ${Str.count_utf8_bytes(request).to_str()} bytes")
-	})
+	})?
+	Ok({})
 }
 
 unix_round_trip! = || {
 	path = "/tmp/roc-net-tests-round-trip.sock"
 	listener = Unix.listen!(path)?
 	expect_eq(listener.local_addr!()?, path)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		bytes = stream.read!(1024)?
 		stream.write!(bytes)
@@ -308,10 +338,11 @@ udp_anywhere! = || {
 
 # The server echoes one datagram back to whoever sent it.
 udp_echo_once! = |server| {
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		received = server.recv_from!(1024)?
 		server.send_to!(received.bytes, received.from)
-	})
+	})?
+	Ok({})
 }
 
 udp_round_trip! = || {
@@ -369,12 +400,14 @@ udp_refused! = || {
 }
 
 ## Accept one connection and run `send!` on it, then hang up.
-serve_once! = |listener, send!|
-	Task.spawn!(|| {
+serve_once! = |listener, send!| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		stream.set_nodelay!(True)?
 		send!(stream)
-	})
+	})?
+	Ok({})
+}
 
 framing_lines! = || {
 	(listener, address) = listen_anywhere!()?
@@ -501,7 +534,7 @@ bytes_round_trips! = || {
 
 time_sleep! = || {
 	start = Time.now!()
-	Time.sleep!(Time.millis(50))
+	Time.sleep!(Time.millis(50))?
 	took = start.elapsed!().to_millis()
 	if took >= 50 and took < 500 {
 		Ok({})
@@ -592,7 +625,7 @@ sum_until_closed! = |rx| {
 				$sum = $sum + n
 				$count = $count + 1
 			}
-			Err(ChannelClosed) => break
+			Err(ChannelClosed) | Err(Cancelled) => break
 		}
 	}
 	($count, $sum)
@@ -602,7 +635,7 @@ sum_until_closed! = |rx| {
 # released and the consumer's loop ends.
 channel_producer_ends! = || {
 	(tx, rx) = Channel.new!(8)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		for n in U64.until(1, 1001) {
 			tx.send!(n)?
 		}
@@ -614,7 +647,7 @@ channel_producer_ends! = || {
 channel_many_producers! = || {
 	(tx, rx) = Channel.new!(8)?
 	for producer in U64.until(0, 4) {
-		Task.spawn!(|| {
+		_ = Task.spawn!(|| {
 			for n in U64.until(0, 250) {
 				tx.send!(producer * 250 + n)?
 			}
@@ -628,7 +661,7 @@ channel_many_producers! = || {
 # every value but the first.
 channel_backpressure! = || {
 	(tx, rx) = Channel.new!(1)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		for n in U64.until(0, 200) {
 			tx.send!(n)?
 		}
@@ -643,7 +676,7 @@ channel_backpressure! = || {
 				}
 				$expected = $expected + 1
 			}
-			Err(ChannelClosed) => break
+			Err(ChannelClosed) | Err(Cancelled) => break
 		}
 	}
 	expect_eq($expected, 200)
@@ -690,11 +723,11 @@ sender_only! = || {
 # A server task answers each request on the reply channel sent with it.
 channel_reply! = || {
 	(requests, incoming) = Channel.new!(4)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		while True {
 			match incoming.receive!() {
 				Ok((n, reply)) => reply.send!(n * 2)?
-				Err(ChannelClosed) => break
+				Err(ChannelClosed) | Err(Cancelled) => break
 			}
 		}
 		Ok({})
@@ -750,12 +783,14 @@ tls_round_trip! = || {
 
 ## A TLS server that accepts one connection and waits for it to end, ignoring
 ## errors (the client is expected to abandon the handshake).
-tls_serve_quietly! = |listener|
-	Task.spawn!(|| {
+tls_serve_quietly! = |listener| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		_ = stream.read!(16)
 		Ok({})
-	})
+	})?
+	Ok({})
+}
 
 expect_tls_rejected! = |result, reason| {
 	match result {
@@ -783,7 +818,7 @@ tls_wrong_name! = || {
 # hang (the read timeout turns that into a failure).
 tls_full_duplex! = || {
 	(listener, address) = tls_listen_anywhere!()?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		while True {
 			bytes = stream.read!(16384)?
@@ -798,7 +833,7 @@ tls_full_duplex! = || {
 	client = Tls.connect_with!(address, trusting_test_ca)?
 	client.set_read_timeout!(Millis(10000))?
 	chunk = List.repeat(42, 16384)
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		for _ in U64.until(0, 64) {
 			client.write!(chunk)?
 		}
@@ -822,7 +857,7 @@ tls_full_duplex! = || {
 # Plain TCP until the client asks to upgrade, then TLS on the same connection.
 tls_starttls! = || {
 	(listener, address) = listen_anywhere!()?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		plain = listener.accept!()?
 		expect_eq(Str.from_utf8_lossy(plain.read!(64)?), "STARTTLS\n")?
 		plain.write_str!("GO\n")?
@@ -846,8 +881,8 @@ expect_duration = |took, min_ms| {
 
 ## Accept one plain connection, agree to STARTTLS, then never speak TLS:
 ## just read (and ignore) whatever arrives until the client hangs up.
-serve_starttls_then_stall! = |listener|
-	Task.spawn!(|| {
+serve_starttls_then_stall! = |listener| {
+	_ = Task.spawn!(|| {
 		plain = listener.accept!()?
 		_ = plain.read!(64)?
 		plain.write_str!("GO\n")?
@@ -858,7 +893,9 @@ serve_starttls_then_stall! = |listener|
 			}
 		}
 		Ok({})
-	})
+	})?
+	Ok({})
+}
 
 # Without the timeout reaching the handshake, this waited forever.
 tls_starttls_stall! = || {
@@ -881,12 +918,12 @@ tls_starttls_stall! = || {
 # handshake stops it (otherwise it would take about 13 minutes).
 tls_trickle! = || {
 	(listener, address) = listen_anywhere!()?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		# Handshake record, TLS 1.2 version field, length 16384.
 		stream.write!([22, 3, 3, 64, 0])?
 		for _ in U64.until(0, 16384) {
-			Time.sleep!(Time.millis(50))
+			Time.sleep!(Time.millis(50))?
 			match stream.write!([0]) {
 				Ok({}) => {}
 				Err(_) => break
@@ -906,7 +943,7 @@ tls_trickle! = || {
 # the handshake used its own deadline in between.
 tls_starttls_keeps_timeout! = || {
 	(listener, address) = listen_anywhere!()?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		plain = listener.accept!()?
 		_ = plain.read!(64)?
 		plain.write_str!("GO\n")?
@@ -935,7 +972,7 @@ tls_impatient_server! = || {
 	listener = Tls.listen!("127.0.0.1:0", test_server_cert.with_handshake_timeout(Millis(300)))?
 	address = listener.local_addr!()?
 	(report, outcome) = Channel.new!(1)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		accepted = Time.now!()
 		result = stream.read!(64)
@@ -956,10 +993,10 @@ expect_server_timed_out = |(result, took)|
 tls_server_slowloris! = || {
 	(address, outcome) = tls_impatient_server!()?
 	attacker = Tcp.connect!(address)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		attacker.write!([22, 3, 3, 64, 0])?
 		for _ in U64.until(0, 16384) {
-			Time.sleep!(Time.millis(50))
+			Time.sleep!(Time.millis(50))?
 			match attacker.write!([0]) {
 				Ok({}) => {}
 				Err(_) => break
@@ -984,7 +1021,7 @@ tls_server_silent! = || {
 tls_server_deadline_only_handshake! = || {
 	(address, outcome) = tls_impatient_server!()?
 	client = Tls.connect_with!(address, trusting_test_ca)?
-	Time.sleep!(Time.millis(700))
+	Time.sleep!(Time.millis(700))?
 	client.write_str!("late but fine")?
 	match outcome.receive_timeout!(Time.seconds(5))? {
 		(Ok(bytes), _) => expect_eq(Str.from_utf8_lossy(bytes), "late but fine")
@@ -996,7 +1033,7 @@ tls_server_deadline_only_handshake! = || {
 tls_server_starttls_stall! = || {
 	(listener, address) = listen_anywhere!()?
 	(report, outcome) = Channel.new!(1)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		plain = listener.accept!()?
 		_ = plain.read!(64)?
 		plain.write_str!("GO\n")?
@@ -1021,7 +1058,7 @@ limited_reader! = |writes| {
 	serve_once!(listener, |stream| {
 		for chunk in writes {
 			stream.write_str!(chunk)?
-			Time.sleep!(Time.millis(50))
+			Time.sleep!(Time.millis(50))?
 		}
 		Ok({})
 	})?
@@ -1109,7 +1146,7 @@ framing_limit_small_frames! = || {
 ## and how long it took, measured from accept.
 report_from_server! = |accept!, serve!| {
 	(report, outcome) = Channel.new!(1)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		stream = accept!()?
 		accepted = Time.now!()
 		result = serve!(stream)
@@ -1187,17 +1224,18 @@ write_timeout! = || {
 ## Send `prefix`, then one byte every 50 ms until the connection breaks.
 trickle! = |address, prefix, byte| {
 	client = Tcp.connect!(address)?
-	Task.spawn!(|| {
+	_ = Task.spawn!(|| {
 		client.write!(prefix)?
 		for _ in U64.until(0, 1000) {
-			Time.sleep!(Time.millis(50))
+			Time.sleep!(Time.millis(50))?
 			match client.write!([byte]) {
 				Ok({}) => {}
 				Err(_) => break
 			}
 		}
 		Ok({})
-	})
+	})?
+	Ok({})
 }
 
 # Every read gets a byte in time, so the idle timeout never fires; only the
@@ -1293,7 +1331,7 @@ messages_from_server! = |messages| {
 	serve_once!(listener, |stream| {
 		for message in messages {
 			stream.write_str!(message)?
-			Time.sleep!(Time.millis(30))
+			Time.sleep!(Time.millis(30))?
 		}
 		Ok({})
 	})?
@@ -1339,4 +1377,604 @@ read_into_literal! = || {
 	literal = [1, 2, 3, 4, 5, 6, 7, 8]
 	got = stream.read_into!(literal, 64)?
 	expect_eq((got, literal), ([120, 121], [1, 2, 3, 4, 5, 6, 7, 8]))
+}
+
+# --- Select ---
+
+select_channel_wins! = || {
+	(texts_tx, texts) = Channel.new!(1)?
+	(numbers_tx, numbers) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		Time.sleep!(Time.millis(20))?
+		numbers_tx.send!(42.U64)
+	})?
+	got = Select.new({})
+		.on_receive(texts, |result| Text(result))
+		.on_receive(numbers, |result| Number(result))
+		.wait!()?
+	# Keep the text sender alive until now, so that channel isn't closed.
+	texts_tx.close!()
+	expect_eq(got, Number(Ok(42)))
+}
+
+select_timeout! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		Time.sleep!(Time.seconds(2))?
+		stream.write_str!("too late")
+	})?
+	client = Tcp.connect!(address)?
+	start = Time.now!()
+	got = Select.new({})
+		.on_read(client, 100, |result| Read(result))
+		.on_timeout(Time.millis(100), || Idle)
+		.wait!()?
+	took = start.elapsed!().to_millis()
+	expect_eq(got, Idle)?
+	if took >= 90 and took < 1000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+select_read_closed! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.close!()
+		Ok({})
+	})?
+	client = Tcp.connect!(address)?
+	got = Select.new({})
+		.on_read(client, 100, |result| Read(result))
+		.on_timeout(Time.seconds(5), || Idle)
+		.wait!()?
+	expect_eq(got, Read(Ok([])))
+}
+
+select_loser_keeps_value! = || {
+	(a_tx, a) = Channel.new!(1)?
+	(b_tx, b) = Channel.new!(1)?
+	a_tx.send!("a")?
+	b_tx.send!("b")?
+	got = Select.new({})
+		.on_receive(a, |result| result)
+		.on_receive(b, |result| result)
+		.wait!()?
+	# Whichever lost still has its value.
+	other = if got == Ok("a") b.try_receive!() else a.try_receive!()
+	match (got, other) {
+		(Ok("a"), Ok("b")) | (Ok("b"), Ok("a")) => Ok({})
+		_ => Err(Unexpected(Str.inspect((got, other))))
+	}
+}
+
+select_fairness! = || {
+	(a_tx, a) = Channel.new!(200)?
+	(b_tx, b) = Channel.new!(200)?
+	for n in U64.until(0, 200) {
+		a_tx.send!(n)?
+		b_tx.send!(n)?
+	}
+	var $a_wins = 0.U64
+	for _ in U64.until(0, 100) {
+		got = Select.new({})
+			.on_receive(a, |_| A)
+			.on_receive(b, |_| B)
+			.wait!()?
+		if got == A {
+			$a_wins = $a_wins + 1
+		}
+	}
+	if $a_wins >= 10 and $a_wins <= 90 Ok({}) else Err(Unexpected("a won ${$a_wins.to_str()} of 100"))
+}
+
+select_accept_and_send! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		Time.sleep!(Time.millis(20))?
+		_ = Tcp.connect!(address)?
+		Ok({})
+	})?
+	accepted = Select.new({})
+		.on_accept(listener, |result| Accepted(result))
+		.on_timeout(Time.seconds(5), || Idle)
+		.wait!()?
+	match accepted {
+		Accepted(Ok(_)) => {}
+		other => return Err(Unexpected(Str.inspect(other)))
+	}
+	# A full channel: the send arm wins once the receiver makes room.
+	(tx, rx) = Channel.new!(1)?
+	tx.send!("first")?
+	_ = Task.spawn!(|| {
+		Time.sleep!(Time.millis(20))?
+		_ = rx.receive!()?
+		_ = rx.receive!()?
+		Ok({})
+	})?
+	sent = Select.new({})
+		.on_send(tx, "second", |result| Sent(result))
+		.on_timeout(Time.seconds(5), || Idle)
+		.wait!()?
+	expect_eq(sent, Sent(Ok({})))
+}
+
+# One TLS record carries 8 bytes; reading 4 at a time leaves 4 decrypted in
+# the stream, with nothing more on the socket. The second select must still
+# see them as ready.
+select_tls_buffered! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.write_str!("12345678")?
+		Time.sleep!(Time.seconds(2))?
+		Ok({})
+	})?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	read_4! = || Select.new({})
+		.on_read(client, 4, |result| Read(result))
+		.on_timeout(Time.seconds(1), || Idle)
+		.wait!()
+	first = read_4!()?
+	second = read_4!()?
+	expect_eq((first, second), (Read(Ok(Str.to_utf8("1234"))), Read(Ok(Str.to_utf8("5678")))))
+}
+
+select_cancelled! = || {
+	(tx, rx) = Channel.new!(1)?
+	handle = Task.spawn!(|| {
+		result = Select.new({})
+			.on_receive(rx, |r| r)
+			.wait!()
+		match result {
+			Err(Cancelled) => Ok("cancelled")
+			other => Ok(Str.inspect(other))
+		}
+	})?
+	Time.sleep!(Time.millis(20))?
+	handle.cancel!()
+	result = handle.join!()
+	# Kept open until now, so the select was waiting, not seeing it closed.
+	tx.close!()
+	expect_eq(result, Ok("cancelled"))
+}
+
+# --- Task handles, cancellation, scopes ---
+
+task_join! = || {
+	handle = Task.spawn!(|| {
+		Time.sleep!(Time.millis(10))?
+		Ok(42.U64)
+	})?
+	first = handle.join!()?
+	second = handle.join!()?
+	expect_eq((first, second), (42, 42))
+}
+
+## `Err(Boom(message))`, unless `message` is empty: an error the compiler
+## can't see coming.
+fail_unless_empty = |message|
+	if Str.is_empty(message) Ok({}) else Err(Boom(message))
+
+task_join_error! = || {
+	handle = Task.spawn!(|| fail_unless_empty("nope"))?
+	expect_eq(handle.join!(), Err(Boom("nope")))
+}
+
+task_cancel_read! = || {
+	(listener, address) = listen_anywhere!()?
+	(report_tx, report) = Channel.new!(1)?
+	# The server reports what its end sees after the client's reader is
+	# cancelled: end of stream, since the cancelled task's socket closes.
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		bytes = stream.read!(100)?
+		report_tx.send!(List.len(bytes))
+	})?
+	reader = Task.spawn!(|| {
+		client = Tcp.connect!(address)?
+		_ = client.read!(100)?
+		Ok({})
+	})?
+	Time.sleep!(Time.millis(50))?
+	reader.cancel!()
+	match reader.join!() {
+		Err(TcpErr(Cancelled)) => {}
+		other => return Err(Unexpected(Str.inspect(other)))
+	}
+	expect_eq(report.receive_timeout!(Time.seconds(5)), Ok(0))
+}
+
+task_cancel_sleep_receive! = || {
+	sleeper = Task.spawn!(|| {
+		Time.sleep!(Time.seconds(30))?
+		Ok({})
+	})?
+	(tx, rx) = Channel.new!(1)?
+	receiver = Task.spawn!(|| {
+		value = rx.receive!()?
+		Ok(value)
+	})?
+	Time.sleep!(Time.millis(20))?
+	start = Time.now!()
+	sleeper.cancel!()
+	receiver.cancel!()
+	_ = sleeper.join!()
+	received = receiver.join!()
+	took = start.elapsed!().to_millis()
+	tx.close!()
+	expect_eq(received, Err(Cancelled))?
+	if took < 1000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+task_cancel_finished! = || {
+	handle = Task.spawn!(|| Ok("done"))?
+	_ = handle.join!()
+	handle.cancel!()
+	handle.cancel!()
+	expect_eq(handle.join!(), Ok("done"))
+}
+
+scope_waits! = || {
+	(tx, rx) = Channel.new!(10)?
+	Task.scope!(|scope| {
+		for n in U64.until(0, 3) {
+			_ = scope.spawn!(|| {
+				Time.sleep!(Time.millis(30))?
+				tx.send!(n)
+			})?
+		}
+		Ok({})
+	})?
+	# Every task finished before scope! returned.
+	var $count = 0.U64
+	while True {
+		match rx.try_receive!() {
+			Ok(_) => {
+				$count = $count + 1
+			}
+			Err(_) => break
+		}
+	}
+	expect_eq($count, 3)
+}
+
+scope_cancels_on_error! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		Time.sleep!(Time.seconds(30))?
+		stream.close!()
+		Ok({})
+	})?
+	start = Time.now!()
+	result = Task.scope!(|scope| {
+		# Blocked reading a connection that never sends.
+		_ = scope.spawn!(|| {
+			client = Tcp.connect!(address)?
+			_ = client.read!(100)?
+			Ok({})
+		})?
+		failing = scope.spawn!(|| {
+			Time.sleep!(Time.millis(20))?
+			fail_unless_empty("nope")
+		})?
+		failing.join!()
+	})
+	took = start.elapsed!().to_millis()
+	expect_eq(result, Err(Boom("nope")))?
+	if took < 2000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+scope_nested! = || {
+	total = Task.scope!(|outer| {
+		a = outer.spawn!(|| {
+			Task.scope!(|inner| {
+				x = inner.spawn!(|| Ok(1.U64))?
+				y = inner.spawn!(|| Ok(2.U64))?
+				Ok(x.join!()? + y.join!()?)
+			})
+		})?
+		b = outer.spawn!(|| Ok(10.U64))?
+		Ok(a.join!()? + b.join!()?)
+	})?
+	expect_eq(total, 13)
+}
+
+task_is_cancelled! = || {
+	handle = Task.spawn!(|| {
+		var $spins = 0.U64
+		while !Task.is_cancelled!({}) {
+			$spins = $spins + 1
+			Task.yield!({})
+		}
+		Ok($spins)
+	})?
+	Time.sleep!(Time.millis(20))?
+	handle.cancel!()
+	match handle.join!() {
+		Ok(spins) if spins > 0 => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# The first line arrives in two pieces, with the second line right behind
+# it; the second select finds that one already buffered.
+select_lines! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.set_nodelay!(True)?
+		stream.write_str!("hel")?
+		Time.sleep!(Time.millis(30))?
+		stream.write_str!("lo\nworld\n")?
+		Time.sleep!(Time.seconds(2))?
+		Ok({})
+	})?
+	reader = Framing.reader(Tcp.connect!(address)?)
+	next_line! = |r| Select.new({})
+		.on_line(r, |result| Line(result))
+		.on_timeout(Time.seconds(1), || Idle)
+		.wait!()
+	(first, r1) =
+		match next_line!(reader)? {
+			Line(Ok((line, next))) => (line, next)
+			other => return Err(Unexpected(Str.inspect(other)))
+		}
+	second =
+		match next_line!(r1)? {
+			Line(Ok((line, _))) => line
+			other => return Err(Unexpected(Str.inspect(other)))
+		}
+	expect_eq((first, second), ("hello", "world"))
+}
+
+select_frames! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		Framing.write_frame!(stream, [1, 2, 3])
+	})?
+	reader = Framing.reader(Tcp.connect!(address)?)
+	got = Select.new({})
+		.on_frame(reader, |result| Frame(result))
+		.on_timeout(Time.seconds(2), || Idle)
+		.wait!()?
+	match got {
+		Frame(Ok((bytes, _))) => expect_eq(bytes, [1, 2, 3])
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+task_cancel_sleep_loop! = || {
+	handle = Task.spawn!(|| {
+		while True {
+			Time.sleep!(Time.millis(5))?
+		}
+		Ok({})
+	})?
+	Time.sleep!(Time.millis(30))?
+	start = Time.now!()
+	handle.cancel!()
+	result = handle.join!()
+	took = start.elapsed!().to_millis()
+	expect_eq(result, Err(Cancelled))?
+	if took < 1000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+# Two receivers wait; the first is cancelled and a value sent at once, before
+# the cancelled one has run to take itself off the waiting list. The value
+# must reach the other receiver.
+channel_cancelled_waiter! = || {
+	(tx, rx) = Channel.new!(1)?
+	(report_tx, report) = Channel.new!(2)?
+	first = Task.spawn!(|| {
+		value = rx.receive!()?
+		report_tx.send!(First(value))
+	})?
+	Time.sleep!(Time.millis(20))?
+	_ = Task.spawn!(|| {
+		value = rx.receive!()?
+		report_tx.send!(Second(value))
+	})?
+	Time.sleep!(Time.millis(20))?
+	first.cancel!()
+	tx.send!("hello")?
+	reported = report.receive_timeout!(Time.seconds(2))
+	# Still open until now: closing the channel would wake every receiver
+	# and hide a lost notification.
+	tx.close!()
+	expect_eq(reported, Ok(Second("hello")))
+}
+
+# A client that connects to a TLS listener but never starts the handshake:
+# the server's select must still see its timeout.
+select_tls_silent_peer! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	silent = Tcp.connect!(address)?
+	stream = listener.accept!()?
+	start = Time.now!()
+	got = Select.new({})
+		.on_read(stream, 100, |result| Read(result))
+		.on_timeout(Time.millis(100), || Idle)
+		.wait!()?
+	took = start.elapsed!().to_millis()
+	silent.close!()
+	expect_eq(got, Idle)?
+	if took < 1000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+select_tls_server_handshake! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		client = Tls.connect_with!(address, trusting_test_ca)?
+		client.write_str!("hi")?
+		Time.sleep!(Time.seconds(2))?
+		Ok({})
+	})?
+	stream = listener.accept!()?
+	got = Select.new({})
+		.on_read(stream, 100, |result| Read(result))
+		.on_timeout(Time.seconds(3), || Idle)
+		.wait!()?
+	expect_eq(got, Read(Ok(Str.to_utf8("hi"))))
+}
+
+# A client that never starts the handshake, and a Select with no timeout of
+# its own: the listener's handshake deadline still ends the wait.
+select_tls_handshake_deadline! = || {
+	listener = Tls.listen!("127.0.0.1:0", test_server_cert.with_handshake_timeout(Millis(200)))?
+	address = listener.local_addr!()?
+	silent = Tcp.connect!(address)?
+	stream = listener.accept!()?
+	start = Time.now!()
+	got = Select.new({})
+		.on_read(stream, 100, |result| Read(result))
+		.wait!()?
+	took = start.elapsed!().to_millis()
+	silent.close!()
+	match got {
+		Read(Err(TlsErr(TimedOut))) => {}
+		other => return Err(Unexpected(Str.inspect(other)))
+	}
+	if took >= 150 and took < 2000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+# A read timeout on the stream bounds a Select's wait for it, as it bounds a
+# blocking read.
+select_read_timeout! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		Time.sleep!(Time.seconds(2))?
+		stream.close!()
+		Ok({})
+	})?
+	client = Tcp.connect!(address)?
+	client.set_read_timeout!(Millis(100))?
+	start = Time.now!()
+	got = Select.new({})
+		.on_read(client, 100, |result| Read(result))
+		.wait!()?
+	took = start.elapsed!().to_millis()
+	match got {
+		Read(Err(TcpErr(TimedOut))) => {}
+		other => return Err(Unexpected(Str.inspect(other)))
+	}
+	if took >= 90 and took < 1000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+# Two tasks select on the same silent stream, which has a 100 ms read
+# timeout, the second starting 50 ms after the first: each times out on its
+# own schedule.
+select_timeouts_per_select! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		Time.sleep!(Time.seconds(2))?
+		stream.close!()
+		Ok({})
+	})?
+	client = Tcp.connect!(address)?
+	client.set_read_timeout!(Millis(100))?
+	wait_for_timeout! = || {
+		start = Time.now!()
+		got = Select.new({})
+			.on_read(client, 100, |result| result)
+			.wait!()?
+		took = start.elapsed!().to_millis()
+		match got {
+			Err(TcpErr(TimedOut)) => Ok(took)
+			other => Err(Unexpected(Str.inspect(other)))
+		}
+	}
+	first = Task.spawn!(wait_for_timeout!)?
+	Time.sleep!(Time.millis(50))?
+	second = Task.spawn!(wait_for_timeout!)?
+	first_took = first.join!()?
+	second_took = second.join!()?
+	if first_took >= 90 and second_took >= 90 and first_took < 1000 and second_took < 1000 {
+		Ok({})
+	} else {
+		Err(Unexpected("took ${first_took.to_str()} and ${second_took.to_str()} ms"))
+	}
+}
+
+# One task reads 4 bytes with a blocking read (holding the TLS read lock
+# while it waits); the server sends 8 in one record. The select on the same
+# stream is woken when that reader lets go, and gets the other 4, though
+# nothing more arrives on the socket.
+select_tls_after_other_reader! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	(go_tx, go) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		# The server's handshake runs on its first write: do it now, so the
+		# client's connect can finish.
+		stream.write!([])?
+		_ = go.receive!()?
+		stream.write_str!("abcdefgh")?
+		Time.sleep!(Time.seconds(5))?
+		Ok({})
+	})?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	# The select waits first, then the reader: when the data arrives, the
+	# select runs first and finds the read lock held by the waiting reader,
+	# which then takes everything off the socket. Only the reader letting go
+	# of the lock can wake the select.
+	selecting = Task.spawn!(|| {
+		start = Time.now!()
+		got = Select.new({})
+			.on_read(client, 4, |result| Read(result))
+			.on_timeout(Time.seconds(3), || Idle)
+			.wait!()?
+		Ok((got, start.elapsed!().to_millis()))
+	})?
+	Time.sleep!(Time.millis(20))?
+	reader = Task.spawn!(|| client.read!(4))?
+	Time.sleep!(Time.millis(20))?
+	go_tx.send!({})?
+	first =
+		match reader.join!() {
+			Ok(bytes) => bytes
+			Err(err) => return Err(ReaderFailed(Str.inspect(err)))
+		}
+	(second, took) =
+		match selecting.join!() {
+			Ok(pair) => pair
+			Err(err) => return Err(SelectFailed(Str.inspect(err)))
+		}
+	# Either may get the first 4 bytes; between them they get all 8, promptly.
+	match (first, second) {
+		(a, Read(Ok(b))) if List.concat(a, b) == Str.to_utf8("abcdefgh") or List.concat(b, a) == Str.to_utf8("abcdefgh") => {}
+		other => return Err(Unexpected(Str.inspect(other)))
+	}
+	if took < 1000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+# One task's read is stuck in the server's TLS handshake (its client never
+# sends a ClientHello); a select on the same stream must neither block the
+# thread the handshake runs on nor wait past its own timeout. With one worker
+# (see scripts/run_net_tests.sh), blocking would stop the handshake for good.
+select_during_handshake! = || {
+	listener = Tls.listen!("127.0.0.1:0", test_server_cert.with_handshake_timeout(Millis(1000)))?
+	address = listener.local_addr!()?
+	silent = Tcp.connect!(address)?
+	stream = listener.accept!()?
+	reader = Task.spawn!(|| stream.read!(10))?
+	Time.sleep!(Time.millis(50))?
+	start = Time.now!()
+	got = Select.new({})
+		.on_read(stream, 10, |result| Read(result))
+		.on_timeout(Time.millis(200), || Idle)
+		.wait!()?
+	took = start.elapsed!().to_millis()
+	# The stuck handshake still ends, at its deadline.
+	handshake = reader.join!()
+	silent.close!()
+	expect_eq(got, Idle)?
+	match handshake {
+		Err(TlsErr(TimedOut)) => {}
+		other => return Err(Unexpected(Str.inspect(other)))
+	}
+	if took < 1000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
 }

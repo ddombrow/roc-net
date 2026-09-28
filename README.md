@@ -152,7 +152,27 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   `Duration`s (`Time.millis(500)`, `.to_micros()`, ...)
 - `Dns.resolve!`, `Dns.resolve_timeout!`: a host name's IP addresses, from the
   OS resolver. Connect timeouts include the name lookup.
-- `Task.spawn!`: run a closure concurrently, as a lightweight task
+- `Task.spawn!`: run a closure concurrently, as a lightweight task. Returns a
+  `Handle`: `join!` waits for the task's result, `cancel!` stops it.
+  Cancelling is cooperative: the task's waits end with a `Cancelled` error,
+  which `?` passes up, so it unwinds and its sockets close.
+  - `Task.scope!(|scope| ...)`: tasks started with `scope.spawn!` can't
+    outlive the scope. It waits for them when the body succeeds and cancels
+    them first when it fails.
+  - `Task.yield!`, `Task.is_cancelled!`: for long computations, which
+    otherwise hold their thread
+- `Select`: wait for whichever happens first, with an arm for each thing and
+  a callback turning it into your own value:
+  ```roc
+  next = Select.new({})
+      .on_line(reader, |result| FromPeer(result))
+      .on_receive(outbox, |result| ToSend(result))
+      .on_timeout(Time.seconds(30), || Idle)
+      .wait!()?
+  ```
+  Arms: `on_read`, `on_accept`, `on_line`, `on_frame` (Framing readers),
+  `on_receive`, `on_send`, `on_timeout`. Only the winning arm consumes
+  anything, and ready arms take turns.
 - `Channel.new!(capacity)`: a bounded queue between tasks, returning
   `(sender, receiver)`: `send!`, `try_send!`, `close!`; `receive!`,
   `try_receive!`, `receive_timeout!`. Closes when an end is released.
@@ -198,6 +218,7 @@ just run udp_client 127.0.0.1:8081 "hello"
 just run line_server 127.0.0.1:8082                   # then: nc 127.0.0.1 8082, type "ADD 2 40"
 
 just run chat_server 127.0.0.1:8083                   # then nc 127.0.0.1 8083 from a few terminals
+just run first_to_answer example.com:443 example.org:443   # connect to all at once; first wins, rest cancelled
 just run https_get https://example.com/               # a tiny curl over TLS
 just run dns_client gmail.com MX                      # a small dig: any record type, any server
 just run tcp_ping example.com 443 -c 4                # ping, timing TCP handshakes instead of ICMP

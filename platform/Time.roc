@@ -6,7 +6,7 @@ import Host
 ## start = Time.now!()
 ## do_work!()
 ## Stdout.line!("took ${start.elapsed!().to_millis().to_str()} ms")?
-## Time.sleep!(Time.millis(500))
+## Time.sleep!(Time.millis(500))?
 ## ```
 Time := [].{
 
@@ -68,7 +68,8 @@ Time := [].{
 	now! : () => Instant
 	now! = || Instant.(Host.time_now_ns!({}))
 
-	## Pause the calling task for `duration`. Other tasks keep running.
-	sleep! : Duration => {}
-	sleep! = |Duration.(n)| Host.time_sleep_ns!(n)
+	## Pause the calling task for `duration`. Other tasks keep running. Fails
+	## with `Cancelled` if the task is cancelled meanwhile (see `Task`).
+	sleep! : Duration => Try({}, [Cancelled])
+	sleep! = |Duration.(n)| if Host.time_sleep_ns!(n) Ok({}) else Err(Cancelled)
 }

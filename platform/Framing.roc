@@ -184,6 +184,21 @@ Framing := [].{
 		## next; see `fold_lines!`.
 		fold_frames! = |reader, state, step!| fold!(reader, state, |r| r.read_frame!(), step!)
 
+		## For `Select.on_line`: `read_line!`, if a line is available now or
+		## starts arriving, else `NotReady` (consuming nothing). A line that's
+		## arriving in pieces is read to its end, waiting under the reader's
+		## message timeout.
+		try_read_line! = |reader| try_read_with!(reader, |buffered| List.contains(buffered, 10), |r| r.read_line!())
+
+		## For `Select.on_frame`: `read_frame!`, like `try_read_line!`.
+		try_read_frame! = |reader| try_read_with!(reader, frame_complete, |r| r.read_frame!())
+
+		## The underlying stream's host socket, for `Select` to wait on.
+		socket = |Reader.(r)| r.stream.socket()
+
+		## What the underlying stream reports when its read timeout passes.
+		timeout_error = |Reader.(r)| r.stream.timeout_error()
+
 		## Limit how long each line, record, or frame may take to arrive; past
 		## it, the read fails with `MessageTimedOut`. The default is 60
 		## seconds. `NoTimeout` removes the limit.
@@ -279,6 +294,30 @@ Framing := [].{
 	## reads its fixed-size header here. It works on a `Reader`'s inner
 	## record, which only this module can get at, so it gives callers no way
 	## around a reader's limit.
+	## `read!` on the reader if a whole message is buffered (`complete`), or
+	## if data arrives on the stream now (the message then is read to its end);
+	## `NotReady` otherwise, with nothing consumed.
+	try_read_with! = |Reader.(r), complete, read!| {
+		if complete(r.buffered) {
+			Ready(read!(Reader.(r)))
+		} else {
+			{ stream, buffered, max_len, message_timeout_ns } = r
+			match stream.try_read!(4096) {
+				Ok(NotReady) => NotReady
+				# Empty data is the end of the stream, which `read!` reports.
+				Ok(Data(bytes)) => Ready(read!(Reader.({ stream, buffered: List.concat(buffered, bytes), max_len, message_timeout_ns })))
+				Err(err) => Ready(Err(err))
+			}
+		}
+	}
+
+	## A whole frame is buffered: its 4-byte length and that many bytes.
+	frame_complete = |buffered|
+		match Bytes.u32_be_at(buffered, 0) {
+			Ok(len) => List.len(buffered) >= 4 + len.to_u64()
+			Err(_) => False
+		}
+
 	take_exactly! = |r, count, started, message_start| {
 		{ stream, buffered, max_len, message_timeout_ns } = r
 		var $buffered = buffered

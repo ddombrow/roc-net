@@ -27,13 +27,15 @@ Channel := [].{
 	## The sending end of a channel carrying values of type `a`.
 	Sender(a) :: Host.ChannelEnd.{
 
-		## Queue `value`, waiting while the channel is full.
-		send! : Sender(a), a => Try({}, [ChannelClosed])
+		## Queue `value`, waiting while the channel is full. Fails with
+		## `Cancelled` if the task is cancelled while waiting.
+		send! : Sender(a), a => Try({}, [ChannelClosed, Cancelled])
 		send! = |Sender.(end), value|
 			match Host.channel_send!(end, Box.box(|| value), True) {
 				Sent => Ok({})
 				# send! waits for room, so Full doesn't happen.
 				Full | Closed => Err(ChannelClosed)
+				Cancelled => Err(Cancelled)
 			}
 
 		## Queue `value` if there's room right now; otherwise fail with
@@ -44,6 +46,8 @@ Channel := [].{
 				Sent => Ok({})
 				Full => Err(ChannelFull)
 				Closed => Err(ChannelClosed)
+				# try_send! never waits, so it can't be cancelled.
+				Cancelled => Err(ChannelFull)
 			}
 
 		## Stop sending: receivers get the values already queued, then
@@ -51,27 +55,34 @@ Channel := [].{
 		## sender has the same effect.
 		close! : Sender(a) => {}
 		close! = |Sender.(end)| Host.channel_close!(end)
+
+		## The host channel end, for `Select` to wait on.
+		channel_end : Sender(a) -> Host.ChannelEnd
+		channel_end = |Sender.(end)| end
 	}
 
 	## The receiving end of a channel carrying values of type `a`.
 	Receiver(a) :: Host.ChannelEnd.{
 
 		## Take the next value, waiting as long as it takes. Fails with
-		## `ChannelClosed` once the channel is closed and empty.
-		receive! : Receiver(a) => Try(a, [ChannelClosed])
+		## `ChannelClosed` once the channel is closed and empty, or
+		## `Cancelled` if the task is cancelled while waiting.
+		receive! : Receiver(a) => Try(a, [ChannelClosed, Cancelled])
 		receive! = |Receiver.(end)|
 			match Host.channel_receive!(end, U64.highest) {
 				Ok(boxed) => Ok(unwrap(boxed))
+				Err(Cancelled) => Err(Cancelled)
 				Err(_) => Err(ChannelClosed)
 			}
 
 		## Take the next value, waiting at most `timeout`.
-		receive_timeout! : Receiver(a), Time.Duration => Try(a, [ChannelClosed, TimedOut])
+		receive_timeout! : Receiver(a), Time.Duration => Try(a, [ChannelClosed, TimedOut, Cancelled])
 		receive_timeout! = |Receiver.(end), timeout|
 			match Host.channel_receive!(end, timeout.to_nanos()) {
 				Ok(boxed) => Ok(unwrap(boxed))
 				Err(Closed) => Err(ChannelClosed)
 				Err(TimedOut) => Err(TimedOut)
+				Err(Cancelled) => Err(Cancelled)
 			}
 
 		## Take the next value if one is queued right now, without waiting.
@@ -80,8 +91,13 @@ Channel := [].{
 			match Host.channel_receive!(end, 0) {
 				Ok(boxed) => Ok(unwrap(boxed))
 				Err(Closed) => Err(ChannelClosed)
-				Err(TimedOut) => Err(ChannelEmpty)
+				# A zero timeout never waits, so it can't be cancelled either.
+				Err(TimedOut) | Err(Cancelled) => Err(ChannelEmpty)
 			}
+
+		## The host channel end, for `Select` to wait on.
+		channel_end : Receiver(a) -> Host.ChannelEnd
+		channel_end = |Receiver.(end)| end
 	}
 
 	## A new channel that holds up to `capacity` values (at least 1). Fails if
