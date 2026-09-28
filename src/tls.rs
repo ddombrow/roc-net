@@ -9,9 +9,15 @@
 //! - `write_lock` serializes senders, so TLS records reach the socket in the
 //!   order rustls produced them. The socket write happens with only this held.
 //! - Locks are always taken in the order read_lock, write_lock, inner, so
-//!   they can't deadlock each other. The handshake takes all three, so it's
-//!   the one place `inner` is held across waits: nobody else can reach it
-//!   then without first waiting for one of the others.
+//!   they can't deadlock each other.
+//! - The handshake has its own lock, `handshake_lock`, and holds `inner`
+//!   across its waits. Until the handshake is done, every path that does
+//!   TLS I/O goes through `handshake()` (or, for `Select`, `handshake_now`,
+//!   which only tries the lock), so none can reach `inner` meanwhile. It
+//!   doesn't borrow the read and write locks: a task that waited for the
+//!   handshake would then have to queue behind a reader holding the read
+//!   lock across its wait for data, which deadlocked a proxy whose backend
+//!   sends first.
 //!
 //! `read_lock` and `write_lock` are held across socket waits, so they're
 //! `sched::Lock`s, which suspend a task rather than block its worker.
@@ -47,6 +53,10 @@ pub struct TlsStream {
     inner: Mutex<Inner>,
     read_lock: Lock,
     write_lock: Lock,
+    /// Held by whichever task runs the handshake. Every path that does TLS
+    /// I/O calls `handshake()` first until it's done, so this alone keeps
+    /// them out of the way meanwhile.
+    handshake_lock: Lock,
     handshaken: AtomicBool,
     /// Treat a connection that ends without close_notify as a normal end of
     /// stream, like OpenSSL's SSL_OP_IGNORE_UNEXPECTED_EOF.
@@ -55,8 +65,9 @@ pub struct TlsStream {
     handshake_deadline: Option<Instant>,
     /// `Select`s waiting on this stream for progress that doesn't show on
     /// the socket: a lock being released (another reader may have left
-    /// plaintext, a writer may have made room to send a reply). Woken, all
-    /// of them, each time the read or write lock is released.
+    /// plaintext, a writer may have made room to send a reply, a handshake
+    /// may have finished). Woken, all of them, each time the read, write or
+    /// handshake lock is released.
     watchers: Mutex<Waiters>,
 }
 
@@ -128,6 +139,7 @@ impl TlsStream {
             inner: Mutex::new(Inner { conn, pending: Vec::new() }),
             read_lock: Lock::new(),
             write_lock: Lock::new(),
+            handshake_lock: Lock::new(),
             handshaken: AtomicBool::new(false),
             ignore_unexpected_eof: AtomicBool::new(false),
             handshake_deadline,
@@ -153,6 +165,14 @@ impl TlsStream {
 
     fn try_lock_write(&self) -> Option<Held<'_>> {
         self.write_lock.try_lock().map(|guard| self.held(guard))
+    }
+
+    fn lock_handshake(&self) -> Held<'_> {
+        self.held(self.handshake_lock.lock())
+    }
+
+    fn try_lock_handshake(&self) -> Option<Held<'_>> {
+        self.handshake_lock.try_lock().map(|guard| self.held(guard))
     }
 
     /// For a `Select` whose poll of this stream found nothing: register
@@ -222,8 +242,13 @@ impl TlsStream {
         if self.handshaken.load(Ordering::Acquire) {
             return Ok(());
         }
-        let _r = self.lock_read();
-        let _w = self.lock_write();
+        // Its own lock, not the read and write locks: once the handshake is
+        // done, a task that was waiting for it must not then queue behind a
+        // reader holding the read lock while it waits for data. (That
+        // deadlocked a proxy whose backend speaks first: the task writing the
+        // greeting waited forever behind the task reading the client, which
+        // was waiting for the greeting.)
+        let _h = self.lock_handshake();
         let mut inner = lock(&self.inner);
         if self.handshaken.load(Ordering::Acquire) {
             // Another task finished it while this one waited for the locks.
@@ -401,8 +426,7 @@ impl TlsStream {
     /// `Select` waiting on the stream bounds the wait itself with its own
     /// timeout.
     fn handshake_now(&self) -> io::Result<bool> {
-        let Some(_r) = self.try_lock_read() else { return Ok(false) };
-        let Some(_w) = self.try_lock_write() else { return Ok(false) };
+        let Some(_h) = self.try_lock_handshake() else { return Ok(false) };
         let mut inner = lock(&self.inner);
         if self.handshaken.load(Ordering::Acquire) {
             return Ok(true);

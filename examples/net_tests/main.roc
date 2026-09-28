@@ -117,6 +117,7 @@ main! = |_args| {
 		check!("select: two selects on one stream each get their own timeout", select_timeouts_per_select!),
 		check!("select: TLS data left by another reader wakes it", select_tls_after_other_reader!),
 		check!("select: watching a stream mid-handshake doesn't block the handshake", select_during_handshake!),
+		check!("tls: a server that speaks first, with a reader running the handshake", tls_server_speaks_first!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -1977,4 +1978,30 @@ select_during_handshake! = || {
 		other => return Err(Unexpected(Str.inspect(other)))
 	}
 	if took < 1000 Ok({}) else Err(Unexpected("took ${took.to_str()} ms"))
+}
+
+# A proxy in front of a server that speaks first (SMTP, SSH): on the new TLS
+# stream, one task reads the client, which starts (and runs) the handshake,
+# while another sends the greeting. The writer must not end up waiting
+# behind the reader, which after the handshake waits for the client, which
+# waits for the greeting.
+tls_server_speaks_first! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		reader = Task.spawn!(|| {
+			reply = stream.read!(100)?
+			report_tx.send!(Str.from_utf8_lossy(reply))
+		})?
+		Time.sleep!(Time.millis(20))?
+		stream.write_str!("220 hello\r\n")?
+		reader.join!()
+	})?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	client.set_read_timeout!(Millis(3000))?
+	greeting = client.read!(100)?
+	client.write_str!("QUIT\r\n")?
+	reply = report.receive_timeout!(Time.seconds(3))
+	expect_eq((Str.from_utf8_lossy(greeting), reply), ("220 hello\r\n", Ok("QUIT\r\n")))
 }
