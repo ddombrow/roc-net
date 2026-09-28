@@ -4,6 +4,19 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.2.1
+
+Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,
+x86-64) and static Linux (musl: arm64, x86-64).
+
+- **Fixed**: a server-side TLS stream could deadlock when one task read from
+  it while another wrote before the handshake had finished, such as a proxy
+  in front of a server that speaks first (SMTP, SSH). The writer ended up
+  waiting behind the reader, which was waiting for the client, which was
+  waiting for the greeting. The handshake now has its own lock, so once it's
+  done, a writer never queues behind a reader. Code that worked around it by
+  writing an empty message first (`stream.write!([])`) can drop that.
+
 ## 0.2.0
 
 Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,
