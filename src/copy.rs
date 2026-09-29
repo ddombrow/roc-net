@@ -152,7 +152,9 @@ fn stop_reading(socket: &Socket) {
 }
 
 /// Wait, without a buffer, until a read of `socket` may find something:
-/// data, the end of the stream, or an error. Under the read timeout.
+/// data, the end of the stream, or an error. Under the read timeout. It
+/// checks before waiting (see `Conn::wait_readable`): data that arrived
+/// before the copy began must not be missed.
 fn wait_readable(socket: &Socket) -> io::Result<()> {
     match socket {
         Socket::TcpStream(s) => s.wait_readable(),

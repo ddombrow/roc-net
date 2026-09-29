@@ -137,11 +137,24 @@ impl<T: AsRawFd> Conn<T> {
         }
     }
 
-    /// Wait until the socket is readable (data, the end of the stream, or
-    /// an error), under the read timeout. Readiness can be spurious: the read
-    /// that follows may still find nothing.
+    /// Wait until the socket has something to read (data or the end of the
+    /// stream), under the read timeout, without reading it; fails with the
+    /// socket's error, if it has one. Checks first and waits only if there's
+    /// nothing yet, like every operation here: readiness events are
+    /// edge-triggered, so data that arrived before a wait began (say, while
+    /// the socket was watched for a connect) brings no new event, and waiting
+    /// first would wait for more data that may never come.
     pub fn wait_readable(&self) -> io::Result<()> {
-        crate::sched::wait_io(self.io.as_raw_fd(), &self.reg, false, self.read_deadline())
+        self.retry(false, self.read_deadline(), |io| {
+            let mut byte = 0u8;
+            let flags = libc::MSG_PEEK;
+            let n = unsafe { libc::recv(io.as_raw_fd(), &mut byte as *mut u8 as *mut libc::c_void, 1, flags) };
+            if n < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        })
     }
 
     /// Wait until the socket is writable (say, a non-blocking connect has

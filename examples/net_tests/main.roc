@@ -141,6 +141,7 @@ main! = |_args| {
 		check!("copy_both!: a backend reset mid-response reaches a tcp client as a reset", copy_both_reset_tcp!),
 		check!("copy_both!: a write to a slow reader isn't idle", copy_both_slow_reader!),
 		check!("copy_both!: a timeout after a complete response doesn't reset the client", copy_both_timeout_after_complete_response!),
+		check!("copy_both!: data that arrived before it started is copied", copy_both_data_waiting!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
 		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
@@ -2731,5 +2732,41 @@ copy_both_unix! = || {
 				("got 17 bytes", (17, 12), "got 11 bytes", 11, 12),
 			)
 		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# The backend sends a greeting before `copy_both!` starts, then nothing
+# more, and the proxy sleeps first, so the event loop reports that data
+# while no one is waiting for it and drops the event. The copy must still
+# find it: readiness events are edge-triggered, and waiting before checking
+# would wait for more data that never comes. (In CI, on one worker thread,
+# the backend filled every buffer before the copy began, and the session
+# timed out with nothing copied.)
+copy_both_data_waiting! = || {
+	(backend, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = backend.accept!()?
+		stream.write_str!("hello from the backend")?
+		_ = read_to_end!(stream)
+		Ok({})
+	})?
+	(front, front_address) = listen_anywhere!()?
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		client = front.accept!()?
+		_ = client.set_read_timeout!(Millis(1000))
+		upstream = Tcp.connect!(backend_address)?
+		Time.sleep!(Time.millis(100))?
+		# Best effort: only read when the test fails.
+		_ = report_tx.send!(Stream.copy_both!(client, upstream))
+		Ok({})
+	})?
+	client = Tcp.connect!(front_address)?
+	client.set_read_timeout!(Millis(5000))?
+	greeting = client.read!(100)
+	client.close!()
+	match greeting {
+		Ok(bytes) => expect_eq(Str.from_utf8_lossy(bytes), "hello from the backend")
+		other => Err(Unexpected("${Str.inspect(other)}; proxy: ${Str.inspect(report.receive_timeout!(Time.seconds(5)))}"))
 	}
 }
