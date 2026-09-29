@@ -7,6 +7,7 @@ use std::io::{self, BufRead, Write};
 use std::mem::ManuallyDrop;
 
 mod channels;
+mod copy;
 mod limits;
 mod resource;
 mod roc_platform_abi;

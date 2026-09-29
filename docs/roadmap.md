@@ -3,8 +3,13 @@
 **Status (2026-09-27):** 0.2.0 is implemented (Select, task handles,
 cancellation, scopes, `Task.yield!`), except `Time.ticker`, which
 `on_timeout` with a remembered deadline covers for now (see
-`examples/chat_server`). See CHANGELOG.md. Next: 0.3.0, proxy features
-(SNI, host-side copy, "any stream" code); Crypto + Noise moves to 0.4.
+`examples/chat_server`). See CHANGELOG.md.
+
+**Status (2026-09-29):** 0.3.0 (proxy features) is implemented on the
+`v0.3-proxy` branch and ready to release: SNI with a certificate per name, ALPN,
+`Stream.copy_both!` (with `splice` on Linux between plain sockets),
+`Select.on_join` for acting on whichever task ends first, and the "any
+stream" docs and `tls_proxy` example. Crypto + Noise moves to 0.4.
 
 ## Context
 
@@ -179,9 +184,8 @@ From building a TLS-terminating reverse proxy on 0.2:
   take either `Tcp` or `Tls` streams (a `where` clause over the methods, if
   the compiler allows it), and an example keeping mixed listeners in one
   list (or a tag union with a small dispatcher).
-- Possibly: a scope helper that stops every task when the first one ends
-  (today: a channel, see `Task.scope!`'s docs), or a `Select` arm for a task
-  finishing.
+- A `Select` arm for a task finishing (`on_join`), which covers stopping
+  every task when the first one ends (see `Task.scope!`'s docs).
 
 ## 0.4.0: Crypto + Noise (moved from the first draft of this plan)
 

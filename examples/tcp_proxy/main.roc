@@ -5,6 +5,8 @@ import pf.Task
 import pf.Tcp
 
 # Demonstrates: a task per direction, kept together with `Task.scope!`
+# (`Stream.copy_both!` does the same in the platform, without each chunk
+# becoming a Roc list; see `tls_proxy`)
 #
 # Usage: tcp_proxy LISTEN_ADDRESS UPSTREAM_ADDRESS
 
@@ -40,16 +42,17 @@ main! = |args| {
 
 ## Copy bytes from `from` to `to`. When `from` ends, pass that on (`to` stops
 ## writing) and leave the other direction running: a client may send its
-## request, close its side, and still read the reply. On an error, close both,
-## which also ends the other direction's wait.
+## request, close its side, and still read the reply. On an error, abort
+## both, which also ends the other direction's wait: aborting (a reset), not
+## closing, so a peer never mistakes a cut-off stream for a complete one.
 pipe! : Tcp.Stream, Tcp.Stream => Try({}, _)
 pipe! = |from, to| {
 	result = copy!(from, to)
 	match result {
 		Ok({}) => to.shutdown!(Write)
 		Err(_) => {
-			from.close!()
-			to.close!()
+			from.abort!()
+			to.abort!()
 			result
 		}
 	}

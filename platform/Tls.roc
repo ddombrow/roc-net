@@ -76,6 +76,27 @@ Tls := [].{
 		handshake! : Stream => Try({}, [TlsErr(IOErr)])
 		handshake! = |Stream.(stream)| tls_err(Host.tls_handshake!(stream))
 
+		## On a server stream, the name the client asked for (SNI), such as
+		## `Name("api.example.com")`, for routing by host name. It's
+		## lower-cased and has no trailing dot, as when choosing a certificate
+		## (`with_cert_for`). `NoName` if the client sent none (clients
+		## connecting by IP address don't), and on a client stream. Completes
+		## the handshake first, like `handshake!`.
+		server_name! : Stream => Try([Name(Str), NoName], [TlsErr(IOErr)])
+		server_name! = |Stream.(stream)|
+			match Host.tls_server_name!(stream) {
+				Ok("") => Ok(NoName)
+				Ok(name) => Ok(Name(name))
+				Err(err) => Err(TlsErr(err))
+			}
+
+		## The application protocol agreed with ALPN (see
+		## `ServerConfig.with_alpn` and `ClientConfig.with_alpn`), such as
+		## `"h2"`, or `""` if none was. Completes the handshake first, like
+		## `handshake!`.
+		alpn_protocol! : Stream => Try(Str, [TlsErr(IOErr)])
+		alpn_protocol! = |Stream.(stream)| tls_err(Host.tls_alpn_protocol!(stream))
+
 		## Read up to `max` decrypted bytes. Returns an empty list once the
 		## peer has ended the session properly; fails with `UnexpectedEof` if
 		## the connection just dropped, since that could mean the data was cut
@@ -153,12 +174,24 @@ Tls := [].{
 		timeout_error : Stream -> [TlsErr(IOErr)]
 		timeout_error = |_| TlsErr(TimedOut)
 
-		## End the session and close the connection now.
+		## End the session and close the connection now. The peer sees a
+		## deliberate end (close_notify), which says it got everything sent;
+		## to give up partway through instead, use `abort!`.
 		close! : Stream => {}
 		close! = |Stream.(stream)| {
 			_ = Host.socket_shutdown!(stream, 2)
 			{}
 		}
+
+		## Give up on the connection partway through: end it with a reset, so
+		## the peer sees an error rather than a clean end of stream. No
+		## close_notify is sent, then or when the stream is released. Use it
+		## on error paths, where a clean end (`close!`) would pass off
+		## whatever the peer received as complete, such as a proxy whose
+		## backend failed mid-response. Later reads and writes fail, and tasks
+		## waiting on the stream wake.
+		abort! : Stream => {}
+		abort! = |Stream.(stream)| Host.socket_abort!(stream)
 
 		## Make reads fail with `TimedOut` if no data arrives in time.
 		set_read_timeout! : Stream, [NoTimeout, Millis(U64)] => Try({}, [TlsErr(IOErr)])
@@ -202,7 +235,7 @@ Tls := [].{
 	## config = Tls.client_config.with_ca_file("certs/dev-ca.pem")
 	## stream = Tls.connect_with!("127.0.0.1:8443", config.with_server_name("localhost"))?
 	## ```
-	ClientConfig :: { ca_file : Str, server_name : Str, timeout_ms : U64 }.{
+	ClientConfig :: { ca_file : Str, server_name : Str, alpn : List(Str), timeout_ms : U64 }.{
 
 		## Trust only the CA certificate(s) in this PEM file instead of
 		## Mozilla's roots: for servers with certificates from your own CA.
@@ -215,6 +248,13 @@ Tls := [].{
 		with_server_name : ClientConfig, Str -> ClientConfig
 		with_server_name = |ClientConfig.(config), name| ClientConfig.({ ..config, server_name: name })
 
+		## Offer these application protocols (ALPN), most preferred first,
+		## such as `["h2", "http/1.1"]`. After connecting, the stream's
+		## `alpn_protocol!` says which one the server picked ("" if it didn't
+		## take part).
+		with_alpn : ClientConfig, List(Str) -> ClientConfig
+		with_alpn = |ClientConfig.(config), protocols| ClientConfig.({ ..config, alpn: protocols })
+
 		## Give up with `TimedOut` if looking up the name, connecting, and the
 		## handshake together (or, for `wrap_client!`, the handshake) take
 		## longer than this; see `Tcp.connect_timeout!`. It bounds
@@ -224,10 +264,10 @@ Tls := [].{
 		with_timeout = |ClientConfig.(config), Millis(ms)| ClientConfig.({ ..config, timeout_ms: ms })
 	}
 
-	## Mozilla's root certificates, the address's host as the server name, and
-	## a 30-second timeout.
+	## Mozilla's root certificates, the address's host as the server name, no
+	## ALPN, and a 30-second timeout.
 	client_config : ClientConfig
-	client_config = ClientConfig.({ ca_file: "", server_name: "", timeout_ms: 30000 })
+	client_config = ClientConfig.({ ca_file: "", server_name: "", alpn: [], timeout_ms: 30000 })
 
 	## Connect to `address`, such as `"example.com:443"`, with `client_config`.
 	connect! : Str => Try(Stream, [TlsErr(IOErr)])
@@ -236,7 +276,7 @@ Tls := [].{
 	## Connect to `address` using `config`.
 	connect_with! : Str, ClientConfig => Try(Stream, [TlsErr(IOErr)])
 	connect_with! = |address, ClientConfig.(config)|
-		match Host.tls_connect!(address, config.server_name, config.ca_file, config.timeout_ms) {
+		match Host.tls_connect!(address, config.server_name, config.ca_file, config.alpn, config.timeout_ms) {
 			Ok(stream) => Ok(Stream.(stream))
 			Err(err) => Err(TlsErr(err))
 		}
@@ -248,7 +288,41 @@ Tls := [].{
 	## config = Tls.server_config({ cert_file: "server.pem", key_file: "server-key.pem" })
 	## listener = Tls.listen!("0.0.0.0:8443", config.with_handshake_timeout(Millis(3000)))?
 	## ```
-	ServerConfig :: { cert_file : Str, key_file : Str, handshake_timeout_ms : U64, idle_ms : U64, write_ms : U64 }.{
+	##
+	## To serve several host names from one listener, give each its own
+	## certificate with `with_cert_for`; the one from `server_config` is for
+	## every other name:
+	##
+	## ```roc
+	## config =
+	## 	Tls.server_config({ cert_file: "default.pem", key_file: "default-key.pem" })
+	## 		.with_cert_for("api.example.com", { cert_file: "api.pem", key_file: "api-key.pem" })
+	## 		.with_cert_for("*.example.com", { cert_file: "wild.pem", key_file: "wild-key.pem" })
+	## ```
+	ServerConfig :: { certs : List(Host.TlsCert), alpn : List(Str), handshake_timeout_ms : U64, idle_ms : U64, write_ms : U64 }.{
+
+		## Present this certificate chain and private key to clients that ask
+		## for `name` (SNI), such as `"api.example.com"`. A name starting with
+		## `*.` covers one more label: `"*.example.com"` covers
+		## `"api.example.com"`, but not `"example.com"` or
+		## `"a.b.example.com"`. An exact name wins over a wildcard, and a later
+		## certificate for the same name replaces an earlier one.
+		##
+		## Clients that ask for no name (such as ones connecting by IP address)
+		## or a name with no certificate here get the one from
+		## `server_config`. The stream's `server_name!` tells the server which
+		## name the client asked for.
+		with_cert_for : ServerConfig, Str, { cert_file : Str, key_file : Str } -> ServerConfig
+		with_cert_for = |ServerConfig.(config), name, files|
+			ServerConfig.({ ..config, certs: List.append(config.certs, { name, cert_file: files.cert_file, key_file: files.key_file }) })
+
+		## Accept these application protocols (ALPN), most preferred first,
+		## such as `["h2", "http/1.1"]`. A client that offers some protocols but
+		## none of these fails the handshake (as the ALPN standard requires); a
+		## client that offers none is served without one. The stream's
+		## `alpn_protocol!` says which one was agreed.
+		with_alpn : ServerConfig, List(Str) -> ServerConfig
+		with_alpn = |ServerConfig.(config), protocols| ServerConfig.({ ..config, alpn: protocols })
 
 		## After the handshake, how long a read waits for data before failing
 		## with `TimedOut`; see `Tcp.ListenConfig.with_idle_timeout`.
@@ -283,13 +357,15 @@ Tls := [].{
 	}
 
 	## A server presenting the certificate chain and private key in these PEM
-	## files. Clients get 10 seconds to complete the handshake, then 60-second
-	## idle and write timeouts, as with `Tcp.listen!`.
+	## files (to every client, unless `with_cert_for` adds others). Clients
+	## get 10 seconds to complete the handshake, then 60-second idle and write
+	## timeouts, as with `Tcp.listen!`. The files are read when listening
+	## starts (or at `wrap_server!`).
 	server_config : { cert_file : Str, key_file : Str } -> ServerConfig
 	server_config = |files|
 		ServerConfig.({
-			cert_file: files.cert_file,
-			key_file: files.key_file,
+			certs: [{ name: "", cert_file: files.cert_file, key_file: files.key_file }],
+			alpn: [],
 			handshake_timeout_ms: 10000,
 			idle_ms: 60000,
 			write_ms: 60000,
@@ -298,7 +374,7 @@ Tls := [].{
 	## Listen for TLS connections on `address`.
 	listen! : Str, ServerConfig => Try(Listener, [TlsErr(IOErr)])
 	listen! = |address, ServerConfig.(config)|
-		match Host.tls_listen!(address, config.cert_file, config.key_file, config.handshake_timeout_ms, config.idle_ms, config.write_ms) {
+		match Host.tls_listen!(address, config.certs, config.alpn, config.handshake_timeout_ms, config.idle_ms, config.write_ms) {
 			Ok(listener) => Ok(Listener.(listener))
 			Err(err) => Err(TlsErr(err))
 		}
@@ -312,7 +388,7 @@ Tls := [].{
 	## raw bytes in the middle of the TLS session would break it.
 	wrap_client! : Tcp.Stream, ClientConfig => Try(Stream, [TlsErr(IOErr)])
 	wrap_client! = |stream, ClientConfig.(config)|
-		match Host.tls_wrap_client!(Tcp.to_socket(stream), config.server_name, config.ca_file, config.timeout_ms) {
+		match Host.tls_wrap_client!(Tcp.to_socket(stream), config.server_name, config.ca_file, config.alpn, config.timeout_ms) {
 			Ok(tls) => Ok(Stream.(tls))
 			Err(err) => Err(TlsErr(err))
 		}
@@ -321,7 +397,7 @@ Tls := [].{
 	## The handshake timeout counts from this call.
 	wrap_server! : Tcp.Stream, ServerConfig => Try(Stream, [TlsErr(IOErr)])
 	wrap_server! = |stream, ServerConfig.(config)|
-		match Host.tls_wrap_server!(Tcp.to_socket(stream), config.cert_file, config.key_file, config.handshake_timeout_ms) {
+		match Host.tls_wrap_server!(Tcp.to_socket(stream), config.certs, config.alpn, config.handshake_timeout_ms) {
 			Ok(tls) => Ok(Stream.(tls))
 			Err(err) => Err(TlsErr(err))
 		}

@@ -25,13 +25,26 @@ Host := [].{
 	udp_bind! : Str => Try(Socket, IOErr)
 	## Look up the name, connect, and complete a TLS handshake, all within
 	## `timeout_ms` (0 means no limit). An empty `server_name` means the address's host; an empty
-	## `ca_file` means Mozilla's root certificates.
-	tls_connect! : Str, Str, Str, U64 => Try(Socket, IOErr)
-	## Listen for TLS connections using the certificate chain and private key
-	## in these PEM files. Each connection must finish its handshake within
+	## `ca_file` means Mozilla's root certificates. `alpn`: the protocols to
+	## offer, most preferred first (none: no ALPN).
+	tls_connect! : Str, Str, Str, List(Str), U64 => Try(Socket, IOErr)
+	## Listen for TLS connections. `certs`: certificate chains and private
+	## keys in PEM files, each for the server name `name` (`*.` wildcards
+	## allowed); the one with an empty name is for clients that ask for no
+	## name or an unknown one. `alpn`: the protocols accepted, most preferred
+	## first. Each connection must finish its handshake within
 	## `handshake_timeout_ms` of being accepted (0 means no limit), then has
 	## the given read (idle) and write timeouts.
-	tls_listen! : Str, Str, Str, U64, U64, U64 => Try(Socket, IOErr)
+	tls_listen! : Str, List(TlsCert), List(Str), U64, U64, U64 => Try(Socket, IOErr)
+	## A certificate for `tls_listen!` and `tls_wrap_server!`.
+	TlsCert : { name : Str, cert_file : Str, key_file : Str }
+	## The server name the client asked for (SNI), lower-cased and without a
+	## trailing dot, or "" if none (or on a client stream). Completes the
+	## handshake first.
+	tls_server_name! : Socket => Try(Str, IOErr)
+	## The protocol agreed with ALPN, or "" if none. Completes the handshake
+	## first.
+	tls_alpn_protocol! : Socket => Try(Str, IOErr)
 	## Complete a TLS stream's handshake now if it hasn't happened yet.
 	tls_handshake! : Socket => Try({}, IOErr)
 	## Let a TLS stream treat a connection closed without close_notify as a
@@ -39,10 +52,10 @@ Host := [].{
 	tls_ignore_unexpected_eof! : Socket, Bool => Try({}, IOErr)
 	## Upgrade a connected TCP stream to TLS as the client (STARTTLS), giving
 	## up if the handshake takes longer than `timeout_ms` (0 means no limit).
-	tls_wrap_client! : Socket, Str, Str, U64 => Try(Socket, IOErr)
+	tls_wrap_client! : Socket, Str, Str, List(Str), U64 => Try(Socket, IOErr)
 	## Upgrade a connected TCP stream to TLS as the server (STARTTLS); the
 	## handshake must finish within `handshake_timeout_ms` (0 means no limit).
-	tls_wrap_server! : Socket, Str, Str, U64 => Try(Socket, IOErr)
+	tls_wrap_server! : Socket, List(TlsCert), List(Str), U64 => Try(Socket, IOErr)
 
 	## Accept a connection on a TCP or Unix listener.
 	socket_accept! : Socket => Try(Socket, IOErr)
@@ -65,11 +78,19 @@ Host := [].{
 	socket_write! : Socket, List(U8) => Try({}, IOErr)
 	## Shut down reading (0), writing (1), or both (2) on a stream.
 	socket_shutdown! : Socket, U8 => Try({}, IOErr)
+	## End a stream so the peer sees an error, not a clean end: a TCP reset,
+	## and for TLS no close_notify.
+	socket_abort! : Socket => {}
 	## Set the read (0) or write (1) timeout in milliseconds; 0 means none.
 	socket_set_timeout! : Socket, U8, U64 => Try({}, IOErr)
 	socket_local_addr! : Socket => Try(Str, IOErr)
 	socket_peer_addr! : Socket => Try(Str, IOErr)
 	tcp_set_nodelay! : Socket, Bool => Try({}, IOErr)
+
+	## Copy between two streams in both directions at once until both have
+	## ended (see `Stream.copy_both!`), on this task and a helper task. The
+	## counts are what got through, even when the copy failed.
+	stream_copy_both! : Socket, Socket => { a_to_b : U64, b_to_a : U64, outcome : [Done, ReadA(IOErr), ReadB(IOErr), WriteA(IOErr), WriteB(IOErr), Cancelled, TaskLimitReached] }
 
 	## Set the default destination for `socket_write!` and filter what
 	## `socket_read!` receives to datagrams from that address.
@@ -107,7 +128,7 @@ Host := [].{
 	channel_close! : ChannelEnd => {}
 
 	## Something a task can wait on, for `Select`.
-	WaitSource : [Readable(Socket), Writable(Socket), Receivable(ChannelEnd), Sendable(ChannelEnd)]
+	WaitSource : [Readable(Socket), Writable(Socket), Receivable(ChannelEnd), Sendable(ChannelEnd), Joinable(TaskHandle)]
 
 	## Wait until any source may be ready, or `timeout_ns` passes (U64.highest:
 	## no limit). A wake-up can be spurious: callers poll their sources again.
@@ -139,6 +160,9 @@ Host := [].{
 
 	## Whether the running task has been cancelled.
 	task_is_cancelled! : {} => Bool
+
+	## Whether a task has finished, so `task_join!` would return at once.
+	task_is_finished! : TaskHandle => Bool
 
 	## Let other tasks on this thread run.
 	task_yield! : {} => {}

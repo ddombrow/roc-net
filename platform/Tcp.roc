@@ -123,12 +123,22 @@ Tcp := [].{
 
 		## Close the connection now instead of waiting for the stream to be
 		## dropped. Any task blocked reading this stream wakes up and sees the
-		## end of the stream, and later reads and writes fail.
+		## end of the stream, and later reads and writes fail. The peer sees a
+		## normal end of stream; to give up partway through, use `abort!`.
 		close! : Stream => {}
 		close! = |Stream.(stream)| {
 			_ = Host.socket_shutdown!(stream, 2)
 			{}
 		}
+
+		## Give up on the connection partway through: end it with a reset, so
+		## the peer sees an error rather than a clean end of stream. Use it
+		## on error paths, where a clean end (`close!`) would pass off
+		## whatever the peer received as complete, such as a proxy whose
+		## backend failed mid-response. Later reads and writes fail, and tasks
+		## waiting on the stream wake.
+		abort! : Stream => {}
+		abort! = |Stream.(stream)| Host.socket_abort!(stream)
 
 		## Make reads fail with `TimedOut` if no data arrives in time.
 		set_read_timeout! : Stream, [NoTimeout, Millis(U64)] => Try({}, [TcpErr(IOErr)])
