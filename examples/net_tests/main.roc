@@ -2272,11 +2272,14 @@ tls_alpn_client_offers_none! = || {
 
 ## Accept one client on `listener`, connect it to `backend_address`, and
 ## copy between them; the channel returned gets what `copy_both!` returned.
-proxy_once! = |listener, backend_address| {
+## The client's side has a 300 ms read (idle) timeout.
+proxy_once! = |listener, backend_address| proxy_once_with!(listener, backend_address, 300)
+
+proxy_once_with! = |listener, backend_address, idle_ms| {
 	(report_tx, report) = Channel.new!(1)?
 	_ = Task.spawn!(|| {
 		client = listener.accept!()?
-		_ = client.set_read_timeout!(Millis(300))
+		_ = client.set_read_timeout!(Millis(idle_ms))
 		backend = Tcp.connect!(backend_address)?
 		report_tx.send!(Stream.copy_both!(client, backend))
 	})?
@@ -2522,34 +2525,41 @@ copy_both_reset_tcp! = || {
 	}
 }
 
-# The client (whose read timeout at the proxy is 300 ms) sends nothing and
-# doesn't read for 700 ms while the backend has 16 MB for it: the proxy's
-# write to the client is stuck, which isn't idle, so the session survives.
+# Once data is flowing to the client, the client stops reading (and sends
+# nothing) for twice its 800 ms read timeout at the proxy, while the backend
+# has 16 MB for it: the proxy's write to the client is stuck, which isn't
+# idle, so the session survives. (It waits for data to flow first: before
+# any does, a silent session is idle, and a slow machine may take a while
+# to start.)
 copy_both_slow_reader! = || {
-	size = 16 * 1024 * 1024
+	chunk_size = 64 * 1024
+	chunks = 256
 	(backend, backend_address) = listen_anywhere!()?
 	_ = Task.spawn!(|| {
 		stream = backend.accept!()?
-		stream.write!(List.repeat(120, size))?
+		chunk = List.repeat(120, chunk_size)
+		for _ in U64.until(0, chunks) {
+			stream.write!(chunk)?
+		}
 		stream.shutdown!(Write)?
 		_ = read_to_end!(stream)
 		Ok({})
 	})?
 	(front, front_address) = listen_anywhere!()?
-	report = proxy_once!(front, backend_address)?
+	report = proxy_once_with!(front, backend_address, 800)?
 	client = Tcp.connect!(front_address)?
-	Time.sleep!(Time.millis(700))?
-	(ended, received) = read_until_end_or_error!(client)
+	client.set_read_timeout!(Millis(10000))?
+	first = client.read!(1)?
+	Time.sleep!(Time.millis(1600))?
+	(ended, rest) = read_until_end_or_error!(client)
 	client.shutdown!(Write)?
-	match (ended, report.receive_timeout!(Time.seconds(5))?) {
-		(Ok({}), Ok(copied)) => expect_eq((received, copied.b_to_a), (size, size))
+	size = chunk_size * chunks
+	match (ended, report.receive_timeout!(Time.seconds(10))?) {
+		(Ok({}), Ok(copied)) => expect_eq((List.len(first) + rest, copied.b_to_a), (size, size))
 		other => Err(Unexpected(Str.inspect(other)))
 	}
 }
 
-# Each server waits for the client to speak before aborting: a reset that
-# arrives before the client's connect has finished fails the connect itself
-# (as it should; Linux is quick enough to do that on loopback).
 abort_is_not_clean! = || {
 	(listener, address) = listen_anywhere!()?
 	_ = Task.spawn!(|| {
