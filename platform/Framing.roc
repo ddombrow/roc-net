@@ -1,4 +1,6 @@
 import Bytes
+import Host
+import IOErr
 import Time
 
 ## Split a byte stream into messages: lines, delimited records, fixed-size
@@ -192,6 +194,60 @@ Framing := [].{
 
 		## For `Select.on_frame`: `read_frame!`, like `try_read_line!`.
 		try_read_frame! = |reader| try_read_with!(reader, frame_complete, |r| r.read_frame!())
+
+		## Copy the next bytes of the stream to `to`: until it ends
+		## (`UntilEnd`) or exactly `n` of them (`Exactly(n)`), starting with
+		## the ones this reader has already buffered. Returns how many were
+		## copied and the reader to carry on with. Everything else is as for
+		## `Stream.copy_to!`.
+		##
+		## Use this, not `Stream.copy_to!` on the underlying stream, after
+		## reading from the stream with a reader: a read can bring in more
+		## than was asked for (the rest of a header, a body, even the start of
+		## the next message), and the stream alone no longer has those bytes.
+		## With `Exactly(n)`, nothing past the `n`th byte is copied: bytes
+		## after it stay buffered in the reader returned, ready for its next
+		## read. And the `n` bytes are one message, so the reader's message
+		## timeout (60 seconds unless changed with `with_message_timeout`)
+		## bounds the whole copy, as it bounds `read_exactly!`: past it, the
+		## copy fails with `MessageTimedOut`, so a peer can't keep the
+		## connection busy by sending a byte at a time. (For a large body on a
+		## slow link, raise it.) `UntilEnd` copies a stream, not a message,
+		## so only the stream's read timeout applies.
+		##
+		## ```roc
+		## # A header line naming the payload's length, then the payload,
+		## # streamed to `sink`; then the next header, on the same connection.
+		## (line, $reader) = $reader.read_line!()?
+		## length = parse_length(line)?
+		## (_, $reader) = $reader.copy_to!(sink, Exactly(length))?
+		## (next, $reader) = $reader.read_line!()?
+		## ```
+		copy_to! : Reader(s), t, [UntilEnd, Exactly(U64)] => Try((U64, Reader(s)), [CopyToErr({ failed : [Read(IOErr), Write(IOErr), MessageTimedOut], copied : U64 }), Cancelled])
+			where [s.socket : s -> Host.Socket, t.socket : t -> Host.Socket]
+		copy_to! = |Reader.(r), to, limit| {
+			(first, rest, stream_limit, timeout_ns) =
+				match limit {
+					UntilEnd => (r.buffered, [], UntilEnd, 0)
+					Exactly(n) => {
+						take = if n < List.len(r.buffered) n else List.len(r.buffered)
+						(List.take_first(r.buffered, take), List.drop_first(r.buffered, take), Exactly(n - take), r.message_timeout_ns)
+					}
+				}
+			# TODO: call `Stream.copy_to!` rather than the host, once the
+			# compiler lets this module see `Stream`'s functions (on
+			# nightly-2026-09-24 they "do not exist" here, even a trivial one,
+			# while `Tls` can call `Tcp`'s). Until then, keep this mapping the
+			# same as `Stream.copy_to!`'s.
+			{ copied, outcome } = Host.stream_copy_to!(r.stream.socket(), to.socket(), first, stream_limit, timeout_ns)
+			match outcome {
+				Done => Ok((copied, Reader.({ ..r, buffered: rest })))
+				Cancelled => Err(Cancelled)
+				Read(err) => Err(CopyToErr({ failed: Read(err), copied }))
+				Write(err) => Err(CopyToErr({ failed: Write(err), copied }))
+				MessageTimedOut => Err(CopyToErr({ failed: MessageTimedOut, copied }))
+			}
+		}
 
 		## The underlying stream's host socket, for `Select` to wait on.
 		socket = |Reader.(r)| r.stream.socket()

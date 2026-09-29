@@ -76,7 +76,8 @@ Stream := [].{
 	##   reset would make its peer discard what it hadn't read yet): a slow
 	##   client still gets a finished response when the session then times
 	##   out. The error says where it happened (`ReadA`, `WriteB`, and so
-	##   on) and how many bytes had got through each way.
+	##   on) and how many bytes each side had accepted (its peer may have
+	##   received fewer).
 	## - A TLS client that closes without close_notify fails with
 	##   `ReadA(UnexpectedEof)` unless the stream has
 	##   `ignore_unexpected_eof!(True)`, which a proxy usually wants.
@@ -91,7 +92,8 @@ Stream := [].{
 	##
 	## It copies from the streams themselves, so bytes a `Framing` reader has
 	## already buffered from one (say, after reading a header line to choose
-	## the backend) aren't included: write those to the other side first.
+	## the backend) aren't included: send those on first (with
+	## `reader.copy_to!(backend, Exactly(...))`, or by writing them).
 	##
 	## The second direction runs on a task of its own, so this fails with
 	## `TaskLimitReached` (copying nothing) at the task limit.
@@ -115,6 +117,61 @@ Stream := [].{
 			ReadB(err) => failed(ReadB(err))
 			WriteA(err) => failed(WriteA(err))
 			WriteB(err) => failed(WriteB(err))
+		}
+	}
+
+	## Copy what arrives on `from` to `to`, until `from` ends (`UntilEnd`) or
+	## exactly `n` more bytes have been copied (`Exactly(n)`), and return how
+	## many were. The one-way counterpart of `copy_both!`, for protocols that
+	## handle one direction in Roc and stream the other, or send a message's
+	## header and then its body:
+	##
+	## ```roc
+	## # A 4-byte length, then that many bytes of payload.
+	## (header, $reader) = $reader.read_exactly!(4)?
+	## (length, _) = Bytes.take_u32_be(header)?
+	## backend.write!(header)?
+	## (_, $reader) = $reader.copy_to!(backend, Exactly(length.to_u64()))?
+	## ```
+	##
+	## (Use `Framing.Reader.copy_to!`, as here, when a `Framing` reader has
+	## been reading `from`: the bytes it has buffered go first. This function
+	## copies from the stream itself.)
+	##
+	## - `Exactly(n)` never reads past the `n`th byte, so `from` is ready for
+	##   whatever follows, on the same connection. (For TLS, the rest of a
+	##   record stays in the stream for its next read.) If `from` ends first,
+	##   this fails with `Read(UnexpectedEof)`.
+	## - It doesn't shut down or close either stream when it's done, even at
+	##   the end of `from`: what comes next is up to you (`to.shutdown!(Write)`
+	##   to pass the end on, or carry on with the next message).
+	## - `copied` counts the bytes `to` accepted, not the bytes its peer has
+	##   received: the operating system buffers some of them on the way. So
+	##   on an error it isn't a place to resume from; the peer may have
+	##   received fewer (and a write that failed partway isn't counted).
+	## - On an error, neither stream is usable for anything else: `from` may
+	##   have given up bytes that never reached `to`. To give up, `abort!`
+	##   whichever peer mustn't take a cut-off transfer for a complete one.
+	##   (`failed` can also be `MessageTimedOut`, only from
+	##   `Framing.Reader.copy_to!`, which has a message timeout; its type is
+	##   shared so both can be used with `?` in one function.)
+	## - Read timeouts apply as they are: with only one direction, being busy
+	##   the other way (in other Roc code) doesn't count. For a two-way
+	##   session, use `copy_both!`.
+	## - The bytes are copied by the platform, never becoming Roc lists; on
+	##   Linux, between two plain (`Tcp` or `Unix`) streams, they don't pass
+	##   through the program's memory at all (`splice`). Cancelling the task
+	##   returns `Err(Cancelled)`.
+	copy_to! : a, b, [UntilEnd, Exactly(U64)] => Try(U64, [CopyToErr({ failed : [Read(IOErr), Write(IOErr), MessageTimedOut], copied : U64 }), Cancelled])
+		where [a.socket : a -> Host.Socket, b.socket : b -> Host.Socket]
+	copy_to! = |from, to, limit| {
+		{ copied, outcome } = Host.stream_copy_to!(from.socket(), to.socket(), [], limit, 0)
+		match outcome {
+			Done => Ok(copied)
+			Cancelled => Err(Cancelled)
+			Read(err) => Err(CopyToErr({ failed: Read(err), copied }))
+			Write(err) => Err(CopyToErr({ failed: Write(err), copied }))
+			MessageTimedOut => Err(CopyToErr({ failed: MessageTimedOut, copied }))
 		}
 	}
 }

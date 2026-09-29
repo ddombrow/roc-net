@@ -147,6 +147,11 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   buffers, and the session is idle only when neither direction moves. `Stream`'s docs also
   show how to annotate code that takes any kind of stream (a `where` clause)
   and keep listeners of different kinds in one list.
+- `Stream.copy_to!(from, to, UntilEnd | Exactly(n))`: one direction, such as
+  a message's body after its header; `Exactly(n)` never reads past the
+  `n`th byte. After reading with a `Framing` reader, use
+  `reader.copy_to!(to, limit)`, which sends the reader's buffered bytes
+  first and keeps anything past the limit for its next read.
 - `Udp.bind!`: UDP sockets
   - `Udp.Socket`: `send_to!`, `recv_from!`, `connect!`, `send!`, `recv!`,
     `set_read_timeout!`, `set_write_timeout!`, `set_broadcast!`,
