@@ -7,6 +7,7 @@ import pf.Framing
 import pf.Random
 import pf.Select
 import pf.Stdout
+import pf.Stream
 import pf.Task
 import pf.Tcp
 import pf.Time
@@ -125,6 +126,26 @@ main! = |_args| {
 		check!("shutdown!: succeeds after the peer closed (tcp, tls)", shutdown_after_peer_closed!),
 		check!("scope: a failing task doesn't stop the others", scope_child_fails!),
 		check!("scope: stop them all when the first one ends", scope_first_ends!),
+		check!("tls sni: a certificate by exact name, wildcard, or the default", tls_sni_picks_cert!),
+		check!("tls sni: server_name! reports the requested name", tls_sni_server_name!),
+		check!("tls sni: a certificate name must be a DNS name", tls_sni_bad_name!),
+		check!("tls alpn: the server's preference among the client's offers", tls_alpn_agrees!),
+		check!("tls alpn: no common protocol fails the handshake", tls_alpn_no_overlap!),
+		check!("tls alpn: a client offering none gets none", tls_alpn_client_offers_none!),
+		check!("copy_both!: tcp to tcp, with a half-close passed on", copy_both_tcp!),
+		check!("copy_both!: tls client to a tcp backend", copy_both_tls_to_tcp!),
+		check!("copy_both!: a one-way download isn't idle", copy_both_one_way!),
+		check!("copy_both!: idle both ways times out", copy_both_idle!),
+		check!("copy_both!: cancelling stops both directions", copy_both_cancelled!),
+		check!("copy_both!: a backend reset mid-response reaches a tls client as an error", copy_both_reset_tls!),
+		check!("copy_both!: a backend reset mid-response reaches a tcp client as a reset", copy_both_reset_tcp!),
+		check!("copy_both!: a write to a slow reader isn't idle", copy_both_slow_reader!),
+		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
+		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
+		check!("stream: a where clause over any stream, and mixed listeners", stream_generic!),
+		check!("select: on_join, the first task to finish wins", select_join_first!),
+		check!("select: on_join, a finished task is ready at once", select_join_finished!),
+		check!("select: on_join with a timeout, and the loser's result kept", select_join_timeout!),
 	]
 	failed = List.len(List.keep_if(results, |passed| !passed))
 	if failed == 0 {
@@ -2116,10 +2137,14 @@ scope_child_fails! = || {
 scope_first_ends! = || {
 	start = Time.now!()
 	result = Task.scope!(|scope| {
-		(done, ended) = Channel.new!(2)?
-		_ = scope.spawn!(|| done.send!(sleep_then_fail!(Time.seconds(30), "slow")))?
-		_ = scope.spawn!(|| done.send!(sleep_then_fail!(Time.millis(20), "fast")))?
-		match ended.receive!()? {
+		slow = scope.spawn!(|| sleep_then_fail!(Time.seconds(30), "slow"))?
+		fast = scope.spawn!(|| sleep_then_fail!(Time.millis(20), "fast"))?
+		first =
+			Select.new({})
+				.on_join(slow, |ended| ended)
+				.on_join(fast, |ended| ended)
+				.wait!()?
+		match first {
 			Ok({}) => Err(Stopped)
 			Err(err) => Err(err)
 		}
@@ -2131,4 +2156,484 @@ scope_first_ends! = || {
 sleep_then_fail! = |duration, message| {
 	Time.sleep!(duration)?
 	fail_unless_empty(message)
+}
+
+test_certs_dir = "examples/net_tests/certs"
+
+## The test server certificate by default, api.pem for "api.test" and
+## wild.pem for "*.apps.test".
+sni_config =
+	test_server_cert
+		.with_cert_for("api.test", { cert_file: "${test_certs_dir}/api.pem", key_file: "${test_certs_dir}/api-key.pem" })
+		.with_cert_for("*.apps.test", { cert_file: "${test_certs_dir}/wild.pem", key_file: "${test_certs_dir}/wild-key.pem" })
+
+## Serve `config` until the test ends: each connection reports its
+## `server_name!` and `alpn_protocol!` on the channel returned (or the
+## handshake's error).
+tls_reporting_server! = |config| {
+	listener = Tls.listen!("127.0.0.1:0", config)?
+	address = listener.local_addr!()?
+	(report_tx, report) = Channel.new!(8)?
+	_ = Task.spawn!(|| {
+		while True {
+			stream = listener.accept!()?
+			_ = Task.spawn!(|| {
+				reported =
+					match stream.server_name!() {
+						Ok(requested) => {
+							name =
+								match requested {
+									Name(n) => n
+									NoName => "NoName"
+								}
+							match stream.alpn_protocol!() {
+								Ok(protocol) => Ok((name, protocol))
+								Err(err) => Err(Str.inspect(err))
+							}
+						}
+						Err(err) => Err(Str.inspect(err))
+					}
+				# The test may be over, and the channel gone, by now.
+				_ = report_tx.send!(reported)
+				Ok({})
+			})
+		}
+		Ok({})
+	})?
+	Ok((address, report))
+}
+
+## Connect by IP address, checking the certificate against `name` (and
+## asking for it with SNI).
+connect_as! = |address, name| Tls.connect_with!(address, trusting_test_ca.with_server_name(name))
+
+# Each client checks the certificate against the name it asked for, so a
+# connection only succeeds if the server picked the right certificate.
+tls_sni_picks_cert! = || {
+	(address, _report) = tls_reporting_server!(sni_config)?
+	_ = connect_as!(address, "api.test")?
+	_ = connect_as!(address, "API.test")?
+	_ = connect_as!(address, "x.apps.test")?
+	_ = connect_as!(address, "localhost")?
+	# No name: the default certificate, which covers 127.0.0.1.
+	_ = Tls.connect_with!(address, trusting_test_ca)?
+	# A wildcard covers one label only, so this gets the default certificate,
+	# which isn't for this name.
+	expect_tls_rejected!(connect_as!(address, "a.b.apps.test"), "not valid for name")
+}
+
+tls_sni_server_name! = || {
+	(address, report) = tls_reporting_server!(sni_config)?
+	_ = connect_as!(address, "x.apps.test")?
+	named = report.receive_timeout!(Time.seconds(3))?
+	# Reported as certificates are chosen: lower case, no trailing dot.
+	_ = connect_as!(address, "API.Test.")?
+	normalized = report.receive_timeout!(Time.seconds(3))?
+	_ = Tls.connect_with!(address, trusting_test_ca)?
+	unnamed = report.receive_timeout!(Time.seconds(3))?
+	expect_eq((named, normalized, unnamed), (Ok(("x.apps.test", "")), Ok(("api.test", "")), Ok(("NoName", ""))))
+}
+
+tls_sni_bad_name! = || {
+	config = test_server_cert.with_cert_for("127.0.0.1", { cert_file: "${test_certs_dir}/server.pem", key_file: "${test_certs_dir}/server-key.pem" })
+	match Tls.listen!("127.0.0.1:0", config) {
+		Err(TlsErr(Other(message))) if Str.contains(message, "DNS name") => Ok({})
+		other => Err(Unexpected("expected a rejected name, got ${Str.inspect(other)}"))
+	}
+}
+
+alpn_server_config = test_server_cert.with_alpn(["h2", "http/1.1"])
+
+tls_alpn_agrees! = || {
+	(address, report) = tls_reporting_server!(alpn_server_config)?
+	client = Tls.connect_with!(address, trusting_test_ca.with_alpn(["http/1.1", "h2"]))?
+	server_side = report.receive_timeout!(Time.seconds(3))?
+	# The server's preference wins.
+	expect_eq((client.alpn_protocol!()?, server_side), ("h2", Ok(("NoName", "h2"))))
+}
+
+tls_alpn_no_overlap! = || {
+	(address, report) = tls_reporting_server!(alpn_server_config)?
+	client = Tls.connect_with!(address, trusting_test_ca.with_alpn(["spdy/3"]))
+	server_side = report.receive_timeout!(Time.seconds(3))?
+	match (client, server_side) {
+		(Err(TlsErr(Other(message))), Err(_)) if Str.contains(message, "NoApplicationProtocol") => Ok({})
+		other => Err(Unexpected("expected both sides to fail, got ${Str.inspect(other)}"))
+	}
+}
+
+tls_alpn_client_offers_none! = || {
+	(address, report) = tls_reporting_server!(alpn_server_config)?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	server_side = report.receive_timeout!(Time.seconds(3))?
+	expect_eq((client.alpn_protocol!()?, server_side), ("", Ok(("NoName", ""))))
+}
+
+## Accept one client on `listener`, connect it to `backend_address`, and
+## copy between them; the channel returned gets what `copy_both!` returned.
+proxy_once! = |listener, backend_address| {
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		client = listener.accept!()?
+		_ = client.set_read_timeout!(Millis(300))
+		backend = Tcp.connect!(backend_address)?
+		report_tx.send!(Stream.copy_both!(client, backend))
+	})?
+	Ok(report)
+}
+
+# The backend reads until the client has finished sending, then replies:
+# the client's half-close must reach it through the proxy, and the reply
+# must come back after it.
+copy_both_tcp! = || {
+	(backend, backend_address) = listen_anywhere!()?
+	serve_length!(backend)?
+	(front, front_address) = listen_anywhere!()?
+	report = proxy_once!(front, backend_address)?
+	client = Tcp.connect!(front_address)?
+	reply = exchange!(client, "hello through the proxy")?
+	match report.receive_timeout!(Time.seconds(3))? {
+		Ok(copied) => expect_eq((reply, copied.a_to_b, copied.b_to_a), ("got 23 bytes", 23, 12))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+copy_both_tls_to_tcp! = || {
+	(backend, backend_address) = listen_anywhere!()?
+	serve_length!(backend)?
+	(front, front_address) = tls_listen_anywhere!()?
+	report = proxy_once!(front, backend_address)?
+	client = Tls.connect_with!(front_address, trusting_test_ca)?
+	reply = exchange!(client, "secret")?
+	match report.receive_timeout!(Time.seconds(3))? {
+		Ok(copied) => expect_eq((reply, copied.a_to_b, copied.b_to_a), ("got 6 bytes", 6, 11))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# The client sends nothing for longer than its 300 ms read timeout while
+# the backend streams to it: that's not idle.
+copy_both_one_way! = || {
+	(backend, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = backend.accept!()?
+		var $i = 0
+		while $i < 8 {
+			stream.write_str!("tick")?
+			Time.sleep!(Time.millis(100))?
+			$i = $i + 1
+		}
+		Ok({})
+	})?
+	(front, front_address) = listen_anywhere!()?
+	report = proxy_once!(front, backend_address)?
+	client = Tcp.connect!(front_address)?
+	received = read_to_end!(client)?
+	client.close!()
+	match report.receive_timeout!(Time.seconds(3))? {
+		Ok(copied) => expect_eq((Str.count_utf8_bytes(received), copied.b_to_a), (32, 32))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# Neither side sends: the client's read timeout ends the session.
+copy_both_idle! = || {
+	(backend, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = backend.accept!()?
+		_ = read_to_end!(stream)
+		Ok({})
+	})?
+	(front, front_address) = listen_anywhere!()?
+	report = proxy_once!(front, backend_address)?
+	client = Tcp.connect!(front_address)?
+	reported = report.receive_timeout!(Time.seconds(3))?
+	# Keep the client open until then.
+	client.close!()
+	match reported {
+		Err(CopyErr({ failed: ReadA(TimedOut), a_to_b: 0, b_to_a: 0 })) => Ok({})
+		other => Err(Unexpected("expected ReadA(TimedOut), got ${Str.inspect(other)}"))
+	}
+}
+
+# Cancelling the proxying task ends both directions and aborts both
+# streams: the client sees a reset, not a clean end.
+copy_both_cancelled! = || {
+	(backend, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = backend.accept!()?
+		_ = read_to_end!(stream)
+		Ok({})
+	})?
+	(front, front_address) = listen_anywhere!()?
+	proxy = Task.spawn!(|| {
+		client = front.accept!()?
+		backend_stream = Tcp.connect!(backend_address)?
+		Stream.copy_both!(client, backend_stream)
+	})?
+	client = Tcp.connect!(front_address)?
+	client.set_read_timeout!(Millis(3000))?
+	Time.sleep!(Time.millis(50))?
+	proxy.cancel!()
+	ended = client.read!(10)
+	match (proxy.join!(), ended) {
+		(Err(Cancelled), Err(TcpErr(ConnectionReset))) => Ok({})
+		other => Err(Unexpected("expected Cancelled and a reset, got ${Str.inspect(other)}"))
+	}
+}
+
+## Any stream with `read!` and `write!`, as in `Stream`'s docs.
+echo_once! : s => Try({}, e)
+	where [
+		s.read! : s, U64 => Try(List(U8), e),
+		s.write! : s, List(U8) => Try({}, e),
+	]
+echo_once! = |stream| {
+	bytes = stream.read!(100)?
+	stream.write!(bytes)
+}
+
+MixedListener : [Plain(Tcp.Listener), Secure(Tls.Listener)]
+
+serve_mixed! : MixedListener => Try({}, _)
+serve_mixed! = |listener|
+	match listener {
+		Plain(l) => echo_once!(l.accept!()?)
+		Secure(l) => echo_once!(l.accept!()?)
+	}
+
+stream_generic! = || {
+	(plain, plain_address) = listen_anywhere!()?
+	(secure, secure_address) = tls_listen_anywhere!()?
+	listeners : List(MixedListener)
+	listeners = [Plain(plain), Secure(secure)]
+	for listener in listeners {
+		_ = Task.spawn!(|| serve_mixed!(listener))?
+	}
+	tcp = Tcp.connect!(plain_address)?
+	tcp.write_str!("plain")?
+	tls = Tls.connect_with!(secure_address, trusting_test_ca)?
+	tls.write_str!("secure")?
+	expect_eq((tcp.read!(100)?, tls.read!(100)?), (Str.to_utf8("plain"), Str.to_utf8("secure")))
+}
+
+select_join_first! = || {
+	slow = Task.spawn!(|| sleep_then_fail!(Time.seconds(30), "slow"))?
+	fast = Task.spawn!(|| sleep_then_fail!(Time.millis(20), "fast"))?
+	start = Time.now!()
+	first =
+		Select.new({})
+			.on_join(slow, |result| Slow(result))
+			.on_join(fast, |result| Fast(result))
+			.wait!()?
+	took = start.elapsed!().to_millis()
+	slow.cancel!()
+	expect_eq((first, took < 5000), (Fast(Err(Boom("fast"))), True))
+}
+
+select_join_finished! = || {
+	done = Task.spawn!(|| Ok(42))?
+	_ = done.join!()?
+	first =
+		Select.new({})
+			.on_join(done, |result| result)
+			.on_timeout(Time.seconds(5), || Err(Boom("timed out")))
+			.wait!()?
+	expect_eq(first, Ok(42))
+}
+
+# A timeout while the task runs; then the task finishes, and its result is
+# still there for the next wait (joining doesn't consume it).
+select_join_timeout! = || {
+	task = Task.spawn!(|| {
+		Time.sleep!(Time.millis(100))?
+		Ok("finished")
+	})?
+	early =
+		Select.new({})
+			.on_join(task, |result| Joined(result))
+			.on_timeout(Time.millis(10), || Waiting)
+			.wait!()?
+	later =
+		Select.new({})
+			.on_join(task, |result| Joined(result))
+			.on_timeout(Time.seconds(5), || Waiting)
+			.wait!()?
+	expect_eq((early, later, task.join!()), (Waiting, Joined(Ok("finished")), Ok("finished")))
+}
+
+## A backend that sends `size` bytes of a longer response, then gives up.
+backend_resetting_after! = |size| {
+	(backend, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = backend.accept!()?
+		stream.write!(List.repeat(120, size))?
+		Time.sleep!(Time.millis(50))?
+		stream.abort!()
+		Ok({})
+	})?
+	Ok(backend_address)
+}
+
+## Read until the end of the stream or an error; the bytes and how it ended.
+read_until_end_or_error! = |stream| {
+	var $count = 0
+	while True {
+		match stream.read!(65536) {
+			Ok([]) => return (Ok({}), $count)
+			Ok(bytes) => {
+				$count = $count + List.len(bytes)
+			}
+			Err(err) => return (Err(err), $count)
+		}
+	}
+	(Ok({}), $count)
+}
+
+# The must-not-happen case for a TLS terminator: a truncated response
+# followed by close_notify, which the client would take as complete.
+copy_both_reset_tls! = || {
+	backend_address = backend_resetting_after!(200000)?
+	(front, front_address) = tls_listen_anywhere!()?
+	report = proxy_once!(front, backend_address)?
+	client = Tls.connect_with!(front_address, trusting_test_ca)?
+	client.set_read_timeout!(Millis(3000))?
+	(ended, received) = read_until_end_or_error!(client)
+	reported = report.receive_timeout!(Time.seconds(3))?
+	match (ended, reported) {
+		(Err(TlsErr(_)), Err(CopyErr({ failed: ReadB(ConnectionReset), b_to_a, .. }))) =>
+			expect_eq((received <= 200000, b_to_a <= 200000), (True, True))
+		other => Err(Unexpected("expected an error at the client, got ${Str.inspect(other)}"))
+	}
+}
+
+copy_both_reset_tcp! = || {
+	backend_address = backend_resetting_after!(200000)?
+	(front, front_address) = listen_anywhere!()?
+	report = proxy_once!(front, backend_address)?
+	client = Tcp.connect!(front_address)?
+	client.set_read_timeout!(Millis(3000))?
+	(ended, _) = read_until_end_or_error!(client)
+	_ = report.receive_timeout!(Time.seconds(3))?
+	match ended {
+		Err(TcpErr(ConnectionReset)) => Ok({})
+		other => Err(Unexpected("expected a reset at the client, got ${Str.inspect(other)}"))
+	}
+}
+
+# The client (whose read timeout at the proxy is 300 ms) sends nothing and
+# doesn't read for 700 ms while the backend has 16 MB for it: the proxy's
+# write to the client is stuck, which isn't idle, so the session survives.
+copy_both_slow_reader! = || {
+	size = 16 * 1024 * 1024
+	(backend, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = backend.accept!()?
+		stream.write!(List.repeat(120, size))?
+		stream.shutdown!(Write)?
+		_ = read_to_end!(stream)
+		Ok({})
+	})?
+	(front, front_address) = listen_anywhere!()?
+	report = proxy_once!(front, backend_address)?
+	client = Tcp.connect!(front_address)?
+	Time.sleep!(Time.millis(700))?
+	(ended, received) = read_until_end_or_error!(client)
+	client.shutdown!(Write)?
+	match (ended, report.receive_timeout!(Time.seconds(5))?) {
+		(Ok({}), Ok(copied)) => expect_eq((received, copied.b_to_a), (size, size))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# Each server waits for the client to speak before aborting: a reset that
+# arrives before the client's connect has finished fails the connect itself
+# (as it should; Linux is quick enough to do that on loopback).
+abort_is_not_clean! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		_ = stream.read!(10)?
+		stream.write_str!("partial")?
+		stream.abort!()
+		Ok({})
+	})?
+	tcp = Tcp.connect!(address)?
+	tcp.write_str!("go")?
+	tcp.set_read_timeout!(Millis(3000))?
+	(tcp_ended, _) = read_until_end_or_error!(tcp)
+
+	(tls_listener, tls_address) = tls_listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = tls_listener.accept!()?
+		_ = stream.read!(10)?
+		stream.write_str!("partial")?
+		stream.abort!()
+		# Released after aborting: still no close_notify.
+		Ok({})
+	})?
+	tls = Tls.connect_with!(tls_address, trusting_test_ca)?
+	tls.write_str!("go")?
+	tls.set_read_timeout!(Millis(3000))?
+	(tls_ended, _) = read_until_end_or_error!(tls)
+	match (tcp_ended, tls_ended) {
+		(Err(TcpErr(ConnectionReset)), Err(TlsErr(_))) => Ok({})
+		other => Err(Unexpected("expected errors, got ${Str.inspect(other)}"))
+	}
+}
+
+# 32 sessions at once, each 50 small round trips: many directions going idle
+# and busy again, across worker threads (the stealing pass moves them). This
+# is what caught buffers and pipes being reused from another thread's pool.
+copy_both_many_sessions! = || {
+	(backend, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		while True {
+			stream = backend.accept!()?
+			_ = Task.spawn!(|| {
+				while True {
+					bytes = stream.read!(100)?
+					if List.is_empty(bytes) {
+						break
+					}
+					stream.write!(bytes)?
+				}
+				Ok({})
+			})
+		}
+		Ok({})
+	})?
+	(front, front_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		while True {
+			client = front.accept!()?
+			_ = Task.spawn!(|| {
+				upstream = Tcp.connect!(backend_address)?
+				_ = Stream.copy_both!(client, upstream)
+				Ok({})
+			})
+		}
+		Ok({})
+	})?
+	var $clients = []
+	for i in U64.until(0, 32) {
+		client = Task.spawn!(|| {
+			stream = Tcp.connect!(front_address)?
+			stream.set_read_timeout!(Millis(5000))?
+			for round in U64.until(0, 50) {
+				message = "session ${i.to_str()} round ${round.to_str()}"
+				stream.write_str!(message)?
+				reply = stream.read!(100)?
+				if Str.from_utf8_lossy(reply) != message {
+					return Err(Mismatch({ expected: message, actual: Str.from_utf8_lossy(reply) }))
+				}
+			}
+			Ok({})
+		})?
+		$clients = List.append($clients, client)
+	}
+	for client in $clients {
+		client.join!()?
+	}
+	Ok({})
 }

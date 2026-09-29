@@ -182,6 +182,7 @@ name = "roc_host"
 version = "0.2.1"
 dependencies = [
  "corosensei",
+ "libc",
  "mio",
  "rustls",
  "rustls-pki-types",

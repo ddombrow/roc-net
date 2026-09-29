@@ -125,14 +125,28 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 - `Tls.connect!`, `Tls.connect_with!`, `Tls.listen!`: TLS over TCP (rustls)
   - `Tls.Stream`: the same methods as `Tcp.Stream`, plus `ignore_unexpected_eof!`
     and `handshake!` (a server stream otherwise finishes its handshake on its
-    first read or write; call it before sharing the stream between tasks)
-  - `Tls.client_config.with_ca_file(...)`, `.with_server_name(...)`, `.with_timeout(...)`
+    first read or write; call it before sharing the stream between tasks),
+    `server_name!` (the name the client asked for, SNI), `alpn_protocol!`,
+    and `abort!` (also on `Tcp` and `Unix` streams: end a connection with a
+    reset rather than cleanly, on error paths)
+  - `Tls.client_config.with_ca_file(...)`, `.with_server_name(...)`, `.with_alpn(...)`, `.with_timeout(...)`
   - `Tls.server_config({ cert_file, key_file })`, `.with_handshake_timeout(...)`:
     clients get 10 seconds by default to finish the handshake, a deadline a
     slowloris client can't stretch
+  - `.with_cert_for("api.example.com", { cert_file, key_file })`: a
+    certificate per host name (`*.` wildcards too) on one listener, chosen by
+    SNI; the one from `server_config` is for every other name.
+    `.with_alpn(["h2", "http/1.1"])` for application protocols
   - `Tls.wrap_client!`, `Tls.wrap_server!`: upgrade a TCP connection (STARTTLS)
   - Errors are `TlsErr(IOErr)`; certificate problems arrive as `TlsErr(Other(message))`,
     and so do certificate and key files that can't be loaded, naming the file.
+- `Stream.copy_both!(a, b)`: copy between two streams (any kinds) in both
+  directions until both end, the core of a proxy. Half-closes are passed on,
+  the first error aborts both (so a truncated response is never passed off
+  as complete), the bytes never become Roc lists, idle sessions hold no
+  buffers, and the session is idle only when neither direction moves. `Stream`'s docs also
+  show how to annotate code that takes any kind of stream (a `where` clause)
+  and keep listeners of different kinds in one list.
 - `Udp.bind!`: UDP sockets
   - `Udp.Socket`: `send_to!`, `recv_from!`, `connect!`, `send!`, `recv!`,
     `set_read_timeout!`, `set_write_timeout!`, `set_broadcast!`,
@@ -219,6 +233,9 @@ holds its thread until it finishes.
 just run tcp_echo_concurrent 127.0.0.1:8080          # in one terminal
 just run tcp_client 127.0.0.1:8080 "hello"           # in another
 just run tcp_proxy 127.0.0.1:9000 127.0.0.1:8080     # proxy in front of the echo server
+just run tls_proxy 127.0.0.1:9080 127.0.0.1:9443 \
+    examples/net_tests/certs/server.pem examples/net_tests/certs/server-key.pem \
+    127.0.0.1:8080 localhost=127.0.0.1:8081           # terminate TLS, route by SNI name
 
 just run udp_echo_server 127.0.0.1:8081
 just run udp_client 127.0.0.1:8081 "hello"

@@ -128,6 +128,13 @@ Unix := [].{
 			{}
 		}
 
+		## Give up on the connection partway through (see
+		## `Tcp.Stream.abort!`). Unix sockets have no reset, so the peer sees
+		## the end of the stream, as with `close!`; it's here so code over
+		## any kind of stream can call it.
+		abort! : Stream => {}
+		abort! = |Stream.(stream)| Host.socket_abort!(stream)
+
 		## Make reads fail with `TimedOut` if no data arrives in time.
 		set_read_timeout! : Stream, [NoTimeout, Millis(U64)] => Try({}, [UnixErr(IOErr)])
 		set_read_timeout! = |Stream.(stream), timeout| unix_err(Host.socket_set_timeout!(stream, 0, timeout_ms(timeout)))

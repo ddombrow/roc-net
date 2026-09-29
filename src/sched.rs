@@ -832,6 +832,22 @@ impl TaskRef {
         f(lock(&self.0.result).as_deref())
     }
 
+    /// For `Select`: `None` if the task has finished; otherwise register
+    /// `waker` for when it does, under the id returned (remove it with
+    /// [`unwatch_finished`](Self::unwatch_finished)).
+    pub fn watch_finished(&self, waker: &TaskWaker) -> Option<u64> {
+        let mut finished = lock(&self.0.finished);
+        if finished.0 {
+            None
+        } else {
+            Some(finished.1.add_waker(waker.clone()))
+        }
+    }
+
+    pub fn unwatch_finished(&self, id: u64) {
+        lock(&self.0.finished).1.remove(id);
+    }
+
     /// Wait for the task to finish. `cancellable: false` for waits that
     /// must complete even if the waiting task is cancelled (a scope waiting
     /// for its children).

@@ -18,7 +18,11 @@ use crate::roc_platform_abi::{
     HostSocketLocalAddrResultTag, HostSocketReadResult, HostSocketReadResultPayload,
     HostSocketReadResultTag, HostSocketSetTimeoutResult, HostSocketSetTimeoutResultPayload,
     HostSocketSetTimeoutResultTag, HostUdpRecvFromResult, HostUdpRecvFromResultPayload,
-    HostUdpRecvFromResultTag, IOErr, IOErrPayload, IOErrTag, RocBox, RocList, RocListWith, RocStr,
+    HostUdpRecvFromResultTag, IOErr, IOErrPayload, IOErrTag, RocBox, RocList, RocListWith, RocStr, RocStrRelease,
+    AnonStructF1e164f99c294fdeRelease as TlsCertRelease, HostTlsListenArg1 as RocTlsCert,
+    HostStreamCopyBoth as CopyResult, CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB as CopyOutcome,
+    CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBPayload as CopyOutcomePayload,
+    CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag as CopyOutcomeTag,
 };
 use crate::sockets::{self, deadline_after, with_scratch, Conn, OwnedUnixListener, ServerTimeouts, Socket};
 
@@ -193,6 +197,28 @@ fn with_socket<T>(handle: *mut u64, f: impl FnOnce(&Socket) -> NetResult<T>) -> 
 fn open_socket(open: impl FnOnce() -> NetResult<Socket>) -> NetResult<*mut u64> {
     let slot = sockets::try_reserve().map_err(|_| NetErr::TooManySockets)?;
     Ok(slot.insert(open()?))
+}
+
+/// Copy a Roc list of strings, then release it.
+fn take_strs(list: RocList<RocStr>) -> Vec<String> {
+    let items = list.as_slice().iter().map(|item| item.as_str().to_owned()).collect();
+    unsafe { list.release_with::<RocStrRelease>(roc_host()) };
+    items
+}
+
+/// Copy a Roc list of `Host.TlsCert` records, then release it.
+fn take_certs(list: RocList<RocTlsCert>) -> Vec<crate::tls::CertFiles> {
+    let items = list
+        .as_slice()
+        .iter()
+        .map(|cert| crate::tls::CertFiles {
+            name: cert.name.as_str().to_owned(),
+            cert_file: cert.cert_file.as_str().to_owned(),
+            key_file: cert.key_file.as_str().to_owned(),
+        })
+        .collect();
+    unsafe { list.release_with::<TlsCertRelease>(roc_host()) };
+    items
 }
 
 /// Run `f` with a Roc string argument, then release it.
@@ -758,6 +784,45 @@ pub extern "C" fn roc_socket_shutdown(socket: *mut u64, how: u8) -> HostSocketSe
     }))
 }
 
+/// Hosted function: Host.stream_copy_both!
+#[no_mangle]
+pub extern "C" fn roc_stream_copy_both(a: *mut u64, b: *mut u64) -> CopyResult {
+    use crate::copy::{CopyErr, Side};
+    type O = CopyOutcome;
+    type P = CopyOutcomePayload;
+    type T = CopyOutcomeTag;
+    let result = with_socket(a, |a| with_socket(b, |b| Ok(crate::copy::copy_both(a, b))));
+    let (a_to_b, b_to_a, failed) = match result {
+        Ok(result) => result,
+        // An invalid handle: report it as a failure to read A.
+        Err(err) => (0, 0, Some(CopyErr::Read(Side::A, match err {
+            NetErr::Io(err) => err,
+            NetErr::Other(message) => io::Error::other(message),
+            NetErr::TooManySockets => io::Error::other("too many sockets"),
+        }))),
+    };
+    let io = |err: io::Error| ManuallyDrop::new(<IOErr as FromNetErr>::from_net_err(NetErr::Io(err)));
+    let outcome = match failed {
+        None => O { payload: P { done: [] }, tag: T::Done },
+        Some(CopyErr::Cancelled) => O { payload: P { cancelled: [] }, tag: T::Cancelled },
+        Some(CopyErr::TaskLimit) => O { payload: P { task_limit_reached: [] }, tag: T::TaskLimitReached },
+        Some(CopyErr::Read(Side::A, e)) => O { payload: P { read_a: io(e) }, tag: T::ReadA },
+        Some(CopyErr::Read(Side::B, e)) => O { payload: P { read_b: io(e) }, tag: T::ReadB },
+        Some(CopyErr::Write(Side::A, e)) => O { payload: P { write_a: io(e) }, tag: T::WriteA },
+        Some(CopyErr::Write(Side::B, e)) => O { payload: P { write_b: io(e) }, tag: T::WriteB },
+    };
+    CopyResult { a_to_b, b_to_a, outcome }
+}
+
+/// Hosted function: Host.socket_abort!
+#[no_mangle]
+pub extern "C" fn roc_socket_abort(socket: *mut u64) {
+    let _ = with_socket(socket, |socket| {
+        crate::copy::abort(socket);
+        Ok(())
+    });
+}
+
 /// Hosted function: Host.socket_set_timeout!
 #[no_mangle]
 pub extern "C" fn roc_socket_set_timeout(socket: *mut u64, which: u8, timeout_ms: u64) -> HostSocketSetTimeoutResult {
@@ -981,8 +1046,10 @@ pub extern "C" fn roc_tls_connect(
     address: RocStr,
     server_name: RocStr,
     ca_file: RocStr,
+    alpn: RocList<RocStr>,
     timeout_ms: u64,
 ) -> HostSocketAcceptResult {
+    let alpn = take_strs(alpn);
     let result = with_str(address, |address| {
         with_str(server_name, |server_name| {
             with_str(ca_file, |ca_file| {
@@ -992,7 +1059,7 @@ pub extern "C" fn roc_tls_connect(
                     let deadline = deadline_after(timeout_ms);
                     let tcp = tcp_connect(address, deadline)?;
                     let name = if server_name.is_empty() { crate::tls::host_of(address) } else { server_name };
-                    Ok(Socket::Tls(Box::new(crate::tls::client(tcp, name, ca_file, deadline)?)))
+                    Ok(Socket::Tls(Box::new(crate::tls::client(tcp, name, ca_file, &alpn, deadline)?)))
                 })
             })
         })
@@ -1004,22 +1071,20 @@ pub extern "C" fn roc_tls_connect(
 #[no_mangle]
 pub extern "C" fn roc_tls_listen(
     address: RocStr,
-    cert_file: RocStr,
-    key_file: RocStr,
+    certs: RocList<RocTlsCert>,
+    alpn: RocList<RocStr>,
     handshake_timeout_ms: u64,
     idle_ms: u64,
     write_ms: u64,
 ) -> HostSocketAcceptResult {
     let timeouts = ServerTimeouts { idle_ms, write_ms };
+    let certs = take_certs(certs);
+    let alpn = take_strs(alpn);
     let result = with_str(address, |address| {
-        with_str(cert_file, |cert_file| {
-            with_str(key_file, |key_file| {
-                open_socket(|| {
-                    let config = crate::tls::server_config(cert_file, key_file)?;
-                    let listener = tcp_bind(address)?;
-                    Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config, handshake_timeout_ms, timeouts }))
-                })
-            })
+        open_socket(|| {
+            let config = crate::tls::server_config(&certs, &alpn)?;
+            let listener = tcp_bind(address)?;
+            Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config, handshake_timeout_ms, timeouts }))
         })
     });
     handle_result(result)
@@ -1049,14 +1114,16 @@ pub extern "C" fn roc_tls_wrap_client(
     socket: *mut u64,
     server_name: RocStr,
     ca_file: RocStr,
+    alpn: RocList<RocStr>,
     timeout_ms: u64,
 ) -> HostSocketAcceptResult {
+    let alpn = take_strs(alpn);
     let deadline = deadline_after(timeout_ms);
     let result = with_str(server_name, |server_name| {
         with_str(ca_file, |ca_file| {
             with_socket(socket, |socket| {
                 let tcp = plain_tcp(socket)?;
-                open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::client(tcp, server_name, ca_file, deadline)?))))
+                open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::client(tcp, server_name, ca_file, &alpn, deadline)?))))
             })
         })
     });
@@ -1067,19 +1134,17 @@ pub extern "C" fn roc_tls_wrap_client(
 #[no_mangle]
 pub extern "C" fn roc_tls_wrap_server(
     socket: *mut u64,
-    cert_file: RocStr,
-    key_file: RocStr,
+    certs: RocList<RocTlsCert>,
+    alpn: RocList<RocStr>,
     handshake_timeout_ms: u64,
 ) -> HostSocketAcceptResult {
     let deadline = deadline_after(handshake_timeout_ms);
-    let result = with_str(cert_file, |cert_file| {
-        with_str(key_file, |key_file| {
-            with_socket(socket, |socket| {
-                let tcp = plain_tcp(socket)?;
-                let config = crate::tls::server_config(cert_file, key_file)?;
-                open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::server(tcp, config, deadline)?))))
-            })
-        })
+    let certs = take_certs(certs);
+    let alpn = take_strs(alpn);
+    let result = with_socket(socket, |socket| {
+        let tcp = plain_tcp(socket)?;
+        let config = crate::tls::server_config(&certs, &alpn)?;
+        open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::server(tcp, config, deadline)?))))
     });
     handle_result(result)
 }
@@ -1090,6 +1155,25 @@ pub extern "C" fn roc_tls_handshake(socket: *mut u64) -> HostSocketSetTimeoutRes
     unit_result(with_socket(socket, |socket| match socket {
         Socket::Tls(s) => Ok(s.handshake()?),
         _ => Err(wrong_kind("handshake")),
+    }))
+}
+
+/// Hosted function: Host.tls_server_name!
+#[no_mangle]
+pub extern "C" fn roc_tls_server_name(socket: *mut u64) -> HostSocketLocalAddrResult {
+    str_result(with_socket(socket, |socket| match socket {
+        Socket::Tls(s) => Ok(s.server_name()?.unwrap_or_default()),
+        _ => Err(wrong_kind("server_name")),
+    }))
+}
+
+/// Hosted function: Host.tls_alpn_protocol!
+#[no_mangle]
+pub extern "C" fn roc_tls_alpn_protocol(socket: *mut u64) -> HostSocketLocalAddrResult {
+    str_result(with_socket(socket, |socket| match socket {
+        // Protocol IDs are bytes; the registered ones are all ASCII.
+        Socket::Tls(s) => Ok(s.alpn_protocol()?.map(|id| String::from_utf8_lossy(&id).into_owned()).unwrap_or_default()),
+        _ => Err(wrong_kind("alpn_protocol")),
     }))
 }
 

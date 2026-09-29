@@ -113,6 +113,37 @@ impl<T: AsRawFd> Conn<T> {
         (self.io.as_raw_fd(), &self.reg)
     }
 
+    /// End a TCP connection with a reset (RST) now, so the peer sees an
+    /// error, not a clean end of stream: for giving up partway through, when
+    /// a clean end would pass truncated data off as complete. The descriptor
+    /// stays open (Roc may still hold it) and later operations on it fail;
+    /// tasks waiting on it wake. Best effort: if the reset can't be sent,
+    /// both directions are shut down instead.
+    pub fn abort(&self) {
+        let fd = self.io.as_raw_fd();
+        // With a zero linger time, disconnecting resets instead of sending FIN.
+        let linger = libc::linger { l_onoff: 1, l_linger: 0 };
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_LINGER,
+                &linger as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::linger>() as libc::socklen_t,
+            )
+        };
+        if disconnect(fd) != 0 {
+            unsafe { libc::shutdown(fd, libc::SHUT_RDWR) };
+        }
+    }
+
+    /// Wait until the socket is readable (data, the end of the stream, or
+    /// an error), under the read timeout. Readiness can be spurious: the read
+    /// that follows may still find nothing.
+    pub fn wait_readable(&self) -> io::Result<()> {
+        crate::sched::wait_io(self.io.as_raw_fd(), &self.reg, false, self.read_deadline())
+    }
+
     /// Wait until the socket is writable (say, a non-blocking connect has
     /// finished), until `deadline`.
     pub fn wait_writable(&self, deadline: Option<Instant>) -> io::Result<()> {
@@ -124,6 +155,24 @@ impl Conn<TcpStream> {
     pub fn write_all(&self, data: &[u8]) -> io::Result<()> {
         self.write_all_with(data, |s, data| (&mut &*s).write(data))
     }
+}
+
+/// Disconnect a socket without closing its descriptor: `connect` to
+/// `AF_UNSPEC` on Linux, `disconnectx` on macOS. 0 on success.
+#[cfg(target_os = "linux")]
+fn disconnect(fd: std::os::fd::RawFd) -> i32 {
+    let mut addr: libc::sockaddr = unsafe { std::mem::zeroed() };
+    addr.sa_family = libc::AF_UNSPEC as libc::sa_family_t;
+    unsafe { libc::connect(fd, &addr, std::mem::size_of::<libc::sockaddr>() as libc::socklen_t) }
+}
+
+#[cfg(target_os = "macos")]
+fn disconnect(fd: std::os::fd::RawFd) -> i32 {
+    unsafe extern "C" {
+        fn disconnectx(fd: libc::c_int, association: u32, connection: u32) -> libc::c_int;
+    }
+    // SAE_ASSOCID_ANY, SAE_CONNID_ANY.
+    unsafe { disconnectx(fd, 0, 0) }
 }
 
 /// The moment `ms` milliseconds from now; 0 means no deadline. So does a

@@ -4,6 +4,47 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.3.0 (unreleased)
+
+Proxy features.
+
+- **SNI**: `Tls.ServerConfig.with_cert_for(name, { cert_file, key_file })`
+  presents a certificate per host name on one listener (`*.example.com`
+  wildcards covering one label, exact names first); the certificate from
+  `server_config` is for clients asking for any other name, or none.
+  `Tls.Stream.server_name!` returns the name a client asked for, as
+  `Name(...)` (lower-cased, no trailing dot, so it agrees with certificate
+  selection) or `NoName`, for routing by host name.
+- **ALPN**: `with_alpn([...])` on both `ClientConfig` and `ServerConfig`, and
+  `Tls.Stream.alpn_protocol!` for the protocol agreed.
+- **`Stream.copy_both!(a, b)`**: the two directions of a proxy, copied by the
+  platform between any two streams (TCP, TLS, Unix) without each chunk
+  becoming a Roc list. It passes half-closes on. On the first error it
+  aborts both streams, so a backend that fails mid-response never reaches
+  the client as a clean (and truncated) end, and reports where it happened
+  and how far each direction got:
+  `CopyErr({ failed: ReadB(ConnectionReset), a_to_b, b_to_a })`. Cancelling
+  returns `Cancelled`. A read timeout counts as idle only when neither
+  direction is moving (or writing to a slow peer), so a long one-way
+  download doesn't time out. Buffers exist only while data flows, so an
+  idle session costs no buffer memory (about 58 KiB per idle TLS session in
+  `tls_proxy`, all told). On Linux, between two plain (TCP or Unix) streams,
+  it uses `splice`, so the bytes never enter the program's memory.
+- **`abort!`** on `Tcp`, `Tls` and `Unix` streams: give up on a connection
+  partway through, so the peer sees an error rather than a clean end: a TCP
+  reset, with no TLS close_notify (not even when the stream is released).
+  Use it instead of `close!` on error paths; `tcp_proxy` does.
+- **`Select.on_join(handle, to_out)`**: an arm for a task finishing, for
+  acting on whichever of several tasks ends first (such as stopping every
+  listener's accept loop when one fails; see `Task.scope!`'s docs).
+  `Task.Handle.is_finished!` checks without waiting.
+- **Code over any kind of stream**: `Stream`'s docs show the `where` clause
+  that annotates a function taking `Tcp`, `Tls` or `Unix` streams, and a tag
+  union for keeping listeners of different kinds in one list.
+- **Examples**: `tls_proxy` terminates TLS on one listener and serves plain
+  TCP on another with the same code, routes by SNI name, and uses
+  `copy_both!`.
+
 ## 0.2.1
 
 Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,
