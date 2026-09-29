@@ -140,6 +140,7 @@ main! = |_args| {
 		check!("copy_both!: a backend reset mid-response reaches a tls client as an error", copy_both_reset_tls!),
 		check!("copy_both!: a backend reset mid-response reaches a tcp client as a reset", copy_both_reset_tcp!),
 		check!("copy_both!: a write to a slow reader isn't idle", copy_both_slow_reader!),
+		check!("copy_both!: a timeout after a complete response doesn't reset the client", copy_both_timeout_after_complete_response!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
 		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
@@ -2526,14 +2527,17 @@ copy_both_reset_tcp! = || {
 }
 
 # Once data is flowing to the client, the client stops reading (and sends
-# nothing) for twice its 800 ms read timeout at the proxy, while the backend
-# has 16 MB for it: the proxy's write to the client is stuck, which isn't
-# idle, so the session survives. (It waits for data to flow first: before
-# any does, a silent session is idle, and a slow machine may take a while
-# to start.)
+# nothing) for twice its 1 s read timeout at the proxy, while the backend has
+# 16 MB for it. Where the sockets' buffers can't hold it all, the proxy's
+# write to the client is stuck, which isn't idle, so the session survives.
+# Where they can (large Linux autotuning), the backend's side finishes, and
+# the proxy then times out waiting for the client, which is fair; either
+# way the client gets all 16 MB and a clean end. Without the rule, the first
+# case resets the client mid-transfer.
 copy_both_slow_reader! = || {
 	chunk_size = 64 * 1024
 	chunks = 256
+	size = chunk_size * chunks
 	(backend, backend_address) = listen_anywhere!()?
 	_ = Task.spawn!(|| {
 		stream = backend.accept!()?
@@ -2546,7 +2550,7 @@ copy_both_slow_reader! = || {
 		Ok({})
 	})?
 	(front, front_address) = listen_anywhere!()?
-	report = proxy_once_with!(front, backend_address, 800)?
+	report = proxy_once_with!(front, backend_address, 1000)?
 	client = Tcp.connect!(front_address)?
 	client.set_read_timeout!(Millis(10000))?
 	# On a failure, say what the proxy reported: the client only sees a reset.
@@ -2556,20 +2560,51 @@ copy_both_slow_reader! = || {
 			Ok(bytes) => bytes
 			Err(err) => return Err(Unexpected("first read: ${Str.inspect(err)}; proxy: ${proxy_said!()}"))
 		}
-	Time.sleep!(Time.millis(1600))?
+	Time.sleep!(Time.millis(2000))?
 	(ended, rest) = read_until_end_or_error!(client)
+	received = List.len(first) + rest
 	_ = client.shutdown!(Write)
-	size = chunk_size * chunks
 	match ended {
 		Ok({}) =>
 			match report.receive_timeout!(Time.seconds(10))? {
-				Ok(copied) => expect_eq((List.len(first) + rest, copied.b_to_a), (size, size))
+				Ok(copied) => expect_eq((received, copied.b_to_a), (size, size))
+				Err(CopyErr({ failed: ReadA(TimedOut), b_to_a, .. })) => expect_eq((received, b_to_a), (size, size))
 				other => Err(Unexpected(Str.inspect(other)))
 			}
-		Err(err) => Err(Unexpected("after ${(List.len(first) + rest).to_str()} bytes: ${Str.inspect(err)}; proxy: ${proxy_said!()}"))
+		Err(err) => Err(Unexpected("after ${received.to_str()} bytes: ${Str.inspect(err)}; proxy: ${proxy_said!()}"))
 	}
 }
 
+# The backend sends a whole response and closes; the client, slow, reads
+# it only after its idle timeout at the proxy has passed. The proxy gives
+# up waiting for the client, but the response was complete, so the client
+# still gets all of it with a clean end: no reset to throw away what it
+# hadn't read.
+copy_both_timeout_after_complete_response! = || {
+	size = 100000
+	(backend, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = backend.accept!()?
+		stream.write!(List.repeat(120, size))?
+		stream.shutdown!(Write)?
+		_ = read_to_end!(stream)
+		Ok({})
+	})?
+	(front, front_address) = listen_anywhere!()?
+	report = proxy_once!(front, backend_address)?
+	client = Tcp.connect!(front_address)?
+	reported = report.receive_timeout!(Time.seconds(10))?
+	(ended, received) = read_until_end_or_error!(client)
+	match (ended, reported) {
+		(Ok({}), Err(CopyErr({ failed: ReadA(TimedOut), b_to_a, a_to_b: 0 }))) =>
+			expect_eq((received, b_to_a), (size, size))
+		other => Err(Unexpected("after ${received.to_str()} bytes: ${Str.inspect(other)}"))
+	}
+}
+
+# Each server waits for the client to speak before aborting: a reset that
+# arrives before the client's connect has finished fails the connect itself
+# (as it should; Linux is quick enough to do that on loopback).
 abort_is_not_clean! = || {
 	(listener, address) = listen_anywhere!()?
 	_ = Task.spawn!(|| {

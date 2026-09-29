@@ -24,8 +24,10 @@ Proxy features.
   platform between any two streams (TCP, TLS, Unix) without each chunk
   becoming a Roc list. It passes half-closes on. On the first error it
   aborts both streams, so a backend that fails mid-response never reaches
-  the client as a clean (and truncated) end, and reports where it happened
-  and how far each direction got:
+  the client as a clean (and truncated) end (a stream whose incoming data
+  had already ended cleanly is left alone, so a slow client still gets a
+  finished response), and reports where it happened and how far each
+  direction got:
   `CopyErr({ failed: ReadB(ConnectionReset), a_to_b, b_to_a })`. Cancelling
   returns `Cancelled`. A read timeout counts as idle only when neither
   direction is moving (or writing to a slow peer), so a long one-way

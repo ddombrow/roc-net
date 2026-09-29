@@ -13,7 +13,11 @@
 //! - The first error aborts both streams (see [`abort`]), which ends the
 //!   other direction's waits too; later errors (usually caused by that) are
 //!   dropped. Aborting, not closing: a clean end (FIN, or TLS close_notify)
-//!   after a failure would tell the peer it had received everything.
+//!   after a failure would tell the peer it had received everything. Except
+//!   a stream whose incoming direction already ended cleanly: what it was
+//!   sent is complete, and a reset would make its peer's kernel discard
+//!   whatever it hadn't read yet (a backend's whole response, when the
+//!   client is slow to read it and then the session times out).
 //! - A read that times out tries again if the other direction moved in the
 //!   meantime, or is in the middle of a write, so a session is idle only
 //!   when neither direction is.
@@ -30,7 +34,7 @@
 
 use std::io::{self, Read};
 use std::net::Shutdown;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::sched::Woke;
@@ -48,6 +52,15 @@ pub enum Side {
     B,
 }
 
+impl Side {
+    fn index(self) -> usize {
+        match self {
+            Side::A => 0,
+            Side::B => 1,
+        }
+    }
+}
+
 pub enum CopyErr {
     Read(Side, io::Error),
     Write(Side, io::Error),
@@ -63,20 +76,36 @@ struct Shared {
     progress: AtomicU64,
     /// How many directions are in the middle of a write.
     writing: AtomicU32,
+    /// By side: the direction into that stream ended cleanly (its end of
+    /// stream was passed on), so everything sent to it is complete.
+    ended_into: [AtomicBool; 2],
     /// The first error, which is the one reported.
     first_err: Mutex<Option<CopyErr>>,
 }
 
 impl Shared {
-    /// Record `err` if it's the first, and if so abort both streams.
+    /// Record `err` if it's the first, and if so end both streams (`a` and
+    /// `b` are sides A and B): abort each, unless its incoming direction
+    /// already ended cleanly; then only stop reading it, which wakes a
+    /// reader without telling its peer anything.
     fn fail(&self, err: CopyErr, a: &Socket, b: &Socket) {
         let mut first = self.first_err.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if first.is_none() {
             *first = Some(err);
             drop(first);
-            abort(a);
-            abort(b);
+            for (socket, side) in [(a, Side::A), (b, Side::B)] {
+                if self.ended_into[side.index()].load(Ordering::Acquire) {
+                    stop_reading(socket);
+                } else {
+                    abort(socket);
+                }
+            }
         }
+    }
+
+    /// The direction into `side` passed its end of stream on.
+    fn ended_into(&self, side: Side) {
+        self.ended_into[side.index()].store(true, Ordering::Release);
     }
 }
 
@@ -109,6 +138,17 @@ pub fn abort(socket: &Socket) {
         }
         _ => {}
     }
+}
+
+/// Shut down reading only: wakes a task waiting to read, and sends the peer
+/// nothing (no FIN, reset or close_notify).
+fn stop_reading(socket: &Socket) {
+    let _ = match socket {
+        Socket::TcpStream(s) => s.io.shutdown(Shutdown::Read),
+        Socket::UnixStream(s) => s.io.shutdown(Shutdown::Read),
+        Socket::Tls(s) => s.shutdown(Shutdown::Read),
+        _ => Ok(()),
+    };
 }
 
 /// Wait, without a buffer, until a read of `socket` may find something:
@@ -265,6 +305,7 @@ fn buffered(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared, to
         match read_now(from, &mut buf).map_err(|err| read_err(sides.0, err))? {
             Some(0) => {
                 shutdown_write(to);
+                shared.ended_into(sides.1);
                 return Ok(());
             }
             Some(n) => {
@@ -292,7 +333,10 @@ fn direction(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared) -
     #[cfg(not(target_os = "linux"))]
     let result = buffered(from, to, sides, shared, &mut total);
     if let Err(err) = result {
-        shared.fail(err, from, to);
+        match sides.0 {
+            Side::A => shared.fail(err, from, to),
+            Side::B => shared.fail(err, to, from),
+        }
     }
     total
 }
@@ -304,6 +348,7 @@ pub fn copy_both(a: &Socket, b: &Socket) -> (u64, u64, Option<CopyErr>) {
     let shared = Arc::new(Shared {
         progress: AtomicU64::new(0),
         writing: AtomicU32::new(0),
+        ended_into: [AtomicBool::new(false), AtomicBool::new(false)],
         first_err: Mutex::new(None),
     });
     let b_to_a = Arc::new(AtomicU64::new(0));
@@ -458,6 +503,7 @@ mod splice {
             };
             if n == 0 {
                 shutdown_write(to);
+                shared.ended_into(sides.1);
                 return Some(Ok(()));
             }
             // Drain the pipe; with bytes in it, `WouldBlock` means `to` is

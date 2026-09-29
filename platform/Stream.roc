@@ -71,9 +71,12 @@ Stream := [].{
 	## - On an error in either direction, both streams are aborted (see
 	##   `abort!`), so neither peer mistakes what it got for everything: a
 	##   backend that resets partway through a response reaches the client
-	##   as a reset, not as a clean end. The error says where it happened
-	##   (`ReadA`, `WriteB`, and so on) and how many bytes had got through
-	##   each way.
+	##   as a reset, not as a clean end. A stream whose incoming data had
+	##   already ended cleanly isn't reset, since what it got is complete (a
+	##   reset would make its peer discard what it hadn't read yet): a slow
+	##   client still gets a finished response when the session then times
+	##   out. The error says where it happened (`ReadA`, `WriteB`, and so
+	##   on) and how many bytes had got through each way.
 	## - A TLS client that closes without close_notify fails with
 	##   `ReadA(UnexpectedEof)` unless the stream has
 	##   `ignore_unexpected_eof!(True)`, which a proxy usually wants.
