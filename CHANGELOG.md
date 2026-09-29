@@ -4,6 +4,39 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.3.1
+
+Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,
+x86-64) and static Linux (musl: arm64, x86-64).
+
+Added:
+
+- **`Stream.copy_to!(from, to, limit)`**: the one-way counterpart of
+  `copy_both!`, for streaming one direction while handling the other in
+  Roc, or sending a message's body after its header. `UntilEnd` copies
+  until `from` ends; `Exactly(n)` copies exactly `n` bytes and never reads
+  past them, so the connection is ready for the next message (for TLS, the
+  rest of a record stays in the stream). It shuts down and aborts nothing:
+  what comes next is the caller's choice. Errors are
+  `CopyToErr({ failed: Read(...) | Write(...) | MessageTimedOut, copied })`,
+  a tag of its own, so code using `?` on both `copy_to!` and `copy_both!`
+  still typechecks. `copied` counts the bytes `to` accepted; its peer may
+  have received fewer. Same copying as `copy_both!` (the two share one
+  loop): no Roc lists, no buffer while idle, and `splice` on Linux between
+  plain sockets.
+- **`Framing.Reader.copy_to!(to, limit)`**: the same, starting with the
+  bytes the reader has already buffered, and returning the reader with
+  whatever came after the limit (the start of the next message) still
+  buffered. Use it instead of `Stream.copy_to!` once a reader has read from
+  the stream. With `Exactly(n)` the bytes are one message, so the reader's
+  message timeout bounds the whole copy (`MessageTimedOut`), as it bounds
+  `read_exactly!`: a peer can't keep a connection busy by trickling a body.
+
+Fixed:
+
+- `copy_both!`'s docs said its byte counts were what got through; they're
+  what each side accepted, and the peers may have received fewer.
+
 ## 0.3.0
 
 Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,

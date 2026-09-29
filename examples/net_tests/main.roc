@@ -142,6 +142,17 @@ main! = |_args| {
 		check!("copy_both!: a write to a slow reader isn't idle", copy_both_slow_reader!),
 		check!("copy_both!: a timeout after a complete response doesn't reset the client", copy_both_timeout_after_complete_response!),
 		check!("copy_both!: data that arrived before it started is copied", copy_both_data_waiting!),
+		check!("copy_to!: two small messages buffered together, the second left in the reader", copy_to_pipelined_small!),
+		check!("copy_to!: pipelined messages over tcp, the next one left intact", copy_to_pipelined_tcp!),
+		check!("copy_to!: pipelined messages over tls, the next one left intact", copy_to_pipelined_tls!),
+		check!("copy_to!: a limit inside one tls record leaves the rest readable", copy_to_within_tls_record!),
+		check!("copy_to!: Exactly(0) copies nothing", copy_to_zero!),
+		check!("copy_to!: the source ending early is UnexpectedEof, with the count", copy_to_ends_early!),
+		check!("copy_to!: UntilEnd, and neither stream is shut down", copy_to_until_end!),
+		check!("copy_to!: tls to tls", copy_to_tls_to_tls!),
+		check!("copy_to!: cancelling returns Cancelled", copy_to_cancelled!),
+		check!("reader.copy_to!: Exactly(n) is one message, under the message timeout", copy_to_message_timeout!),
+		check!("reader.copy_to!: UntilEnd isn't a message, so no message timeout", copy_to_until_end_no_message_timeout!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
 		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
@@ -2769,4 +2780,296 @@ copy_both_data_waiting! = || {
 		Ok(bytes) => expect_eq(Str.from_utf8_lossy(bytes), "hello from the backend")
 		other => Err(Unexpected("${Str.inspect(other)}; proxy: ${Str.inspect(report.receive_timeout!(Time.seconds(5)))}"))
 	}
+}
+
+## A listener that accepts one connection, reads it to the end, and sends
+## what it got on the channel returned.
+collector! = || {
+	(listener, address) = listen_anywhere!()?
+	(got_tx, got) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		bytes = read_to_end!(stream)?
+		_ = got_tx.send!(bytes)
+		Ok({})
+	})?
+	Ok((address, got))
+}
+
+## Two messages, each a line with its length and then that many bytes, sent
+## in one write: a 200 KB body (partly buffered by the reader's first read,
+## the rest copied from the stream, with `splice` on Linux), then "abc".
+two_messages = {
+	body = Str.from_utf8_lossy(List.repeat(120, 200000))
+	"200000\n${body}3\nabc"
+}
+
+## Read the two messages from `reader`, copying each body to its own
+## connection to `sink_address`; the bodies the sink got, in order.
+copy_two_bodies! = |reader, sink_address| {
+	(first_line, r1) = reader.read_line!()?
+	first_len = U64.from_str(first_line)?
+	sink1 = Tcp.connect!(sink_address)?
+	(copied1, r2) = r1.copy_to!(sink1, Exactly(first_len))?
+	sink1.shutdown!(Write)?
+	(second_line, r3) = r2.read_line!()?
+	second_len = U64.from_str(second_line)?
+	(second, _) = r3.read_exactly!(second_len)?
+	Ok((copied1, Str.from_utf8_lossy(second)))
+}
+
+copy_to_pipelined_tcp! = || {
+	(sink_address, got) = collector!()?
+	(listener, address) = listen_anywhere!()?
+	(result_tx, result) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		_ = result_tx.send!(copy_two_bodies!(Framing.reader(stream), sink_address))
+		Ok({})
+	})?
+	client = Tcp.connect!(address)?
+	client.write_str!(two_messages)?
+	match result.receive_timeout!(Time.seconds(10))? {
+		Ok((copied, second)) =>
+			expect_eq((copied, second, Str.count_utf8_bytes(got.receive_timeout!(Time.seconds(10))?)), (200000, "abc", 200000))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+copy_to_pipelined_tls! = || {
+	(sink_address, got) = collector!()?
+	(listener, address) = tls_listen_anywhere!()?
+	(result_tx, result) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		_ = result_tx.send!(copy_two_bodies!(Framing.reader(stream), sink_address))
+		Ok({})
+	})?
+	# Keep the client open until the result is in: closing it with unread
+	# data (the server's TLS session tickets) makes Linux reset the
+	# connection under the server's reads.
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	client.write_str!(two_messages)?
+	outcome = result.receive_timeout!(Time.seconds(10))?
+	client.close!()
+	match outcome {
+		Ok((copied, second)) =>
+			expect_eq((copied, second, Str.count_utf8_bytes(got.receive_timeout!(Time.seconds(10))?)), (200000, "abc", 200000))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# One 1,000-byte write is one TLS record; copying 100 of it must leave the
+# other 900 for the stream's next read.
+copy_to_within_tls_record! = || {
+	(sink_address, got) = collector!()?
+	(listener, address) = tls_listen_anywhere!()?
+	(result_tx, result) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		sink = Tcp.connect!(sink_address)?
+		copied = Stream.copy_to!(stream, sink, Exactly(100))
+		sink.close!()
+		rest = read_to_end!(stream)
+		_ = result_tx.send!((copied, rest))
+		Ok({})
+	})?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	client.write!(List.concat(List.repeat(97, 100), List.repeat(98, 900)))?
+	# Ending the session (close_notify) is how the server's read learns the
+	# rest is complete; shutting down only writing keeps unread data from
+	# turning the close into a reset on Linux.
+	client.shutdown!(Write)?
+	outcome = result.receive_timeout!(Time.seconds(10))?
+	client.close!()
+	match outcome {
+		(Ok(copied), Ok(rest)) =>
+			expect_eq((copied, got.receive_timeout!(Time.seconds(10))?, rest), (100, Str.from_utf8_lossy(List.repeat(97, 100)), Str.from_utf8_lossy(List.repeat(98, 900))))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+copy_to_zero! = || {
+	(sink_address, got) = collector!()?
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.write_str!("untouched")?
+		Ok({})
+	})?
+	source = Tcp.connect!(address)?
+	sink = Tcp.connect!(sink_address)?
+	copied = Stream.copy_to!(source, sink, Exactly(0))?
+	sink.close!()
+	rest = read_to_end!(source)?
+	expect_eq((copied, got.receive_timeout!(Time.seconds(10))?, rest), (0, "", "untouched"))
+}
+
+copy_to_ends_early! = || {
+	(sink_address, got) = collector!()?
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.write_str!("only this")?
+		stream.shutdown!(Write)?
+		_ = read_to_end!(stream)
+		Ok({})
+	})?
+	source = Tcp.connect!(address)?
+	sink = Tcp.connect!(sink_address)?
+	result = Stream.copy_to!(source, sink, Exactly(1000))
+	sink.close!()
+	match result {
+		Err(CopyToErr({ failed: Read(UnexpectedEof), copied })) =>
+			expect_eq((copied, got.receive_timeout!(Time.seconds(10))?), (9, "only this"))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# After copying to the end of the source, the sink is still open: more can
+# be written to it, and it ends only when told to.
+copy_to_until_end! = || {
+	(sink_address, got) = collector!()?
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.write_str!("from the source; ")?
+		stream.shutdown!(Write)?
+		_ = read_to_end!(stream)
+		Ok({})
+	})?
+	source = Tcp.connect!(address)?
+	sink = Tcp.connect!(sink_address)?
+	copied = Stream.copy_to!(source, sink, UntilEnd)?
+	sink.write_str!("then more")?
+	sink.shutdown!(Write)?
+	expect_eq((copied, got.receive_timeout!(Time.seconds(10))?), (17, "from the source; then more"))
+}
+
+copy_to_tls_to_tls! = || {
+	(tls_sink, tls_sink_address) = tls_listen_anywhere!()?
+	(got_tx, got) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = tls_sink.accept!()?
+		bytes = read_to_end!(stream)?
+		_ = got_tx.send!(bytes)
+		Ok({})
+	})?
+	(listener, address) = tls_listen_anywhere!()?
+	(result_tx, result) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		sink = Tls.connect_with!(tls_sink_address, trusting_test_ca)?
+		copied = Stream.copy_to!(stream, sink, Exactly(50000))
+		sink.shutdown!(Write)?
+		_ = result_tx.send!(copied)
+		Ok({})
+	})?
+	# Keep the client open until the result is in: closing it with unread
+	# data (the server's TLS session tickets) makes Linux reset the
+	# connection under the server's reads.
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	client.write!(List.repeat(122, 50000))?
+	outcome = result.receive_timeout!(Time.seconds(10))?
+	client.close!()
+	match outcome {
+		Ok(copied) => expect_eq((copied, Str.count_utf8_bytes(got.receive_timeout!(Time.seconds(10))?)), (50000, 50000))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+copy_to_cancelled! = || {
+	(sink_address, _got) = collector!()?
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.write_str!("a little, then nothing")?
+		Time.sleep!(Time.seconds(30))?
+		# Still open until here (unused, it would close at once).
+		stream.close!()
+		Ok({})
+	})?
+	copier = Task.spawn!(|| {
+		source = Tcp.connect!(address)?
+		sink = Tcp.connect!(sink_address)?
+		Stream.copy_to!(source, sink, Exactly(1000))
+	})?
+	Time.sleep!(Time.millis(100))?
+	copier.cancel!()
+	match copier.join!() {
+		Err(Cancelled) => Ok({})
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# Both messages fit in the reader's first read, so the buffer holds the
+# whole first body and all of the second message: copying the first must
+# take only its 5 bytes, leaving the rest in the reader returned.
+copy_to_pipelined_small! = || {
+	(sink_address, got) = collector!()?
+	(listener, address) = listen_anywhere!()?
+	(result_tx, result) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		_ = result_tx.send!(copy_two_bodies!(Framing.reader(stream), sink_address))
+		Ok({})
+	})?
+	client = Tcp.connect!(address)?
+	client.write_str!("5\nhello3\nabc")?
+	match result.receive_timeout!(Time.seconds(10))? {
+		Ok((copied, second)) => expect_eq((copied, second, got.receive_timeout!(Time.seconds(10))?), (5, "abc", "hello"))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+## A peer that sends `count` bytes one at a time, `gap_ms` apart (well within
+## any idle timeout), then closes.
+trickler! = |count, gap_ms| {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		for _ in U64.until(0, count) {
+			# Stop once the other end gives up (as the timeout test's does).
+			match stream.write_str!("x") {
+				Ok({}) => {}
+				Err(_) => return Ok({})
+			}
+			Time.sleep!(Time.millis(gap_ms))?
+		}
+		stream.close!()
+		Ok({})
+	})?
+	Ok(address)
+}
+
+# A body trickled a byte every 50 ms can't hold the copy past the reader's
+# 400 ms message timeout, though no single read ever waits long.
+copy_to_message_timeout! = || {
+	address = trickler!(100, 50)?
+	(sink_address, _got) = collector!()?
+	source = Tcp.connect!(address)?
+	sink = Tcp.connect!(sink_address)?
+	reader = Framing.reader(source).with_message_timeout(Millis(400))
+	start = Time.now!()
+	result = reader.copy_to!(sink, Exactly(100))
+	took = start.elapsed!().to_millis()
+	sink.close!()
+	match result {
+		Err(CopyToErr({ failed: MessageTimedOut, copied })) =>
+			expect_eq((copied < 100, took >= 350, took < 2000), (True, True, True))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# The same trickle, for longer than the message timeout, copied `UntilEnd`:
+# a stream, so only the stream's read timeout applies, and it all arrives.
+copy_to_until_end_no_message_timeout! = || {
+	address = trickler!(12, 50)?
+	(sink_address, got) = collector!()?
+	source = Tcp.connect!(address)?
+	sink = Tcp.connect!(sink_address)?
+	reader = Framing.reader(source).with_message_timeout(Millis(200))
+	(copied, _) = reader.copy_to!(sink, UntilEnd)?
+	sink.close!()
+	expect_eq((copied, got.receive_timeout!(Time.seconds(10))?), (12, "xxxxxxxxxxxx"))
 }

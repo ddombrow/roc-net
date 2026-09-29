@@ -23,6 +23,10 @@ use crate::roc_platform_abi::{
     HostStreamCopyBoth as CopyResult, CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB as CopyOutcome,
     CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBPayload as CopyOutcomePayload,
     CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag as CopyOutcomeTag,
+    HostStreamCopyTo as CopyToResult, CancelledOrDoneOrMessageTimedOutOrReadOrWrite as CopyToOutcome,
+    CancelledOrDoneOrMessageTimedOutOrReadOrWritePayload as CopyToOutcomePayload,
+    CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag as CopyToOutcomeTag,
+    ExactlyOrUntilEnd as CopyLimit, ExactlyOrUntilEndTag as CopyLimitTag,
 };
 use crate::sockets::{self, deadline_after, with_scratch, Conn, OwnedUnixListener, ServerTimeouts, Socket};
 
@@ -791,27 +795,82 @@ pub extern "C" fn roc_stream_copy_both(a: *mut u64, b: *mut u64) -> CopyResult {
     type O = CopyOutcome;
     type P = CopyOutcomePayload;
     type T = CopyOutcomeTag;
-    let result = with_socket(a, |a| with_socket(b, |b| Ok(crate::copy::copy_both(a, b))));
-    let (a_to_b, b_to_a, failed) = match result {
-        Ok(result) => result,
-        // An invalid handle: report it as a failure to read A.
-        Err(err) => (0, 0, Some(CopyErr::Read(Side::A, match err {
-            NetErr::Io(err) => err,
-            NetErr::Other(message) => io::Error::other(message),
-            NetErr::TooManySockets => io::Error::other("too many sockets"),
-        }))),
-    };
+    // An invalid handle is a failure to read that side.
+    let result = with_socket(a, |a| {
+        Ok(with_socket(b, |b| Ok(crate::copy::copy_both(a, b))).unwrap_or_else(|err| (0, 0, Some(invalid_handle(Side::B, true, err)))))
+    });
+    let (a_to_b, b_to_a, failed) = result.unwrap_or_else(|err| (0, 0, Some(invalid_handle(Side::A, true, err))));
     let io = |err: io::Error| ManuallyDrop::new(<IOErr as FromNetErr>::from_net_err(NetErr::Io(err)));
     let outcome = match failed {
         None => O { payload: P { done: [] }, tag: T::Done },
         Some(CopyErr::Cancelled) => O { payload: P { cancelled: [] }, tag: T::Cancelled },
         Some(CopyErr::TaskLimit) => O { payload: P { task_limit_reached: [] }, tag: T::TaskLimitReached },
+        // copy_both has no deadline, so this can't happen: report it as the
+        // timeout it would be.
+        Some(CopyErr::MessageTimeout) => O { payload: P { read_a: io(io::ErrorKind::TimedOut.into()) }, tag: T::ReadA },
         Some(CopyErr::Read(Side::A, e)) => O { payload: P { read_a: io(e) }, tag: T::ReadA },
         Some(CopyErr::Read(Side::B, e)) => O { payload: P { read_b: io(e) }, tag: T::ReadB },
         Some(CopyErr::Write(Side::A, e)) => O { payload: P { write_a: io(e) }, tag: T::WriteA },
         Some(CopyErr::Write(Side::B, e)) => O { payload: P { write_b: io(e) }, tag: T::WriteB },
     };
     CopyResult { a_to_b, b_to_a, outcome }
+}
+
+/// A copy's error for a socket handle that isn't valid (only a platform bug
+/// can cause one): a failure to read or write it, as `side` says.
+fn invalid_handle(side: crate::copy::Side, reading: bool, err: NetErr) -> crate::copy::CopyErr {
+    let err = match err {
+        NetErr::Io(err) => err,
+        NetErr::Other(message) => io::Error::other(message),
+        NetErr::TooManySockets => io::Error::other("too many sockets"),
+    };
+    if reading {
+        crate::copy::CopyErr::Read(side, err)
+    } else {
+        crate::copy::CopyErr::Write(side, err)
+    }
+}
+
+/// Hosted function: Host.stream_copy_to!
+#[no_mangle]
+pub extern "C" fn roc_stream_copy_to(
+    from: *mut u64,
+    to: *mut u64,
+    prefix: RocListWith<u8, false>,
+    limit: CopyLimit,
+    message_timeout_ns: u64,
+) -> CopyToResult {
+    use crate::copy::{CopyErr, Side};
+    type O = CopyToOutcome;
+    type P = CopyToOutcomePayload;
+    type T = CopyToOutcomeTag;
+    let limit = match limit.tag {
+        CopyLimitTag::UntilEnd => None,
+        CopyLimitTag::Exactly => Some(unsafe { *limit.borrow_payload_exactly_unchecked() }),
+    };
+    let deadline = (message_timeout_ns != 0)
+        .then(|| std::time::Instant::now().checked_add(Duration::from_nanos(message_timeout_ns)))
+        .flatten();
+    // An invalid `from` is a read failure, an invalid `to` a write failure.
+    let result = with_socket(from, |from| {
+        Ok(with_socket(to, |to| Ok(crate::copy::copy_to(from, to, prefix.as_slice(), limit, deadline)))
+            .unwrap_or_else(|err| (0, Some(invalid_handle(Side::B, false, err)))))
+    });
+    unsafe { prefix.decref(roc_host()) };
+    let (copied, failed) = result.unwrap_or_else(|err| (0, Some(invalid_handle(Side::A, true, err))));
+    let io = |err: io::Error| ManuallyDrop::new(<IOErr as FromNetErr>::from_net_err(NetErr::Io(err)));
+    let outcome = match failed {
+        None => O { payload: P { done: [] }, tag: T::Done },
+        Some(CopyErr::Cancelled) => O { payload: P { cancelled: [] }, tag: T::Cancelled },
+        Some(CopyErr::MessageTimeout) => O { payload: P { message_timed_out: [] }, tag: T::MessageTimedOut },
+        Some(CopyErr::Read(_, e)) => O { payload: P { read: io(e) }, tag: T::Read },
+        Some(CopyErr::Write(_, e)) => O { payload: P { write: io(e) }, tag: T::Write },
+        // copy_to starts no task, so this can't happen: say so if it does.
+        Some(CopyErr::TaskLimit) => {
+            O { payload: P { read: io(io::Error::other("copy_to reached the task limit")) }, tag: T::Read }
+        }
+    };
+    CopyToResult { copied, outcome }
 }
 
 /// Hosted function: Host.socket_abort!

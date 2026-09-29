@@ -80,6 +80,7 @@ platform ""
 		"roc_socket_shutdown": Host.socket_shutdown!,
 		"roc_socket_write": Host.socket_write!,
 		"roc_stream_copy_both": Host.stream_copy_both!,
+		"roc_stream_copy_to": Host.stream_copy_to!,
 		"roc_tcp_connect": Host.tcp_connect!,
 		"roc_tcp_listen": Host.tcp_listen!,
 		"roc_tcp_set_nodelay": Host.tcp_set_nodelay!,
@@ -121,6 +122,7 @@ import Task
 import Bytes
 import Channel
 import Dns
+import Stream
 import Framing
 import Tcp
 import Time
@@ -131,7 +133,6 @@ import Host
 import IOErr
 import Random
 import Select
-import Stream
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {
