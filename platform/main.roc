@@ -40,7 +40,7 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Channel, Dns, Framing, IOErr, Random, Select, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
+	exposes [Bytes, Channel, Dns, Framing, IOErr, Random, Select, Stdout, Stderr, Stdin, Stream, Task, Tcp, Time, Tls, Udp, Unix]
 	packages { roc: "nightly-2026-09-24-f45bfbe" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
@@ -52,6 +52,7 @@ platform ""
 		"roc_task_join": Host.task_join!,
 		"roc_task_cancel": Host.task_cancel!,
 		"roc_task_is_cancelled": Host.task_is_cancelled!,
+		"roc_task_is_finished": Host.task_is_finished!,
 		"roc_task_yield": Host.task_yield!,
 		"roc_group_new": Host.group_new!,
 		"roc_group_add": Host.group_add!,
@@ -66,6 +67,7 @@ platform ""
 		"roc_random_bytes": Host.random_bytes!,
 		"roc_time_now_ns": Host.time_now_ns!,
 		"roc_time_sleep_ns": Host.time_sleep_ns!,
+		"roc_socket_abort": Host.socket_abort!,
 		"roc_socket_accept": Host.socket_accept!,
 		"roc_socket_local_addr": Host.socket_local_addr!,
 		"roc_socket_peer_addr": Host.socket_peer_addr!,
@@ -77,13 +79,16 @@ platform ""
 		"roc_socket_set_timeout": Host.socket_set_timeout!,
 		"roc_socket_shutdown": Host.socket_shutdown!,
 		"roc_socket_write": Host.socket_write!,
+		"roc_stream_copy_both": Host.stream_copy_both!,
 		"roc_tcp_connect": Host.tcp_connect!,
 		"roc_tcp_listen": Host.tcp_listen!,
 		"roc_tcp_set_nodelay": Host.tcp_set_nodelay!,
+		"roc_tls_alpn_protocol": Host.tls_alpn_protocol!,
 		"roc_tls_connect": Host.tls_connect!,
 		"roc_tls_handshake": Host.tls_handshake!,
 		"roc_tls_ignore_unexpected_eof": Host.tls_ignore_unexpected_eof!,
 		"roc_tls_listen": Host.tls_listen!,
+		"roc_tls_server_name": Host.tls_server_name!,
 		"roc_tls_wrap_client": Host.tls_wrap_client!,
 		"roc_tls_wrap_server": Host.tls_wrap_server!,
 		"roc_udp_bind": Host.udp_bind!,
@@ -126,6 +131,7 @@ import Host
 import IOErr
 import Random
 import Select
+import Stream
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {

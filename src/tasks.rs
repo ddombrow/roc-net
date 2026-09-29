@@ -155,6 +155,25 @@ pub extern "C" fn roc_task_spawn(callable: RocErasedCallable) -> HostTaskSpawnRe
     }
 }
 
+/// Start a task that runs host code only (no Roc closure, no handle for
+/// Roc), counted against the task limit like any other. `None` at the
+/// limit, or if no stack can be allocated.
+pub fn spawn_host(job: impl FnOnce() + Send + 'static) -> Option<TaskRef> {
+    let slot = try_claim_slot()?;
+    match sched::spawn(Box::new(move || {
+        job();
+        drop(slot);
+    })) {
+        Ok(task) => Some(task),
+        Err((job, err)) => {
+            warn_no_stack(&err);
+            // Releases the task slot.
+            drop(job);
+            None
+        }
+    }
+}
+
 /// Hosted function: Host.task_finish!
 #[no_mangle]
 pub extern "C" fn roc_task_finish(result: RocErasedCallable) -> bool {
@@ -211,6 +230,33 @@ pub extern "C" fn roc_task_cancel(handle: *mut u64) {
 #[no_mangle]
 pub extern "C" fn roc_task_is_cancelled() -> bool {
     sched::is_cancelled()
+}
+
+/// Hosted function: Host.task_is_finished!
+#[no_mangle]
+pub extern "C" fn roc_task_is_finished(handle: *mut u64) -> bool {
+    with_obj(handle, |obj| match obj {
+        Some(TaskObj::Handle(Handle(task))) => task.is_finished(),
+        // Not a task handle: nothing to wait for.
+        _ => true,
+    })
+}
+
+/// For `Select`: `None` if the task behind `handle` has finished (or it
+/// isn't a task handle); otherwise `waker` is registered for when it does,
+/// under the id returned. The handle is borrowed: the caller keeps its
+/// reference until after [`unwatch`].
+pub fn watch(handle: *mut u64, waker: &sched::TaskWaker) -> Option<u64> {
+    match unsafe { heap().get(handle) } {
+        Ok(TaskObj::Handle(Handle(task))) => task.watch_finished(waker),
+        _ => None,
+    }
+}
+
+pub fn unwatch(handle: *mut u64, id: u64) {
+    if let Ok(TaskObj::Handle(Handle(task))) = unsafe { heap().get(handle) } {
+        task.unwatch_finished(id);
+    }
 }
 
 /// Hosted function: Host.task_yield!

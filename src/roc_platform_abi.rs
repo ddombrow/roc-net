@@ -1098,6 +1098,64 @@ unsafe impl<T> RocRelease<*mut T> for RocBoxSpineRelease<T> {
     }
 }
 
+/// Element type for __AnonStruct_f1e164f99c294fde
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStructF1e164f99c294fde {
+    pub cert_file: RocStr,
+    pub key_file: RocStr,
+    pub name: RocStr,
+}
+
+/// Element type for __AnonStruct_f1e164f99c294fde
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStructF1e164f99c294fde {
+    pub cert_file: RocStr,
+    pub key_file: RocStr,
+    pub name: RocStr,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<AnonStructF1e164f99c294fde>() == 72, "AnonStructF1e164f99c294fde size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<AnonStructF1e164f99c294fde>() == 8, "AnonStructF1e164f99c294fde alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<AnonStructF1e164f99c294fde>() == 36, "AnonStructF1e164f99c294fde size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<AnonStructF1e164f99c294fde>() == 4, "AnonStructF1e164f99c294fde alignment mismatch");
+
+/// Element type for __AnonStruct_91380971f8261c26
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStruct91380971f8261c26 {
+    pub a_to_b: u64,
+    pub b_to_a: u64,
+    pub outcome: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB,
+}
+
+/// Element type for __AnonStruct_91380971f8261c26
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStruct91380971f8261c26 {
+    pub a_to_b: u64,
+    pub b_to_a: u64,
+    pub outcome: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<AnonStruct91380971f8261c26>() == 56, "AnonStruct91380971f8261c26 size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<AnonStruct91380971f8261c26>() == 8, "AnonStruct91380971f8261c26 alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<AnonStruct91380971f8261c26>() == 40, "AnonStruct91380971f8261c26 size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<AnonStruct91380971f8261c26>() == 8, "AnonStruct91380971f8261c26 alignment mismatch");
+
 /// Element type for __AnonStruct_4f4f23a245dfe10a
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
@@ -1712,6 +1770,133 @@ const _: () = assert!(core::mem::offset_of!(IOErr, tag) == 12, "IOErr tag offset
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostSocketLocalAddrResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostSocketLocalAddrResultPayload {
+    pub err: core::mem::ManuallyDrop<IOErr>,
+    pub ok: core::mem::ManuallyDrop<RocStr>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostSocketLocalAddrResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketLocalAddrResult {
+    pub _payload_alignment: [HostSocketLocalAddrResultPayloadAlignment; 0],
+    pub payload: [u8; 16],
+    pub tag: HostSocketLocalAddrResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketLocalAddrResult {
+    pub payload: HostSocketLocalAddrResultPayload,
+    pub tag: HostSocketLocalAddrResultTag,
+}
+
+impl HostSocketLocalAddrResult {
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketLocalAddrResultTag::Err` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketLocalAddrResultTag::Err` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketLocalAddrResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketLocalAddrResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketLocalAddrResultTag::Ok` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Ok` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketLocalAddrResultTag::Ok` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketLocalAddrResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Ok` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostSocketLocalAddrResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostSocketLocalAddrResult>() == 40, "HostSocketLocalAddrResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostSocketLocalAddrResult>() == 8, "HostSocketLocalAddrResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostSocketLocalAddrResult, tag) == 32, "HostSocketLocalAddrResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostSocketLocalAddrResult>() == 20, "HostSocketLocalAddrResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostSocketLocalAddrResult>() == 4, "HostSocketLocalAddrResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostSocketLocalAddrResult, tag) == 16, "HostSocketLocalAddrResult tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostSocketSetTimeoutResultTag {
     Err = 0,
     Ok = 1,
@@ -2185,132 +2370,214 @@ const _: () = assert!(core::mem::align_of::<AcceptedOrFailedOrNotReady>() == 4, 
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(AcceptedOrFailedOrNotReady, tag) == 16, "AcceptedOrFailedOrNotReady tag offset mismatch");
 
-/// Tag discriminant for Try.
+/// Tag discriminant for CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostSocketLocalAddrResultTag {
-    Err = 0,
-    Ok = 1,
+pub enum CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag {
+    Cancelled = 0,
+    Done = 1,
+    ReadA = 2,
+    ReadB = 3,
+    TaskLimitReached = 4,
+    WriteA = 5,
+    WriteB = 6,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union HostSocketLocalAddrResultPayload {
-    pub err: core::mem::ManuallyDrop<IOErr>,
-    pub ok: core::mem::ManuallyDrop<RocStr>,
+pub union CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBPayload {
+    pub cancelled: [u8; 0],
+    pub done: [u8; 0],
+    pub read_a: core::mem::ManuallyDrop<IOErr>,
+    pub read_b: core::mem::ManuallyDrop<IOErr>,
+    pub task_limit_reached: [u8; 0],
+    pub write_a: core::mem::ManuallyDrop<IOErr>,
+    pub write_b: core::mem::ManuallyDrop<IOErr>,
 }
 
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct HostSocketLocalAddrResultPayloadAlignment;
+pub struct CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBPayloadAlignment;
 
-/// Tag union: Try
+/// Tag union: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostSocketLocalAddrResult {
-    pub _payload_alignment: [HostSocketLocalAddrResultPayloadAlignment; 0],
+pub struct CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB {
+    pub _payload_alignment: [CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBPayloadAlignment; 0],
     pub payload: [u8; 16],
-    pub tag: HostSocketLocalAddrResultTag,
+    pub tag: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag,
 }
 
-/// Tag union: Try
+/// Tag union: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostSocketLocalAddrResult {
-    pub payload: HostSocketLocalAddrResultPayload,
-    pub tag: HostSocketLocalAddrResultTag,
+pub struct CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB {
+    pub payload: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBPayload,
+    pub tag: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag,
 }
 
-impl HostSocketLocalAddrResult {
-    /// Borrow the `Err` payload without creating another owner.
+impl CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB {
+    /// Borrow the `ReadA` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostSocketLocalAddrResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadA` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
+    pub unsafe fn borrow_payload_read_a_unchecked(&self) -> &IOErr {
         unsafe { &*(self.payload.as_ptr() as *const IOErr) }
     }
 
-    /// Borrow the `Err` payload without creating another owner.
+    /// Borrow the `ReadA` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostSocketLocalAddrResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadA` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &IOErr {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
+    pub unsafe fn borrow_payload_read_a_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.read_a as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
     }
 
-    /// Move the `Err` payload out of one owned tag-union shell.
+    /// Move the `ReadA` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostSocketLocalAddrResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadA`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
+    pub unsafe fn take_payload_read_a_unchecked(&mut self) -> IOErr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
     }
 
-    /// Move the `Err` payload out of one owned tag-union shell.
+    /// Move the `ReadA` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostSocketLocalAddrResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadA`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> IOErr {
-        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    pub unsafe fn take_payload_read_a_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.read_a) }
     }
 
-    /// Borrow the `Ok` payload without creating another owner.
+    /// Borrow the `ReadB` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostSocketLocalAddrResultTag::Ok` and the payload must still be initialized.
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadB` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
-        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn borrow_payload_read_b_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
     }
 
-    /// Borrow the `Ok` payload without creating another owner.
+    /// Borrow the `ReadB` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostSocketLocalAddrResultTag::Ok` and the payload must still be initialized.
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadB` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_ok_unchecked(&self) -> &RocStr {
-        unsafe { &*(&self.payload.ok as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    pub unsafe fn borrow_payload_read_b_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.read_b as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
     }
 
-    /// Move the `Ok` payload out of one owned tag-union shell.
+    /// Move the `ReadB` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostSocketLocalAddrResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadB`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn take_payload_read_b_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
     }
 
-    /// Move the `Ok` payload out of one owned tag-union shell.
+    /// Move the `ReadB` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostSocketLocalAddrResultTag::Ok`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadB`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_ok_unchecked(&mut self) -> RocStr {
-        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.ok) }
+    pub unsafe fn take_payload_read_b_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.read_b) }
+    }
+
+    /// Borrow the `WriteA` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteA` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_write_a_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Borrow the `WriteA` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteA` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_write_a_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.write_a as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
+    }
+
+    /// Move the `WriteA` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteA`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_write_a_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Move the `WriteA` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteA`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_write_a_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.write_a) }
+    }
+
+    /// Borrow the `WriteB` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteB` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_write_b_unchecked(&self) -> &IOErr {
+        unsafe { &*(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Borrow the `WriteB` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteB` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_write_b_unchecked(&self) -> &IOErr {
+        unsafe { &*(&self.payload.write_b as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
+    }
+
+    /// Move the `WriteB` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteB`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_write_b_unchecked(&mut self) -> IOErr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
+    }
+
+    /// Move the `WriteB` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteB`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_write_b_unchecked(&mut self) -> IOErr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.write_b) }
     }
 
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostSocketLocalAddrResult>() == 40, "HostSocketLocalAddrResult size mismatch");
+const _: () = assert!(core::mem::size_of::<CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB>() == 40, "CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<HostSocketLocalAddrResult>() == 8, "HostSocketLocalAddrResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB>() == 8, "CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostSocketLocalAddrResult, tag) == 32, "HostSocketLocalAddrResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB, tag) == 32, "CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostSocketLocalAddrResult>() == 20, "HostSocketLocalAddrResult size mismatch");
+const _: () = assert!(core::mem::size_of::<CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB>() == 20, "CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<HostSocketLocalAddrResult>() == 4, "HostSocketLocalAddrResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB>() == 4, "CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostSocketLocalAddrResult, tag) == 16, "HostSocketLocalAddrResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB, tag) == 16, "CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -3037,19 +3304,21 @@ const _: () = assert!(core::mem::align_of::<CancelledOrReadyOrSourceTimedOutOrTi
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(CancelledOrReadyOrSourceTimedOutOrTimedOut, tag) == 8, "CancelledOrReadyOrSourceTimedOutOrTimedOut tag offset mismatch");
 
-/// Tag discriminant for ReadableOrReceivableOrSendableOrWritable.
+/// Tag discriminant for JoinableOrReadableOrReceivableOrSendableOrWritable.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadableOrReceivableOrSendableOrWritableTag {
-    Readable = 0,
-    Receivable = 1,
-    Sendable = 2,
-    Writable = 3,
+pub enum JoinableOrReadableOrReceivableOrSendableOrWritableTag {
+    Joinable = 0,
+    Readable = 1,
+    Receivable = 2,
+    Sendable = 3,
+    Writable = 4,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union ReadableOrReceivableOrSendableOrWritablePayload {
+pub union JoinableOrReadableOrReceivableOrSendableOrWritablePayload {
+    pub joinable: core::mem::ManuallyDrop<*mut u64>,
     pub readable: core::mem::ManuallyDrop<*mut u64>,
     pub receivable: core::mem::ManuallyDrop<*mut u64>,
     pub sendable: core::mem::ManuallyDrop<*mut u64>,
@@ -3059,32 +3328,68 @@ pub union ReadableOrReceivableOrSendableOrWritablePayload {
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct ReadableOrReceivableOrSendableOrWritablePayloadAlignment;
+pub struct JoinableOrReadableOrReceivableOrSendableOrWritablePayloadAlignment;
 
-/// Tag union: ReadableOrReceivableOrSendableOrWritable
+/// Tag union: JoinableOrReadableOrReceivableOrSendableOrWritable
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ReadableOrReceivableOrSendableOrWritable {
-    pub _payload_alignment: [ReadableOrReceivableOrSendableOrWritablePayloadAlignment; 0],
+pub struct JoinableOrReadableOrReceivableOrSendableOrWritable {
+    pub _payload_alignment: [JoinableOrReadableOrReceivableOrSendableOrWritablePayloadAlignment; 0],
     pub payload: [u8; 4],
-    pub tag: ReadableOrReceivableOrSendableOrWritableTag,
+    pub tag: JoinableOrReadableOrReceivableOrSendableOrWritableTag,
 }
 
-/// Tag union: ReadableOrReceivableOrSendableOrWritable
+/// Tag union: JoinableOrReadableOrReceivableOrSendableOrWritable
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ReadableOrReceivableOrSendableOrWritable {
-    pub payload: ReadableOrReceivableOrSendableOrWritablePayload,
-    pub tag: ReadableOrReceivableOrSendableOrWritableTag,
+pub struct JoinableOrReadableOrReceivableOrSendableOrWritable {
+    pub payload: JoinableOrReadableOrReceivableOrSendableOrWritablePayload,
+    pub tag: JoinableOrReadableOrReceivableOrSendableOrWritableTag,
 }
 
-impl ReadableOrReceivableOrSendableOrWritable {
+impl JoinableOrReadableOrReceivableOrSendableOrWritable {
+    /// Borrow the `Joinable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Joinable` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_joinable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Borrow the `Joinable` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Joinable` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_joinable_unchecked(&self) -> &*mut u64 {
+        unsafe { &*(&self.payload.joinable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
+    }
+
+    /// Move the `Joinable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Joinable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_joinable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
+    }
+
+    /// Move the `Joinable` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Joinable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_joinable_unchecked(&mut self) -> *mut u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.joinable) }
+    }
+
     /// Borrow the `Readable` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Readable` and the payload must still be initialized.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Readable` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_readable_unchecked(&self) -> &*mut u64 {
         unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
@@ -3093,7 +3398,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Borrow the `Readable` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Readable` and the payload must still be initialized.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Readable` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_readable_unchecked(&self) -> &*mut u64 {
         unsafe { &*(&self.payload.readable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
@@ -3102,7 +3407,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Move the `Readable` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Readable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Readable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_readable_unchecked(&mut self) -> *mut u64 {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
@@ -3111,7 +3416,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Move the `Readable` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Readable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Readable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_readable_unchecked(&mut self) -> *mut u64 {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.readable) }
@@ -3120,7 +3425,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Borrow the `Receivable` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Receivable` and the payload must still be initialized.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Receivable` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_receivable_unchecked(&self) -> &*mut u64 {
         unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
@@ -3129,7 +3434,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Borrow the `Receivable` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Receivable` and the payload must still be initialized.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Receivable` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_receivable_unchecked(&self) -> &*mut u64 {
         unsafe { &*(&self.payload.receivable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
@@ -3138,7 +3443,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Move the `Receivable` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Receivable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Receivable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_receivable_unchecked(&mut self) -> *mut u64 {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
@@ -3147,7 +3452,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Move the `Receivable` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Receivable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Receivable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_receivable_unchecked(&mut self) -> *mut u64 {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.receivable) }
@@ -3156,7 +3461,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Borrow the `Sendable` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Sendable` and the payload must still be initialized.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Sendable` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_sendable_unchecked(&self) -> &*mut u64 {
         unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
@@ -3165,7 +3470,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Borrow the `Sendable` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Sendable` and the payload must still be initialized.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Sendable` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_sendable_unchecked(&self) -> &*mut u64 {
         unsafe { &*(&self.payload.sendable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
@@ -3174,7 +3479,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Move the `Sendable` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Sendable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Sendable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_sendable_unchecked(&mut self) -> *mut u64 {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
@@ -3183,7 +3488,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Move the `Sendable` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Sendable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Sendable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_sendable_unchecked(&mut self) -> *mut u64 {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.sendable) }
@@ -3192,7 +3497,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Borrow the `Writable` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Writable` and the payload must still be initialized.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Writable` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_writable_unchecked(&self) -> &*mut u64 {
         unsafe { &*(self.payload.as_ptr() as *const *mut u64) }
@@ -3201,7 +3506,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Borrow the `Writable` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Writable` and the payload must still be initialized.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Writable` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_writable_unchecked(&self) -> &*mut u64 {
         unsafe { &*(&self.payload.writable as *const core::mem::ManuallyDrop<*mut u64> as *const *mut u64) }
@@ -3210,7 +3515,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Move the `Writable` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Writable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Writable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_writable_unchecked(&mut self) -> *mut u64 {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const *mut u64) }
@@ -3219,7 +3524,7 @@ impl ReadableOrReceivableOrSendableOrWritable {
     /// Move the `Writable` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `ReadableOrReceivableOrSendableOrWritableTag::Writable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `JoinableOrReadableOrReceivableOrSendableOrWritableTag::Writable`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_writable_unchecked(&mut self) -> *mut u64 {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.writable) }
@@ -3228,17 +3533,17 @@ impl ReadableOrReceivableOrSendableOrWritable {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<ReadableOrReceivableOrSendableOrWritable>() == 16, "ReadableOrReceivableOrSendableOrWritable size mismatch");
+const _: () = assert!(core::mem::size_of::<JoinableOrReadableOrReceivableOrSendableOrWritable>() == 16, "JoinableOrReadableOrReceivableOrSendableOrWritable size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<ReadableOrReceivableOrSendableOrWritable>() == 8, "ReadableOrReceivableOrSendableOrWritable alignment mismatch");
+const _: () = assert!(core::mem::align_of::<JoinableOrReadableOrReceivableOrSendableOrWritable>() == 8, "JoinableOrReadableOrReceivableOrSendableOrWritable alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(ReadableOrReceivableOrSendableOrWritable, tag) == 8, "ReadableOrReceivableOrSendableOrWritable tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(JoinableOrReadableOrReceivableOrSendableOrWritable, tag) == 8, "JoinableOrReadableOrReceivableOrSendableOrWritable tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<ReadableOrReceivableOrSendableOrWritable>() == 8, "ReadableOrReceivableOrSendableOrWritable size mismatch");
+const _: () = assert!(core::mem::size_of::<JoinableOrReadableOrReceivableOrSendableOrWritable>() == 8, "JoinableOrReadableOrReceivableOrSendableOrWritable size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<ReadableOrReceivableOrSendableOrWritable>() == 4, "ReadableOrReceivableOrSendableOrWritable alignment mismatch");
+const _: () = assert!(core::mem::align_of::<JoinableOrReadableOrReceivableOrSendableOrWritable>() == 4, "JoinableOrReadableOrReceivableOrSendableOrWritable alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(ReadableOrReceivableOrSendableOrWritable, tag) == 4, "ReadableOrReceivableOrSendableOrWritable tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(JoinableOrReadableOrReceivableOrSendableOrWritable, tag) == 4, "JoinableOrReadableOrReceivableOrSendableOrWritable tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -3513,6 +3818,37 @@ const _: () = assert!(core::mem::align_of::<HostGroupNewResult>() == 4, "HostGro
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostGroupNewResult, tag) == 4, "HostGroupNewResult tag offset mismatch");
 
+/// Return type record for Host.stream_copy_both!
+/// Fields ordered by compiler-emitted ABI offsets.
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostStreamCopyBothRetRecord {
+    pub a_to_b: u64,
+    pub b_to_a: u64,
+    pub outcome: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB,
+}
+
+/// Return type record for Host.stream_copy_both!
+/// Fields ordered by compiler-emitted ABI offsets.
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostStreamCopyBothRetRecord {
+    pub a_to_b: u64,
+    pub b_to_a: u64,
+    pub outcome: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostStreamCopyBothRetRecord>() == 56, "HostStreamCopyBothRetRecord size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostStreamCopyBothRetRecord>() == 8, "HostStreamCopyBothRetRecord alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostStreamCopyBothRetRecord>() == 40, "HostStreamCopyBothRetRecord size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostStreamCopyBothRetRecord>() == 8, "HostStreamCopyBothRetRecord alignment mismatch");
+
 /// Arguments for Host.stderr_line!
 /// Roc signature: Str => Try({}, [StderrErr(Str)])
 /// Refcounted fields are owned by the hosted function.
@@ -3567,6 +3903,15 @@ pub struct HostTaskCancelArgs {
     pub arg0: *mut u64,
 }
 
+/// Arguments for Host.task_is_finished!
+/// Roc signature: Host.TaskHandle => Bool
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTaskIsFinishedArgs {
+    pub arg0: *mut u64,
+}
+
 /// Arguments for Host.group_add!
 /// Roc signature: Host.TaskGroup, Host.TaskHandle => {}
 /// Refcounted fields are owned by the hosted function.
@@ -3597,12 +3942,12 @@ pub struct HostChannelCloseArgs {
 }
 
 /// Arguments for Host.select_wait!
-/// Roc signature: List([Readable(Host.Socket), Receivable(Host.ChannelEnd), Sendable(Host.ChannelEnd), Writable(Host.Socket)]), U64 => [Cancelled, Ready, SourceTimedOut(U64), TimedOut]
+/// Roc signature: List([Joinable(Host.TaskHandle), Readable(Host.Socket), Receivable(Host.ChannelEnd), Sendable(Host.ChannelEnd), Writable(Host.Socket)]), U64 => [Cancelled, Ready, SourceTimedOut(U64), TimedOut]
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HostSelectWaitArgs {
-    pub arg0: RocList<ReadableOrReceivableOrSendableOrWritable>,
+    pub arg0: RocList<JoinableOrReadableOrReceivableOrSendableOrWritable>,
     pub arg1: u64,
 }
 
@@ -3662,6 +4007,15 @@ pub struct HostRandomBytesArgs {
 #[derive(Clone, Copy)]
 pub struct HostTimeSleepNsArgs {
     pub arg0: u64,
+}
+
+/// Arguments for Host.socket_abort!
+/// Roc signature: Host.Socket => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostSocketAbortArgs {
+    pub arg0: *mut u64,
 }
 
 /// Arguments for Host.socket_accept!
@@ -3773,6 +4127,16 @@ pub struct HostSocketWriteArgs {
     pub arg1: RocListWith<u8, false>,
 }
 
+/// Arguments for Host.stream_copy_both!
+/// Roc signature: Host.Socket, Host.Socket => { a_to_b : U64, b_to_a : U64, outcome : [Cancelled, Done, ReadA(IOErr), ReadB(IOErr), TaskLimitReached, WriteA(IOErr), WriteB(IOErr)] }
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostStreamCopyBothArgs {
+    pub arg0: *mut u64,
+    pub arg1: *mut u64,
+}
+
 /// Arguments for Host.tcp_connect!
 /// Roc signature: Str, U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
@@ -3804,8 +4168,17 @@ pub struct HostTcpSetNodelayArgs {
     pub arg1: bool,
 }
 
+/// Arguments for Host.tls_alpn_protocol!
+/// Roc signature: Host.Socket => Try(Str, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTlsAlpnProtocolArgs {
+    pub arg0: *mut u64,
+}
+
 /// Arguments for Host.tls_connect!
-/// Roc signature: Str, Str, Str, U64 => Try(Host.Socket, IOErr)
+/// Roc signature: Str, Str, Str, List(Str), U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -3813,7 +4186,8 @@ pub struct HostTlsConnectArgs {
     pub arg0: RocStr,
     pub arg1: RocStr,
     pub arg2: RocStr,
-    pub arg3: u64,
+    pub arg3: RocList<RocStr>,
+    pub arg4: u64,
 }
 
 /// Arguments for Host.tls_handshake!
@@ -3836,21 +4210,30 @@ pub struct HostTlsIgnoreUnexpectedEofArgs {
 }
 
 /// Arguments for Host.tls_listen!
-/// Roc signature: Str, Str, Str, U64, U64, U64 => Try(Host.Socket, IOErr)
+/// Roc signature: Str, List({ cert_file : Str, key_file : Str, name : Str }), List(Str), U64, U64, U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HostTlsListenArgs {
     pub arg0: RocStr,
-    pub arg1: RocStr,
-    pub arg2: RocStr,
+    pub arg1: RocList<AnonStructF1e164f99c294fde>,
+    pub arg2: RocList<RocStr>,
     pub arg3: u64,
     pub arg4: u64,
     pub arg5: u64,
 }
 
+/// Arguments for Host.tls_server_name!
+/// Roc signature: Host.Socket => Try(Str, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostTlsServerNameArgs {
+    pub arg0: *mut u64,
+}
+
 /// Arguments for Host.tls_wrap_client!
-/// Roc signature: Host.Socket, Str, Str, U64 => Try(Host.Socket, IOErr)
+/// Roc signature: Host.Socket, Str, Str, List(Str), U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -3858,18 +4241,19 @@ pub struct HostTlsWrapClientArgs {
     pub arg0: *mut u64,
     pub arg1: RocStr,
     pub arg2: RocStr,
-    pub arg3: u64,
+    pub arg3: RocList<RocStr>,
+    pub arg4: u64,
 }
 
 /// Arguments for Host.tls_wrap_server!
-/// Roc signature: Host.Socket, Str, Str, U64 => Try(Host.Socket, IOErr)
+/// Roc signature: Host.Socket, List({ cert_file : Str, key_file : Str, name : Str }), List(Str), U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HostTlsWrapServerArgs {
     pub arg0: *mut u64,
-    pub arg1: RocStr,
-    pub arg2: RocStr,
+    pub arg1: RocList<AnonStructF1e164f99c294fde>,
+    pub arg2: RocList<RocStr>,
     pub arg3: u64,
 }
 
@@ -3966,9 +4350,9 @@ pub struct HostUnixListenArgs {
 
 // Platform Type Aliases
 
-pub type HostSelectWaitArg0 = ReadableOrReceivableOrSendableOrWritable;
-pub type HostSelectWaitArg0Payload = ReadableOrReceivableOrSendableOrWritablePayload;
-pub type HostSelectWaitArg0Tag = ReadableOrReceivableOrSendableOrWritableTag;
+pub type HostSelectWaitArg0 = JoinableOrReadableOrReceivableOrSendableOrWritable;
+pub type HostSelectWaitArg0Payload = JoinableOrReadableOrReceivableOrSendableOrWritablePayload;
+pub type HostSelectWaitArg0Tag = JoinableOrReadableOrReceivableOrSendableOrWritableTag;
 pub type HostChannelNewOk = AnonStructDfa5943259877aa7;
 pub type HostChannelReceiveErr = CancelledOrClosedOrTimedOut;
 pub type HostSocketPeerAddrResult = HostSocketLocalAddrResult;
@@ -3986,6 +4370,7 @@ pub type HostSocketShutdownResultTag = HostSocketSetTimeoutResultTag;
 pub type HostSocketWriteResult = HostSocketSetTimeoutResult;
 pub type HostSocketWriteResultPayload = HostSocketSetTimeoutResultPayload;
 pub type HostSocketWriteResultTag = HostSocketSetTimeoutResultTag;
+pub type HostStreamCopyBoth = AnonStruct91380971f8261c26;
 pub type HostTcpConnectResult = HostSocketAcceptResult;
 pub type HostTcpConnectResultPayload = HostSocketAcceptResultPayload;
 pub type HostTcpConnectResultTag = HostSocketAcceptResultTag;
@@ -3995,6 +4380,9 @@ pub type HostTcpListenResultTag = HostSocketAcceptResultTag;
 pub type HostTcpSetNodelayResult = HostSocketSetTimeoutResult;
 pub type HostTcpSetNodelayResultPayload = HostSocketSetTimeoutResultPayload;
 pub type HostTcpSetNodelayResultTag = HostSocketSetTimeoutResultTag;
+pub type HostTlsAlpnProtocolResult = HostSocketLocalAddrResult;
+pub type HostTlsAlpnProtocolResultPayload = HostSocketLocalAddrResultPayload;
+pub type HostTlsAlpnProtocolResultTag = HostSocketLocalAddrResultTag;
 pub type HostTlsConnectResult = HostSocketAcceptResult;
 pub type HostTlsConnectResultPayload = HostSocketAcceptResultPayload;
 pub type HostTlsConnectResultTag = HostSocketAcceptResultTag;
@@ -4004,12 +4392,17 @@ pub type HostTlsHandshakeResultTag = HostSocketSetTimeoutResultTag;
 pub type HostTlsIgnoreUnexpectedEofResult = HostSocketSetTimeoutResult;
 pub type HostTlsIgnoreUnexpectedEofResultPayload = HostSocketSetTimeoutResultPayload;
 pub type HostTlsIgnoreUnexpectedEofResultTag = HostSocketSetTimeoutResultTag;
+pub type HostTlsListenArg1 = AnonStructF1e164f99c294fde;
 pub type HostTlsListenResult = HostSocketAcceptResult;
 pub type HostTlsListenResultPayload = HostSocketAcceptResultPayload;
 pub type HostTlsListenResultTag = HostSocketAcceptResultTag;
+pub type HostTlsServerNameResult = HostSocketLocalAddrResult;
+pub type HostTlsServerNameResultPayload = HostSocketLocalAddrResultPayload;
+pub type HostTlsServerNameResultTag = HostSocketLocalAddrResultTag;
 pub type HostTlsWrapClientResult = HostSocketAcceptResult;
 pub type HostTlsWrapClientResultPayload = HostSocketAcceptResultPayload;
 pub type HostTlsWrapClientResultTag = HostSocketAcceptResultTag;
+pub type HostTlsWrapServerArg1 = AnonStructF1e164f99c294fde;
 pub type HostTlsWrapServerResult = HostSocketAcceptResult;
 pub type HostTlsWrapServerResultPayload = HostSocketAcceptResultPayload;
 pub type HostTlsWrapServerResultTag = HostSocketAcceptResultTag;
@@ -4298,6 +4691,88 @@ unsafe impl RocRelease<IOErr> for IOErrRelease {
     }
 }
 
+impl AnonStructF1e164f99c294fde {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.cert_file.decref(roc_host); }
+        unsafe { value.key_file.decref(roc_host); }
+        unsafe { value.name.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.cert_file.incref(amount); }
+        unsafe { value.key_file.incref(amount); }
+        unsafe { value.name.incref(amount); }
+    }
+}
+
+pub struct AnonStructF1e164f99c294fdeRelease;
+
+unsafe impl RocRelease<AnonStructF1e164f99c294fde> for AnonStructF1e164f99c294fdeRelease {
+    unsafe fn release(value: AnonStructF1e164f99c294fde, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostSocketLocalAddrResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostSocketLocalAddrResultTag::Err => {
+                let payload = unsafe { value.take_payload_err_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            HostSocketLocalAddrResultTag::Ok => {
+                let payload = unsafe { value.take_payload_ok_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostSocketLocalAddrResultTag::Err => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostSocketLocalAddrResultTag::Ok => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct HostSocketLocalAddrResultRelease;
+
+unsafe impl RocRelease<HostSocketLocalAddrResult> for HostSocketLocalAddrResultRelease {
+    unsafe fn release(value: HostSocketLocalAddrResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl HostSocketSetTimeoutResult {
     /// Recursively decrement Roc-owned payloads.
     ///
@@ -4492,7 +4967,36 @@ unsafe impl RocRelease<AcceptedOrFailedOrNotReady> for AcceptedOrFailedOrNotRead
     }
 }
 
-impl HostSocketLocalAddrResult {
+impl AnonStruct91380971f8261c26 {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.outcome.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.outcome.incref(amount); }
+    }
+}
+
+pub struct AnonStruct91380971f8261c26Release;
+
+unsafe impl RocRelease<AnonStruct91380971f8261c26> for AnonStruct91380971f8261c26Release {
+    unsafe fn release(value: AnonStruct91380971f8261c26, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -4501,12 +5005,23 @@ impl HostSocketLocalAddrResult {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            HostSocketLocalAddrResultTag::Err => {
-                let payload = unsafe { value.take_payload_err_unchecked() };
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::Cancelled => {},
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::Done => {},
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadA => {
+                let payload = unsafe { value.take_payload_read_a_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
-            HostSocketLocalAddrResultTag::Ok => {
-                let payload = unsafe { value.take_payload_ok_unchecked() };
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadB => {
+                let payload = unsafe { value.take_payload_read_b_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::TaskLimitReached => {},
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteA => {
+                let payload = unsafe { value.take_payload_write_a_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteB => {
+                let payload = unsafe { value.take_payload_write_b_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
         }
@@ -4521,22 +5036,33 @@ impl HostSocketLocalAddrResult {
         let value = self;
         let _ = amount;
         match value.tag {
-            HostSocketLocalAddrResultTag::Err => {
-                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::Cancelled => {},
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::Done => {},
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadA => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_read_a_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
-            HostSocketLocalAddrResultTag::Ok => {
-                let payload = unsafe { core::ptr::read(value.borrow_payload_ok_unchecked()) };
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::ReadB => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_read_b_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::TaskLimitReached => {},
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteA => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_write_a_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag::WriteB => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_write_b_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
         }
     }
 }
 
-pub struct HostSocketLocalAddrResultRelease;
+pub struct CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBRelease;
 
-unsafe impl RocRelease<HostSocketLocalAddrResult> for HostSocketLocalAddrResultRelease {
-    unsafe fn release(value: HostSocketLocalAddrResult, roc_host: &RocHost) {
+unsafe impl RocRelease<CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB> for CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBRelease {
+    unsafe fn release(value: CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -4965,7 +5491,7 @@ unsafe impl RocRelease<CancelledOrReadyOrSourceTimedOutOrTimedOut> for Cancelled
     }
 }
 
-impl ReadableOrReceivableOrSendableOrWritable {
+impl JoinableOrReadableOrReceivableOrSendableOrWritable {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -4974,19 +5500,23 @@ impl ReadableOrReceivableOrSendableOrWritable {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            ReadableOrReceivableOrSendableOrWritableTag::Readable => {
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Joinable => {
+                let payload = unsafe { value.take_payload_joinable_unchecked() };
+                unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+            },
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Readable => {
                 let payload = unsafe { value.take_payload_readable_unchecked() };
                 unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
             },
-            ReadableOrReceivableOrSendableOrWritableTag::Receivable => {
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Receivable => {
                 let payload = unsafe { value.take_payload_receivable_unchecked() };
                 unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
             },
-            ReadableOrReceivableOrSendableOrWritableTag::Sendable => {
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Sendable => {
                 let payload = unsafe { value.take_payload_sendable_unchecked() };
                 unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
             },
-            ReadableOrReceivableOrSendableOrWritableTag::Writable => {
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Writable => {
                 let payload = unsafe { value.take_payload_writable_unchecked() };
                 unsafe { decref_box_with(payload as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
             },
@@ -5002,19 +5532,23 @@ impl ReadableOrReceivableOrSendableOrWritable {
         let value = self;
         let _ = amount;
         match value.tag {
-            ReadableOrReceivableOrSendableOrWritableTag::Readable => {
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Joinable => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_joinable_unchecked()) };
+                unsafe { incref_box(payload as RocBox, amount); }
+            },
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Readable => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_readable_unchecked()) };
                 unsafe { incref_box(payload as RocBox, amount); }
             },
-            ReadableOrReceivableOrSendableOrWritableTag::Receivable => {
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Receivable => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_receivable_unchecked()) };
                 unsafe { incref_box(payload as RocBox, amount); }
             },
-            ReadableOrReceivableOrSendableOrWritableTag::Sendable => {
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Sendable => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_sendable_unchecked()) };
                 unsafe { incref_box(payload as RocBox, amount); }
             },
-            ReadableOrReceivableOrSendableOrWritableTag::Writable => {
+            JoinableOrReadableOrReceivableOrSendableOrWritableTag::Writable => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_writable_unchecked()) };
                 unsafe { incref_box(payload as RocBox, amount); }
             },
@@ -5022,10 +5556,10 @@ impl ReadableOrReceivableOrSendableOrWritable {
     }
 }
 
-pub struct ReadableOrReceivableOrSendableOrWritableRelease;
+pub struct JoinableOrReadableOrReceivableOrSendableOrWritableRelease;
 
-unsafe impl RocRelease<ReadableOrReceivableOrSendableOrWritable> for ReadableOrReceivableOrSendableOrWritableRelease {
-    unsafe fn release(value: ReadableOrReceivableOrSendableOrWritable, roc_host: &RocHost) {
+unsafe impl RocRelease<JoinableOrReadableOrReceivableOrSendableOrWritable> for JoinableOrReadableOrReceivableOrSendableOrWritableRelease {
+    unsafe fn release(value: JoinableOrReadableOrReceivableOrSendableOrWritable, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -5170,15 +5704,26 @@ pub unsafe fn decref_list_of_str(value: RocList<RocStr>, roc_host: &RocHost) {
     unsafe { value.release_with::<RocStrRelease>(roc_host); }
 }
 
-/// Release one owned reference to a `RocList<ReadableOrReceivableOrSendableOrWritable>`.
+/// Release one owned reference to a `RocList<AnonStructF1e164f99c294fde>`.
 ///
 /// The allocation's final reference is claimed atomically before any element
 /// is read, so concurrent owners cannot skip or duplicate element teardown.
 ///
 /// # Safety
 /// `value` must own one live Roc list reference.
-pub unsafe fn decref_list_of_readable_or_receivable_or_sendable_or_writable(value: RocList<ReadableOrReceivableOrSendableOrWritable>, roc_host: &RocHost) {
-    unsafe { value.release_with::<ReadableOrReceivableOrSendableOrWritableRelease>(roc_host); }
+pub unsafe fn decref_list_of_anon_struct_f1e164f99c294fde(value: RocList<AnonStructF1e164f99c294fde>, roc_host: &RocHost) {
+    unsafe { value.release_with::<AnonStructF1e164f99c294fdeRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<JoinableOrReadableOrReceivableOrSendableOrWritable>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_joinable_or_readable_or_receivable_or_sendable_or_writable(value: RocList<JoinableOrReadableOrReceivableOrSendableOrWritable>, roc_host: &RocHost) {
+    unsafe { value.release_with::<JoinableOrReadableOrReceivableOrSendableOrWritableRelease>(roc_host); }
 }
 
 
@@ -5294,6 +5839,13 @@ unsafe extern "C" {
     /// Roc signature: {} => Bool
     pub fn roc_task_is_cancelled() -> bool;
 
+    /// Hosted symbol for Host.task_is_finished!
+    /// Roc signature: Host.TaskHandle => Bool
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    pub fn roc_task_is_finished(arg0: *mut u64) -> bool;
+
     /// Hosted symbol for Host.task_yield!
     /// Roc signature: {} => {}
     pub fn roc_task_yield();
@@ -5326,11 +5878,11 @@ unsafe extern "C" {
     pub fn roc_channel_close(arg0: *mut u64);
 
     /// Hosted symbol for Host.select_wait!
-    /// Roc signature: List([Readable(Host.Socket), Receivable(Host.ChannelEnd), Sendable(Host.ChannelEnd), Writable(Host.Socket)]), U64 => [Cancelled, Ready, SourceTimedOut(U64), TimedOut]
+    /// Roc signature: List([Joinable(Host.TaskHandle), Readable(Host.Socket), Receivable(Host.ChannelEnd), Sendable(Host.ChannelEnd), Writable(Host.Socket)]), U64 => [Cancelled, Ready, SourceTimedOut(U64), TimedOut]
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
-    ///     unsafe { decref_list_of_readable_or_receivable_or_sendable_or_writable(arg0, roc_host); }
-    pub fn roc_select_wait(arg0: RocList<ReadableOrReceivableOrSendableOrWritable>, arg1: u64) -> CancelledOrReadyOrSourceTimedOutOrTimedOut;
+    ///     unsafe { decref_list_of_joinable_or_readable_or_receivable_or_sendable_or_writable(arg0, roc_host); }
+    pub fn roc_select_wait(arg0: RocList<JoinableOrReadableOrReceivableOrSendableOrWritable>, arg1: u64) -> CancelledOrReadyOrSourceTimedOutOrTimedOut;
 
     /// Hosted symbol for Host.select_turn!
     /// Roc signature: {} => U64
@@ -5377,6 +5929,13 @@ unsafe extern "C" {
     /// Hosted symbol for Host.time_sleep_ns!
     /// Roc signature: U64 => Bool
     pub fn roc_time_sleep_ns(arg0: u64) -> bool;
+
+    /// Hosted symbol for Host.socket_abort!
+    /// Roc signature: Host.Socket => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    pub fn roc_socket_abort(arg0: *mut u64);
 
     /// Hosted symbol for Host.socket_accept!
     /// Roc signature: Host.Socket => Try(Host.Socket, IOErr)
@@ -5469,6 +6028,15 @@ unsafe extern "C" {
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_socket_write(arg0: *mut u64, arg1: RocListWith<u8, false>) -> HostSocketSetTimeoutResult;
 
+    /// Hosted symbol for Host.stream_copy_both!
+    /// Roc signature: Host.Socket, Host.Socket => { a_to_b : U64, b_to_a : U64, outcome : [Cancelled, Done, ReadA(IOErr), ReadB(IOErr), TaskLimitReached, WriteA(IOErr), WriteB(IOErr)] }
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    ///     unsafe { decref_box_with(arg1 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_stream_copy_both(arg0: *mut u64, arg1: *mut u64) -> AnonStruct91380971f8261c26;
+
     /// Hosted symbol for Host.tcp_connect!
     /// Roc signature: Str, U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
@@ -5493,15 +6061,24 @@ unsafe extern "C" {
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_tcp_set_nodelay(arg0: *mut u64, arg1: bool) -> HostSocketSetTimeoutResult;
 
+    /// Hosted symbol for Host.tls_alpn_protocol!
+    /// Roc signature: Host.Socket => Try(Str, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tls_alpn_protocol(arg0: *mut u64) -> HostSocketLocalAddrResult;
+
     /// Hosted symbol for Host.tls_connect!
-    /// Roc signature: Str, Str, Str, U64 => Try(Host.Socket, IOErr)
+    /// Roc signature: Str, Str, Str, List(Str), U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
     ///     unsafe { arg1.decref(roc_host); }
     ///     unsafe { arg2.decref(roc_host); }
+    ///     unsafe { decref_list_of_str(arg3, roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tls_connect(arg0: RocStr, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostSocketAcceptResult;
+    pub fn roc_tls_connect(arg0: RocStr, arg1: RocStr, arg2: RocStr, arg3: RocList<RocStr>, arg4: u64) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.tls_handshake!
     /// Roc signature: Host.Socket => Try({}, IOErr)
@@ -5520,34 +6097,43 @@ unsafe extern "C" {
     pub fn roc_tls_ignore_unexpected_eof(arg0: *mut u64, arg1: bool) -> HostSocketSetTimeoutResult;
 
     /// Hosted symbol for Host.tls_listen!
-    /// Roc signature: Str, Str, Str, U64, U64, U64 => Try(Host.Socket, IOErr)
+    /// Roc signature: Str, List({ cert_file : Str, key_file : Str, name : Str }), List(Str), U64, U64, U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { arg0.decref(roc_host); }
-    ///     unsafe { arg1.decref(roc_host); }
-    ///     unsafe { arg2.decref(roc_host); }
+    ///     unsafe { decref_list_of_anon_struct_f1e164f99c294fde(arg1, roc_host); }
+    ///     unsafe { decref_list_of_str(arg2, roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tls_listen(arg0: RocStr, arg1: RocStr, arg2: RocStr, arg3: u64, arg4: u64, arg5: u64) -> HostSocketAcceptResult;
+    pub fn roc_tls_listen(arg0: RocStr, arg1: RocList<AnonStructF1e164f99c294fde>, arg2: RocList<RocStr>, arg3: u64, arg4: u64, arg5: u64) -> HostSocketAcceptResult;
+
+    /// Hosted symbol for Host.tls_server_name!
+    /// Roc signature: Host.Socket => Try(Str, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_tls_server_name(arg0: *mut u64) -> HostSocketLocalAddrResult;
 
     /// Hosted symbol for Host.tls_wrap_client!
-    /// Roc signature: Host.Socket, Str, Str, U64 => Try(Host.Socket, IOErr)
+    /// Roc signature: Host.Socket, Str, Str, List(Str), U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     ///     unsafe { arg1.decref(roc_host); }
     ///     unsafe { arg2.decref(roc_host); }
+    ///     unsafe { decref_list_of_str(arg3, roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tls_wrap_client(arg0: *mut u64, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostSocketAcceptResult;
+    pub fn roc_tls_wrap_client(arg0: *mut u64, arg1: RocStr, arg2: RocStr, arg3: RocList<RocStr>, arg4: u64) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.tls_wrap_server!
-    /// Roc signature: Host.Socket, Str, Str, U64 => Try(Host.Socket, IOErr)
+    /// Roc signature: Host.Socket, List({ cert_file : Str, key_file : Str, name : Str }), List(Str), U64 => Try(Host.Socket, IOErr)
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
-    ///     unsafe { arg1.decref(roc_host); }
-    ///     unsafe { arg2.decref(roc_host); }
+    ///     unsafe { decref_list_of_anon_struct_f1e164f99c294fde(arg1, roc_host); }
+    ///     unsafe { decref_list_of_str(arg2, roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_tls_wrap_server(arg0: *mut u64, arg1: RocStr, arg2: RocStr, arg3: u64) -> HostSocketAcceptResult;
+    pub fn roc_tls_wrap_server(arg0: *mut u64, arg1: RocList<AnonStructF1e164f99c294fde>, arg2: RocList<RocStr>, arg3: u64) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.udp_bind!
     /// Roc signature: Str => Try(Host.Socket, IOErr)

@@ -2,8 +2,8 @@ import Host
 import Time
 
 ## Wait for whichever of several things happens first: data on a stream, a
-## connection on a listener, a value on a channel, room in a channel, or a
-## timeout.
+## connection on a listener, a value on a channel, room in a channel, a task
+## finishing, or a timeout.
 ##
 ## Build a `Select` from arms, each saying what to wait for and how to turn
 ## what happened into a value of your own type, then `wait!`:
@@ -119,6 +119,29 @@ Select := [].{
 					Err(ChannelClosed) => Got(to_out(Err(ChannelClosed)))
 				}
 			Arms.({ arms: List.append(arms, { poll!: poll!, source: Sendable(sender.channel_end()), on_stream_timeout: NoDeadline }), timeout })
+		}
+
+		## A task finishing. `to_out` gets what `handle.join!` returns: the
+		## task's result. To act on whichever of several tasks ends first,
+		## give each an arm:
+		##
+		## ```roc
+		## first = Select.new({})
+		##     .on_join(plain, |result| Plain(result))
+		##     .on_join(secure, |result| Secure(result))
+		##     .wait!()?
+		## ```
+		##
+		## or, for a list of handles, fold them in with
+		## `List.walk(handles, Select.new({}), |select, handle| select.on_join(handle, |result| result))`.
+		on_join = |Arms.({ arms, timeout }), handle, to_out| {
+			poll! = |{}|
+				if handle.is_finished!() {
+					Got(to_out(handle.join!()))
+				} else {
+					NotReady
+				}
+			Arms.({ arms: List.append(arms, { poll!: poll!, source: Joinable(handle.task_handle()), on_stream_timeout: NoDeadline }), timeout })
 		}
 
 		## Nothing else happening within `duration` of `wait!` starting. With

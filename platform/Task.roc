@@ -40,6 +40,14 @@ Task := [].{
 				Err(Cancelled) => Err(Cancelled)
 			}
 
+		## Whether the task has finished, so `join!` would return at once.
+		is_finished! : Handle(ok, err) => Bool
+		is_finished! = |Handle.(task)| Host.task_is_finished!(task)
+
+		## The host task handle, for `Select` to wait on.
+		task_handle : Handle(ok, err) -> Host.TaskHandle
+		task_handle = |Handle.(task)| task
+
 		## Ask the task to stop (see "Cancelling" above). Doesn't wait for it:
 		## `join!` does.
 		cancel! : Handle(ok, err) => {}
@@ -98,15 +106,19 @@ Task := [].{
 	## carry on, let each handle its own errors. To stop them all instead,
 	## have `body!` return an error when the first one ends. Joining handles
 	## in turn won't do that, since `join!` waits for that particular task,
-	## but a channel they each report to will:
+	## but a `Select` with an `on_join` arm per task will:
 	##
 	## ```roc
 	## Task.scope!(|scope| {
-	##     (done, ended) = Channel.new!(2)?
-	##     _ = scope.spawn!(|| done.send!(serve!(tcp_listener)))?
-	##     _ = scope.spawn!(|| done.send!(serve!(tls_listener)))?
+	##     plain = scope.spawn!(|| serve!(tcp_listener))?
+	##     secure = scope.spawn!(|| serve!(tls_listener))?
 	##     # Whichever ends first; returning an error cancels the other.
-	##     match ended.receive!()? {
+	##     first =
+	##         Select.new({})
+	##             .on_join(plain, |result| result)
+	##             .on_join(secure, |result| result)
+	##             .wait!()?
+	##     match first {
 	##         Ok({}) => Err(ListenerStopped)
 	##         Err(err) => Err(err)
 	##     }

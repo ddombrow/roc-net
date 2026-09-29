@@ -1,6 +1,6 @@
 [package]
 name = "roc_host"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 
 [lib]
@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 corosensei = "0.3.4"
+libc = "0.2.189"
 mio = { version = "1.2.3", features = ["os-poll", "net", "os-ext"] }
 rustls = "0.23.45"
 rustls-pki-types = { version = "1.15.1", features = ["std"] }

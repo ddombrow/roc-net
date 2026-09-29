@@ -25,6 +25,7 @@
 //! Reading is split into `try_read`, which never waits (so it can use the
 //! thread's scratch buffer), and `fill`, which does.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
@@ -32,9 +33,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
+use rustls::crypto::CryptoProvider;
+use rustls::server::{ClientHello, ResolvesServerCert};
+use rustls::sign::CertifiedKey;
 use rustls::{ClientConfig, ClientConnection, Connection, RootCertStore, ServerConfig, ServerConnection};
 use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls_pki_types::{CertificateDer, DnsName, PrivateKeyDer, ServerName};
 
 use crate::sched::{Lock, LockGuard, TaskWaker, Waiters};
 use crate::sockets::{with_scratch, Conn};
@@ -61,6 +65,8 @@ pub struct TlsStream {
     /// Treat a connection that ends without close_notify as a normal end of
     /// stream, like OpenSSL's SSL_OP_IGNORE_UNEXPECTED_EOF.
     ignore_unexpected_eof: AtomicBool,
+    /// Ended with [`abort`](TlsStream::abort): never send close_notify.
+    aborted: AtomicBool,
     /// When the handshake must be finished by, if there's a limit.
     handshake_deadline: Option<Instant>,
     /// `Select`s waiting on this stream for progress that doesn't show on
@@ -142,6 +148,7 @@ impl TlsStream {
             handshake_lock: Lock::new(),
             handshaken: AtomicBool::new(false),
             ignore_unexpected_eof: AtomicBool::new(false),
+            aborted: AtomicBool::new(false),
             handshake_deadline,
             watchers: Mutex::new(Waiters::new()),
         }
@@ -469,6 +476,33 @@ impl TlsStream {
         }
     }
 
+    /// The name a client asked for (SNI), once the handshake is done,
+    /// lower-cased and without a trailing dot; `None` if it sent none, and
+    /// on a client stream.
+    pub fn server_name(&self) -> io::Result<Option<String>> {
+        self.handshake()?;
+        Ok(match &lock(&self.inner).conn {
+            // As certificates are chosen, so routing by it agrees.
+            Connection::Server(conn) => conn.server_name().map(normalize_name),
+            Connection::Client(_) => None,
+        })
+    }
+
+    /// The application protocol agreed with ALPN, once the handshake is done.
+    pub fn alpn_protocol(&self) -> io::Result<Option<Vec<u8>>> {
+        self.handshake()?;
+        Ok(lock(&self.inner).conn.alpn_protocol().map(<[u8]>::to_vec))
+    }
+
+    /// End the session without close_notify, resetting the TCP connection
+    /// (see `Conn::abort`), so the peer can't mistake what it received for
+    /// everything: for giving up partway through. Nothing is sent after this,
+    /// not even when the stream is released.
+    pub fn abort(&self) {
+        self.aborted.store(true, Ordering::Release);
+        self.tcp.abort();
+    }
+
     /// Encrypt and send all of `data`.
     pub fn write_all(&self, data: &[u8]) -> io::Result<()> {
         self.handshake()?;
@@ -494,7 +528,8 @@ impl TlsStream {
     /// Shutting down writing (or both) first sends close_notify, so the peer
     /// knows the data ended on purpose rather than being cut off.
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
-        if how != Shutdown::Read && self.handshaken.load(Ordering::Acquire) {
+        let aborted = self.aborted.load(Ordering::Acquire);
+        if how != Shutdown::Read && self.handshaken.load(Ordering::Acquire) && !aborted {
             let _w = self.lock_write();
             let records = {
                 let mut inner = lock(&self.inner);
@@ -509,10 +544,11 @@ impl TlsStream {
 }
 
 /// A stream released without `close!` still ends the session properly, so the
-/// peer sees a deliberate end rather than a possibly truncated one.
+/// peer sees a deliberate end rather than a possibly truncated one, unless
+/// it was aborted.
 impl Drop for TlsStream {
     fn drop(&mut self) {
-        if !self.handshaken.load(Ordering::Acquire) {
+        if !self.handshaken.load(Ordering::Acquire) || self.aborted.load(Ordering::Acquire) {
             return;
         }
         let conn = &mut self.inner.get_mut().unwrap_or_else(|poisoned| poisoned.into_inner()).conn;
@@ -562,27 +598,120 @@ fn load_certs(path: &str) -> io::Result<Vec<CertificateDer<'static>>> {
     Ok(certs)
 }
 
-/// A client configuration: Mozilla's root certificates, or only the CA
-/// certificate(s) in `ca_file` if one is given.
-fn client_config(ca_file: &str) -> io::Result<Arc<ClientConfig>> {
-    if ca_file.is_empty() {
-        return Ok(default_client_config());
-    }
-    let mut roots = RootCertStore::empty();
-    for cert in load_certs(ca_file)? {
-        roots.add(cert).map_err(|err| file_error(ca_file, err))?;
-    }
-    Ok(Arc::new(ClientConfig::builder().with_root_certificates(roots).with_no_client_auth()))
+fn alpn_ids(protocols: &[String]) -> Vec<Vec<u8>> {
+    protocols.iter().map(|protocol| protocol.as_bytes().to_vec()).collect()
 }
 
-pub fn server_config(cert_file: &str, key_file: &str) -> io::Result<Arc<ServerConfig>> {
-    let certs = load_certs(cert_file)?;
-    let pem = fs::read(key_file).map_err(|err| file_error(key_file, err))?;
-    let key = PrivateKeyDer::from_pem_slice(&pem).map_err(|err| file_error(key_file, err))?;
-    let config = ServerConfig::builder()
+/// A client configuration: Mozilla's root certificates, or only the CA
+/// certificate(s) in `ca_file` if one is given, offering `alpn`.
+fn client_config(ca_file: &str, alpn: &[String]) -> io::Result<Arc<ClientConfig>> {
+    let base = if ca_file.is_empty() {
+        default_client_config()
+    } else {
+        let mut roots = RootCertStore::empty();
+        for cert in load_certs(ca_file)? {
+            roots.add(cert).map_err(|err| file_error(ca_file, err))?;
+        }
+        Arc::new(ClientConfig::builder().with_root_certificates(roots).with_no_client_auth())
+    };
+    if alpn.is_empty() {
+        return Ok(base);
+    }
+    let mut config = (*base).clone();
+    config.alpn_protocols = alpn_ids(alpn);
+    Ok(Arc::new(config))
+}
+
+/// One certificate a server presents: to clients asking for `name` (SNI),
+/// or, with an empty name, to the rest.
+pub struct CertFiles {
+    pub name: String,
+    pub cert_file: String,
+    pub key_file: String,
+}
+
+/// Picks a server's certificate by the name the client asked for: that
+/// exact name, else a `*.` wildcard one label up, else the default (no name,
+/// or a name with no certificate). rustls's `ResolvesServerCertUsingSni`
+/// has no default, so a client connecting by IP address would be refused.
+#[derive(Debug, Default)]
+struct CertsByName {
+    default: Option<Arc<CertifiedKey>>,
+    by_name: HashMap<String, Arc<CertifiedKey>>,
+}
+
+impl CertsByName {
+    fn lookup(&self, name: &str) -> Option<Arc<CertifiedKey>> {
+        let name = normalize_name(name);
+        if let Some(key) = self.by_name.get(&name) {
+            return Some(key.clone());
+        }
+        let (_, parent) = name.split_once('.')?;
+        self.by_name.get(&format!("*.{parent}")).cloned()
+    }
+}
+
+impl ResolvesServerCert for CertsByName {
+    fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        hello.server_name().and_then(|name| self.lookup(name)).or_else(|| self.default.clone())
+    }
+}
+
+/// DNS names compare without case or a trailing dot.
+fn normalize_name(name: &str) -> String {
+    name.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// A name a certificate can be chosen by: a DNS name, optionally starting
+/// with `*.`. IP addresses never arrive as SNI, so they're refused rather
+/// than silently never matching.
+fn check_cert_name(name: &str) -> io::Result<()> {
+    let host = name.strip_prefix("*.").unwrap_or(name);
+    let is_dns = !host.is_empty()
+        && host.parse::<std::net::IpAddr>().is_err()
+        && DnsName::try_from(host).is_ok();
+    if is_dns {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "{name:?} can't be a certificate's server name: it must be a DNS name, optionally starting with \"*.\""
+        )))
+    }
+}
+
+fn load_certified_key(files: &CertFiles, provider: &CryptoProvider) -> io::Result<CertifiedKey> {
+    let certs = load_certs(&files.cert_file)?;
+    let pem = fs::read(&files.key_file).map_err(|err| file_error(&files.key_file, err))?;
+    let key = PrivateKeyDer::from_pem_slice(&pem).map_err(|err| file_error(&files.key_file, err))?;
+    CertifiedKey::from_der(certs, key, provider).map_err(|err| match err {
+        rustls::Error::InconsistentKeys(_) => io::Error::other(format!(
+            "{}: the private key in {} doesn't match this certificate",
+            files.cert_file, files.key_file
+        )),
+        err => file_error(&files.key_file, err),
+    })
+}
+
+/// A server configuration presenting `certs` (see [`CertsByName`]) and
+/// accepting the application protocols `alpn`.
+pub fn server_config(certs: &[CertFiles], alpn: &[String]) -> io::Result<Arc<ServerConfig>> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let mut resolver = CertsByName::default();
+    for files in certs {
+        let key = Arc::new(load_certified_key(files, &provider)?);
+        if files.name.is_empty() {
+            resolver.default = Some(key);
+        } else {
+            check_cert_name(&files.name)?;
+            resolver.by_name.insert(normalize_name(&files.name), key);
+        }
+    }
+    let mut config = ServerConfig::builder_with_provider(Arc::new(provider))
+        .with_safe_default_protocol_versions()
+        .map_err(tls_error)?
         .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|err| file_error(cert_file, err))?;
+        .with_cert_resolver(Arc::new(resolver));
+    config.alpn_protocols = alpn_ids(alpn);
     Ok(Arc::new(config))
 }
 
@@ -597,13 +726,19 @@ pub fn host_of(address: &str) -> &str {
     }
 }
 
-/// Start a client session over `tcp` and complete the handshake before
-/// `deadline`, so a bad certificate or an unresponsive peer is reported here
-/// rather than on the first read or write.
-pub fn client(tcp: Conn<TcpStream>, server_name: &str, ca_file: &str, deadline: Option<Instant>) -> io::Result<TlsStream> {
+/// Start a client session over `tcp` offering `alpn`, and complete the
+/// handshake before `deadline`, so a bad certificate or an unresponsive peer
+/// is reported here rather than on the first read or write.
+pub fn client(
+    tcp: Conn<TcpStream>,
+    server_name: &str,
+    ca_file: &str,
+    alpn: &[String],
+    deadline: Option<Instant>,
+) -> io::Result<TlsStream> {
     let name = ServerName::try_from(server_name.to_string())
         .map_err(|err| io::Error::other(format!("{server_name:?} is not a valid server name: {err}")))?;
-    let conn = ClientConnection::new(client_config(ca_file)?, name).map_err(tls_error)?;
+    let conn = ClientConnection::new(client_config(ca_file, alpn)?, name).map_err(tls_error)?;
     let stream = TlsStream::new(tcp, Connection::Client(conn), deadline);
     stream.handshake()?;
     Ok(stream)

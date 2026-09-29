@@ -1,4 +1,4 @@
-//! `Host.select_wait!`: wait on several sockets and channel ends at once,
+//! `Host.select_wait!`: wait on several sockets, channel ends and tasks at once,
 //! for `Select` (platform/Select.roc), which polls each source without
 //! waiting (`socket_try_read!`, `try_receive!`, ...) and calls this only when
 //! none was ready.
@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use crate::roc_host;
 use crate::roc_platform_abi::{
-    decref_list_of_readable_or_receivable_or_sendable_or_writable,
+    decref_list_of_joinable_or_readable_or_receivable_or_sendable_or_writable as decref_sources,
     CancelledOrReadyOrSourceTimedOutOrTimedOut as Outcome,
     CancelledOrReadyOrSourceTimedOutOrTimedOutPayload as OutcomePayload,
-    CancelledOrReadyOrSourceTimedOutOrTimedOutTag as OutcomeTag, ReadableOrReceivableOrSendableOrWritable as Source,
-    ReadableOrReceivableOrSendableOrWritableTag as SourceTag, RocList,
+    CancelledOrReadyOrSourceTimedOutOrTimedOutTag as OutcomeTag, JoinableOrReadableOrReceivableOrSendableOrWritable as Source,
+    JoinableOrReadableOrReceivableOrSendableOrWritableTag as SourceTag, RocList,
 };
 use crate::sched::{self, Woke};
 use crate::sockets::Socket;
@@ -31,7 +31,7 @@ pub extern "C" fn roc_select_wait(sources: RocList<Source>, timeout_ns: u64) -> 
     // The list holds a reference to every source until it's released at the
     // end, so the sockets and channels stay alive while being waited on.
     let outcome = wait_any(sources.as_slice(), deadline);
-    unsafe { decref_list_of_readable_or_receivable_or_sendable_or_writable(sources, roc_host()) };
+    unsafe { decref_sources(sources, roc_host()) };
     outcome
 }
 
@@ -43,6 +43,7 @@ fn outcome(tag: OutcomeTag) -> Outcome {
 enum Watching {
     Channel(*mut u64, u64),
     Tls(*mut u64, u64),
+    Task(*mut u64, u64),
 }
 
 fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
@@ -64,6 +65,19 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
     // ends the wait before it starts.
     let mut ready = false;
     for (index, source) in sources.iter().enumerate() {
+        if source.tag == SourceTag::Joinable {
+            let handle = unsafe { *source.borrow_payload_joinable_unchecked() };
+            match crate::tasks::watch(handle, &waker) {
+                None => {
+                    ready = true;
+                    break;
+                }
+                Some(id) => {
+                    watching.push(Watching::Task(handle, id));
+                    continue;
+                }
+            }
+        }
         // Each accessor is only valid for its own tag.
         let (handle, is_socket, writable) = unsafe {
             match source.tag {
@@ -71,6 +85,7 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
                 SourceTag::Writable => (*source.borrow_payload_writable_unchecked(), true, true),
                 SourceTag::Receivable => (*source.borrow_payload_receivable_unchecked(), false, false),
                 SourceTag::Sendable => (*source.borrow_payload_sendable_unchecked(), false, true),
+                SourceTag::Joinable => unreachable!("handled above"),
             }
         };
         if is_socket {
@@ -141,6 +156,7 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
     for watch in watching {
         match watch {
             Watching::Channel(handle, id) => crate::channels::unwatch(handle, id),
+            Watching::Task(handle, id) => crate::tasks::unwatch(handle, id),
             Watching::Tls(handle, id) => {
                 if let Some(Socket::Tls(tls)) = unsafe { crate::sockets::get(handle) } {
                     tls.unwatch(id);
