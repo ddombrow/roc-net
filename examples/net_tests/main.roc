@@ -2549,14 +2549,24 @@ copy_both_slow_reader! = || {
 	report = proxy_once_with!(front, backend_address, 800)?
 	client = Tcp.connect!(front_address)?
 	client.set_read_timeout!(Millis(10000))?
-	first = client.read!(1)?
+	# On a failure, say what the proxy reported: the client only sees a reset.
+	proxy_said! = || Str.inspect(report.receive_timeout!(Time.seconds(10)))
+	first =
+		match client.read!(1) {
+			Ok(bytes) => bytes
+			Err(err) => return Err(Unexpected("first read: ${Str.inspect(err)}; proxy: ${proxy_said!()}"))
+		}
 	Time.sleep!(Time.millis(1600))?
 	(ended, rest) = read_until_end_or_error!(client)
-	client.shutdown!(Write)?
+	_ = client.shutdown!(Write)
 	size = chunk_size * chunks
-	match (ended, report.receive_timeout!(Time.seconds(10))?) {
-		(Ok({}), Ok(copied)) => expect_eq((List.len(first) + rest, copied.b_to_a), (size, size))
-		other => Err(Unexpected(Str.inspect(other)))
+	match ended {
+		Ok({}) =>
+			match report.receive_timeout!(Time.seconds(10))? {
+				Ok(copied) => expect_eq((List.len(first) + rest, copied.b_to_a), (size, size))
+				other => Err(Unexpected(Str.inspect(other)))
+			}
+		Err(err) => Err(Unexpected("after ${(List.len(first) + rest).to_str()} bytes: ${Str.inspect(err)}; proxy: ${proxy_said!()}"))
 	}
 }
 
