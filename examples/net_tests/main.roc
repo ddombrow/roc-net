@@ -151,6 +151,8 @@ main! = |_args| {
 		check!("copy_to!: UntilEnd, and neither stream is shut down", copy_to_until_end!),
 		check!("copy_to!: tls to tls", copy_to_tls_to_tls!),
 		check!("copy_to!: cancelling returns Cancelled", copy_to_cancelled!),
+		check!("reader.copy_to!: Exactly(n) is one message, under the message timeout", copy_to_message_timeout!),
+		check!("reader.copy_to!: UntilEnd isn't a message, so no message timeout", copy_to_until_end_no_message_timeout!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
 		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
@@ -3018,4 +3020,56 @@ copy_to_pipelined_small! = || {
 		Ok((copied, second)) => expect_eq((copied, second, got.receive_timeout!(Time.seconds(10))?), (5, "abc", "hello"))
 		other => Err(Unexpected(Str.inspect(other)))
 	}
+}
+
+## A peer that sends `count` bytes one at a time, `gap_ms` apart (well within
+## any idle timeout), then closes.
+trickler! = |count, gap_ms| {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		for _ in U64.until(0, count) {
+			# Stop once the other end gives up (as the timeout test's does).
+			match stream.write_str!("x") {
+				Ok({}) => {}
+				Err(_) => return Ok({})
+			}
+			Time.sleep!(Time.millis(gap_ms))?
+		}
+		stream.close!()
+		Ok({})
+	})?
+	Ok(address)
+}
+
+# A body trickled a byte every 50 ms can't hold the copy past the reader's
+# 400 ms message timeout, though no single read ever waits long.
+copy_to_message_timeout! = || {
+	address = trickler!(100, 50)?
+	(sink_address, _got) = collector!()?
+	source = Tcp.connect!(address)?
+	sink = Tcp.connect!(sink_address)?
+	reader = Framing.reader(source).with_message_timeout(Millis(400))
+	start = Time.now!()
+	result = reader.copy_to!(sink, Exactly(100))
+	took = start.elapsed!().to_millis()
+	sink.close!()
+	match result {
+		Err(CopyToErr({ failed: MessageTimedOut, copied })) =>
+			expect_eq((copied < 100, took >= 350, took < 2000), (True, True, True))
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+# The same trickle, for longer than the message timeout, copied `UntilEnd`:
+# a stream, so only the stream's read timeout applies, and it all arrives.
+copy_to_until_end_no_message_timeout! = || {
+	address = trickler!(12, 50)?
+	(sink_address, got) = collector!()?
+	source = Tcp.connect!(address)?
+	sink = Tcp.connect!(sink_address)?
+	reader = Framing.reader(source).with_message_timeout(Millis(200))
+	(copied, _) = reader.copy_to!(sink, UntilEnd)?
+	sink.close!()
+	expect_eq((copied, got.receive_timeout!(Time.seconds(10))?), (12, "xxxxxxxxxxxx"))
 }

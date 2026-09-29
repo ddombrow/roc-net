@@ -342,6 +342,12 @@ impl TlsStream {
     /// Make progress towards `try_read` having something: send what rustls
     /// has queued in reply to what it read, or else wait for more ciphertext.
     pub fn fill(&self) -> io::Result<()> {
+        self.fill_by(None)
+    }
+
+    /// `fill`, waiting no later than `by` either (as well as the read
+    /// timeout), for a copy with a deadline of its own.
+    pub fn fill_by(&self, by: Option<Instant>) -> io::Result<()> {
         if !self.handshaken.load(Ordering::Acquire) {
             return self.handshake();
         }
@@ -361,7 +367,8 @@ impl TlsStream {
                 return Ok(());
             }
         }
-        let n = self.tcp.read_with(|s| {
+        let deadline = crate::sockets::earliest(self.tcp.read_deadline(), by);
+        let n = self.tcp.retry(false, deadline, |s| {
             with_scratch(CHUNK + 2048, |raw| {
                 let n = (&mut &*s).read(raw)?;
                 lock(&self.inner).pending.extend_from_slice(&raw[..n]);

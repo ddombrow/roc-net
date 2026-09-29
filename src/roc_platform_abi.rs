@@ -1127,32 +1127,32 @@ const _: () = assert!(core::mem::size_of::<AnonStructF1e164f99c294fde>() == 36, 
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<AnonStructF1e164f99c294fde>() == 4, "AnonStructF1e164f99c294fde alignment mismatch");
 
-/// Element type for __AnonStruct_4777a5b94c668aa5
+/// Element type for __AnonStruct_3db9d1cc6db3a401
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AnonStruct4777a5b94c668aa5 {
+pub struct AnonStruct3db9d1cc6db3a401 {
     pub copied: u64,
-    pub outcome: CancelledOrDoneOrReadOrWrite,
+    pub outcome: CancelledOrDoneOrMessageTimedOutOrReadOrWrite,
 }
 
-/// Element type for __AnonStruct_4777a5b94c668aa5
+/// Element type for __AnonStruct_3db9d1cc6db3a401
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AnonStruct4777a5b94c668aa5 {
+pub struct AnonStruct3db9d1cc6db3a401 {
     pub copied: u64,
-    pub outcome: CancelledOrDoneOrReadOrWrite,
+    pub outcome: CancelledOrDoneOrMessageTimedOutOrReadOrWrite,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<AnonStruct4777a5b94c668aa5>() == 48, "AnonStruct4777a5b94c668aa5 size mismatch");
+const _: () = assert!(core::mem::size_of::<AnonStruct3db9d1cc6db3a401>() == 48, "AnonStruct3db9d1cc6db3a401 size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<AnonStruct4777a5b94c668aa5>() == 8, "AnonStruct4777a5b94c668aa5 alignment mismatch");
+const _: () = assert!(core::mem::align_of::<AnonStruct3db9d1cc6db3a401>() == 8, "AnonStruct3db9d1cc6db3a401 alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<AnonStruct4777a5b94c668aa5>() == 32, "AnonStruct4777a5b94c668aa5 size mismatch");
+const _: () = assert!(core::mem::size_of::<AnonStruct3db9d1cc6db3a401>() == 32, "AnonStruct3db9d1cc6db3a401 size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<AnonStruct4777a5b94c668aa5>() == 8, "AnonStruct4777a5b94c668aa5 alignment mismatch");
+const _: () = assert!(core::mem::align_of::<AnonStruct3db9d1cc6db3a401>() == 8, "AnonStruct3db9d1cc6db3a401 alignment mismatch");
 
 /// Element type for __AnonStruct_91380971f8261c26
 #[cfg(target_pointer_width = "32")]
@@ -2397,21 +2397,23 @@ const _: () = assert!(core::mem::align_of::<AcceptedOrFailedOrNotReady>() == 4, 
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(AcceptedOrFailedOrNotReady, tag) == 16, "AcceptedOrFailedOrNotReady tag offset mismatch");
 
-/// Tag discriminant for CancelledOrDoneOrReadOrWrite.
+/// Tag discriminant for CancelledOrDoneOrMessageTimedOutOrReadOrWrite.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CancelledOrDoneOrReadOrWriteTag {
+pub enum CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag {
     Cancelled = 0,
     Done = 1,
-    Read = 2,
-    Write = 3,
+    MessageTimedOut = 2,
+    Read = 3,
+    Write = 4,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union CancelledOrDoneOrReadOrWritePayload {
+pub union CancelledOrDoneOrMessageTimedOutOrReadOrWritePayload {
     pub cancelled: [u8; 0],
     pub done: [u8; 0],
+    pub message_timed_out: [u8; 0],
     pub read: core::mem::ManuallyDrop<IOErr>,
     pub write: core::mem::ManuallyDrop<IOErr>,
 }
@@ -2419,32 +2421,32 @@ pub union CancelledOrDoneOrReadOrWritePayload {
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct CancelledOrDoneOrReadOrWritePayloadAlignment;
+pub struct CancelledOrDoneOrMessageTimedOutOrReadOrWritePayloadAlignment;
 
-/// Tag union: CancelledOrDoneOrReadOrWrite
+/// Tag union: CancelledOrDoneOrMessageTimedOutOrReadOrWrite
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct CancelledOrDoneOrReadOrWrite {
-    pub _payload_alignment: [CancelledOrDoneOrReadOrWritePayloadAlignment; 0],
+pub struct CancelledOrDoneOrMessageTimedOutOrReadOrWrite {
+    pub _payload_alignment: [CancelledOrDoneOrMessageTimedOutOrReadOrWritePayloadAlignment; 0],
     pub payload: [u8; 16],
-    pub tag: CancelledOrDoneOrReadOrWriteTag,
+    pub tag: CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag,
 }
 
-/// Tag union: CancelledOrDoneOrReadOrWrite
+/// Tag union: CancelledOrDoneOrMessageTimedOutOrReadOrWrite
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct CancelledOrDoneOrReadOrWrite {
-    pub payload: CancelledOrDoneOrReadOrWritePayload,
-    pub tag: CancelledOrDoneOrReadOrWriteTag,
+pub struct CancelledOrDoneOrMessageTimedOutOrReadOrWrite {
+    pub payload: CancelledOrDoneOrMessageTimedOutOrReadOrWritePayload,
+    pub tag: CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag,
 }
 
-impl CancelledOrDoneOrReadOrWrite {
+impl CancelledOrDoneOrMessageTimedOutOrReadOrWrite {
     /// Borrow the `Read` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `CancelledOrDoneOrReadOrWriteTag::Read` and the payload must still be initialized.
+    /// `self.tag` must be `CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Read` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_read_unchecked(&self) -> &IOErr {
         unsafe { &*(self.payload.as_ptr() as *const IOErr) }
@@ -2453,7 +2455,7 @@ impl CancelledOrDoneOrReadOrWrite {
     /// Borrow the `Read` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `CancelledOrDoneOrReadOrWriteTag::Read` and the payload must still be initialized.
+    /// `self.tag` must be `CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Read` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_read_unchecked(&self) -> &IOErr {
         unsafe { &*(&self.payload.read as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
@@ -2462,7 +2464,7 @@ impl CancelledOrDoneOrReadOrWrite {
     /// Move the `Read` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `CancelledOrDoneOrReadOrWriteTag::Read`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Read`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_read_unchecked(&mut self) -> IOErr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
@@ -2471,7 +2473,7 @@ impl CancelledOrDoneOrReadOrWrite {
     /// Move the `Read` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `CancelledOrDoneOrReadOrWriteTag::Read`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Read`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_read_unchecked(&mut self) -> IOErr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.read) }
@@ -2480,7 +2482,7 @@ impl CancelledOrDoneOrReadOrWrite {
     /// Borrow the `Write` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `CancelledOrDoneOrReadOrWriteTag::Write` and the payload must still be initialized.
+    /// `self.tag` must be `CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Write` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn borrow_payload_write_unchecked(&self) -> &IOErr {
         unsafe { &*(self.payload.as_ptr() as *const IOErr) }
@@ -2489,7 +2491,7 @@ impl CancelledOrDoneOrReadOrWrite {
     /// Borrow the `Write` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `CancelledOrDoneOrReadOrWriteTag::Write` and the payload must still be initialized.
+    /// `self.tag` must be `CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Write` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn borrow_payload_write_unchecked(&self) -> &IOErr {
         unsafe { &*(&self.payload.write as *const core::mem::ManuallyDrop<IOErr> as *const IOErr) }
@@ -2498,7 +2500,7 @@ impl CancelledOrDoneOrReadOrWrite {
     /// Move the `Write` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `CancelledOrDoneOrReadOrWriteTag::Write`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Write`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
     pub unsafe fn take_payload_write_unchecked(&mut self) -> IOErr {
         unsafe { core::ptr::read(self.payload.as_ptr() as *const IOErr) }
@@ -2507,7 +2509,7 @@ impl CancelledOrDoneOrReadOrWrite {
     /// Move the `Write` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `CancelledOrDoneOrReadOrWriteTag::Write`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Write`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
     pub unsafe fn take_payload_write_unchecked(&mut self) -> IOErr {
         unsafe { core::mem::ManuallyDrop::take(&mut self.payload.write) }
@@ -2516,17 +2518,17 @@ impl CancelledOrDoneOrReadOrWrite {
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<CancelledOrDoneOrReadOrWrite>() == 40, "CancelledOrDoneOrReadOrWrite size mismatch");
+const _: () = assert!(core::mem::size_of::<CancelledOrDoneOrMessageTimedOutOrReadOrWrite>() == 40, "CancelledOrDoneOrMessageTimedOutOrReadOrWrite size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<CancelledOrDoneOrReadOrWrite>() == 8, "CancelledOrDoneOrReadOrWrite alignment mismatch");
+const _: () = assert!(core::mem::align_of::<CancelledOrDoneOrMessageTimedOutOrReadOrWrite>() == 8, "CancelledOrDoneOrMessageTimedOutOrReadOrWrite alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(CancelledOrDoneOrReadOrWrite, tag) == 32, "CancelledOrDoneOrReadOrWrite tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(CancelledOrDoneOrMessageTimedOutOrReadOrWrite, tag) == 32, "CancelledOrDoneOrMessageTimedOutOrReadOrWrite tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<CancelledOrDoneOrReadOrWrite>() == 20, "CancelledOrDoneOrReadOrWrite size mismatch");
+const _: () = assert!(core::mem::size_of::<CancelledOrDoneOrMessageTimedOutOrReadOrWrite>() == 20, "CancelledOrDoneOrMessageTimedOutOrReadOrWrite size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<CancelledOrDoneOrReadOrWrite>() == 4, "CancelledOrDoneOrReadOrWrite alignment mismatch");
+const _: () = assert!(core::mem::align_of::<CancelledOrDoneOrMessageTimedOutOrReadOrWrite>() == 4, "CancelledOrDoneOrMessageTimedOutOrReadOrWrite alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(CancelledOrDoneOrReadOrWrite, tag) == 16, "CancelledOrDoneOrReadOrWrite tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(CancelledOrDoneOrMessageTimedOutOrReadOrWrite, tag) == 16, "CancelledOrDoneOrMessageTimedOutOrReadOrWrite tag offset mismatch");
 
 /// Tag discriminant for ExactlyOrUntilEnd.
 #[repr(u8)]
@@ -4105,7 +4107,7 @@ const _: () = assert!(core::mem::align_of::<HostStreamCopyBothRetRecord>() == 8,
 #[derive(Clone, Copy)]
 pub struct HostStreamCopyToRetRecord {
     pub copied: u64,
-    pub outcome: CancelledOrDoneOrReadOrWrite,
+    pub outcome: CancelledOrDoneOrMessageTimedOutOrReadOrWrite,
 }
 
 /// Return type record for Host.stream_copy_to!
@@ -4115,7 +4117,7 @@ pub struct HostStreamCopyToRetRecord {
 #[derive(Clone, Copy)]
 pub struct HostStreamCopyToRetRecord {
     pub copied: u64,
-    pub outcome: CancelledOrDoneOrReadOrWrite,
+    pub outcome: CancelledOrDoneOrMessageTimedOutOrReadOrWrite,
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -4416,7 +4418,7 @@ pub struct HostStreamCopyBothArgs {
 }
 
 /// Arguments for Host.stream_copy_to!
-/// Roc signature: Host.Socket, Host.Socket, List(U8), [Exactly(U64), UntilEnd] => { copied : U64, outcome : [Cancelled, Done, Read(IOErr), Write(IOErr)] }
+/// Roc signature: Host.Socket, Host.Socket, List(U8), [Exactly(U64), UntilEnd], U64 => { copied : U64, outcome : [Cancelled, Done, MessageTimedOut, Read(IOErr), Write(IOErr)] }
 /// Refcounted fields are owned by the hosted function.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -4425,6 +4427,7 @@ pub struct HostStreamCopyToArgs {
     pub arg1: *mut u64,
     pub arg2: RocListWith<u8, false>,
     pub arg3: ExactlyOrUntilEnd,
+    pub arg4: u64,
 }
 
 /// Arguments for Host.tcp_connect!
@@ -4661,7 +4664,7 @@ pub type HostSocketWriteResult = HostSocketSetTimeoutResult;
 pub type HostSocketWriteResultPayload = HostSocketSetTimeoutResultPayload;
 pub type HostSocketWriteResultTag = HostSocketSetTimeoutResultTag;
 pub type HostStreamCopyBoth = AnonStruct91380971f8261c26;
-pub type HostStreamCopyTo = AnonStruct4777a5b94c668aa5;
+pub type HostStreamCopyTo = AnonStruct3db9d1cc6db3a401;
 pub type HostTcpConnectResult = HostSocketAcceptResult;
 pub type HostTcpConnectResultPayload = HostSocketAcceptResultPayload;
 pub type HostTcpConnectResultTag = HostSocketAcceptResultTag;
@@ -5258,7 +5261,7 @@ unsafe impl RocRelease<AcceptedOrFailedOrNotReady> for AcceptedOrFailedOrNotRead
     }
 }
 
-impl AnonStruct4777a5b94c668aa5 {
+impl AnonStruct3db9d1cc6db3a401 {
     /// Recursively decrement Roc-owned fields.
     ///
     /// # Safety
@@ -5279,15 +5282,15 @@ impl AnonStruct4777a5b94c668aa5 {
     }
 }
 
-pub struct AnonStruct4777a5b94c668aa5Release;
+pub struct AnonStruct3db9d1cc6db3a401Release;
 
-unsafe impl RocRelease<AnonStruct4777a5b94c668aa5> for AnonStruct4777a5b94c668aa5Release {
-    unsafe fn release(value: AnonStruct4777a5b94c668aa5, roc_host: &RocHost) {
+unsafe impl RocRelease<AnonStruct3db9d1cc6db3a401> for AnonStruct3db9d1cc6db3a401Release {
+    unsafe fn release(value: AnonStruct3db9d1cc6db3a401, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
 
-impl CancelledOrDoneOrReadOrWrite {
+impl CancelledOrDoneOrMessageTimedOutOrReadOrWrite {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -5296,13 +5299,14 @@ impl CancelledOrDoneOrReadOrWrite {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            CancelledOrDoneOrReadOrWriteTag::Cancelled => {},
-            CancelledOrDoneOrReadOrWriteTag::Done => {},
-            CancelledOrDoneOrReadOrWriteTag::Read => {
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Cancelled => {},
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Done => {},
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::MessageTimedOut => {},
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Read => {
                 let payload = unsafe { value.take_payload_read_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
-            CancelledOrDoneOrReadOrWriteTag::Write => {
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Write => {
                 let payload = unsafe { value.take_payload_write_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
@@ -5318,13 +5322,14 @@ impl CancelledOrDoneOrReadOrWrite {
         let value = self;
         let _ = amount;
         match value.tag {
-            CancelledOrDoneOrReadOrWriteTag::Cancelled => {},
-            CancelledOrDoneOrReadOrWriteTag::Done => {},
-            CancelledOrDoneOrReadOrWriteTag::Read => {
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Cancelled => {},
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Done => {},
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::MessageTimedOut => {},
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Read => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_read_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
-            CancelledOrDoneOrReadOrWriteTag::Write => {
+            CancelledOrDoneOrMessageTimedOutOrReadOrWriteTag::Write => {
                 let payload = unsafe { core::ptr::read(value.borrow_payload_write_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
@@ -5332,10 +5337,10 @@ impl CancelledOrDoneOrReadOrWrite {
     }
 }
 
-pub struct CancelledOrDoneOrReadOrWriteRelease;
+pub struct CancelledOrDoneOrMessageTimedOutOrReadOrWriteRelease;
 
-unsafe impl RocRelease<CancelledOrDoneOrReadOrWrite> for CancelledOrDoneOrReadOrWriteRelease {
-    unsafe fn release(value: CancelledOrDoneOrReadOrWrite, roc_host: &RocHost) {
+unsafe impl RocRelease<CancelledOrDoneOrMessageTimedOutOrReadOrWrite> for CancelledOrDoneOrMessageTimedOutOrReadOrWriteRelease {
+    unsafe fn release(value: CancelledOrDoneOrMessageTimedOutOrReadOrWrite, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -6448,7 +6453,7 @@ unsafe extern "C" {
     pub fn roc_stream_copy_both(arg0: *mut u64, arg1: *mut u64) -> AnonStruct91380971f8261c26;
 
     /// Hosted symbol for Host.stream_copy_to!
-    /// Roc signature: Host.Socket, Host.Socket, List(U8), [Exactly(U64), UntilEnd] => { copied : U64, outcome : [Cancelled, Done, Read(IOErr), Write(IOErr)] }
+    /// Roc signature: Host.Socket, Host.Socket, List(U8), [Exactly(U64), UntilEnd], U64 => { copied : U64, outcome : [Cancelled, Done, MessageTimedOut, Read(IOErr), Write(IOErr)] }
     /// Owned arguments. Release each exactly once before returning, unless it is
     /// moved into storage or into the result:
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
@@ -6456,7 +6461,7 @@ unsafe extern "C" {
     ///     unsafe { arg2.decref(roc_host); }
     ///     unsafe { arg3.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
-    pub fn roc_stream_copy_to(arg0: *mut u64, arg1: *mut u64, arg2: RocListWith<u8, false>, arg3: ExactlyOrUntilEnd) -> AnonStruct4777a5b94c668aa5;
+    pub fn roc_stream_copy_to(arg0: *mut u64, arg1: *mut u64, arg2: RocListWith<u8, false>, arg3: ExactlyOrUntilEnd, arg4: u64) -> AnonStruct3db9d1cc6db3a401;
 
     /// Hosted symbol for Host.tcp_connect!
     /// Roc signature: Str, U64 => Try(Host.Socket, IOErr)

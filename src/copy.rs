@@ -36,6 +36,7 @@ use std::io::{self, Read};
 use std::net::Shutdown;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::sched::Woke;
 use crate::sockets::Socket;
@@ -66,6 +67,8 @@ pub enum CopyErr {
     Write(Side, io::Error),
     /// The task running `copy_both` was cancelled.
     Cancelled,
+    /// A `copy_to` with a deadline ran past it.
+    MessageTimeout,
     /// No task could be started for the second direction.
     TaskLimit,
 }
@@ -81,9 +84,26 @@ struct Shared {
     ended_into: [AtomicBool; 2],
     /// The first error, which is the one reported.
     first_err: Mutex<Option<CopyErr>>,
+    /// When the whole copy must be done by (`copy_to` for a `Framing`
+    /// reader's message), if ever.
+    deadline: Option<Instant>,
 }
 
 impl Shared {
+    fn new(deadline: Option<Instant>) -> Shared {
+        Shared {
+            progress: AtomicU64::new(0),
+            writing: AtomicU32::new(0),
+            ended_into: [AtomicBool::new(false), AtomicBool::new(false)],
+            first_err: Mutex::new(None),
+            deadline,
+        }
+    }
+
+    fn past_deadline(&self) -> bool {
+        self.deadline.is_some_and(|at| Instant::now() >= at)
+    }
+
     /// Record `err` if it's the first, and if so end both streams (`a` and
     /// `b` are sides A and B): abort each, unless its incoming direction
     /// already ended cleanly; then only stop reading it, which wakes a
@@ -152,16 +172,16 @@ fn stop_reading(socket: &Socket) {
 }
 
 /// Wait, without a buffer, until a read of `socket` may find something:
-/// data, the end of the stream, or an error. Under the read timeout. It
-/// checks before waiting (see `Conn::wait_readable`): data that arrived
-/// before the copy began must not be missed.
-fn wait_readable(socket: &Socket) -> io::Result<()> {
+/// data, the end of the stream, or an error. Under the read timeout, and no
+/// later than `by`. It checks before waiting (see `Conn::wait_readable`):
+/// data that arrived before the copy began must not be missed.
+fn wait_readable(socket: &Socket, by: Option<Instant>) -> io::Result<()> {
     match socket {
-        Socket::TcpStream(s) => s.wait_readable(),
-        Socket::UnixStream(s) => s.wait_readable(),
+        Socket::TcpStream(s) => s.wait_readable(by),
+        Socket::UnixStream(s) => s.wait_readable(by),
         // Waits for ciphertext (or does the handshake), and returns at once
         // if there's plaintext already.
-        Socket::Tls(s) => s.fill(),
+        Socket::Tls(s) => s.fill_by(by),
         _ => Err(not_a_stream()),
     }
 }
@@ -274,8 +294,11 @@ fn write_err(side: Side, err: io::Error) -> CopyErr {
 fn wait_for_data(from: &Socket, from_side: Side, shared: &Shared) -> Result<(), CopyErr> {
     loop {
         let seen = shared.progress.load(Ordering::Acquire);
-        match wait_readable(from) {
+        match wait_readable(from, shared.deadline) {
             Ok(()) => return Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::TimedOut && shared.past_deadline() => {
+                return Err(CopyErr::MessageTimeout)
+            }
             Err(err)
                 if err.kind() == io::ErrorKind::TimedOut
                     && (shared.progress.load(Ordering::Acquire) != seen
@@ -324,6 +347,11 @@ fn buffered(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared, to
         if end_at.is_some_and(|end| *total >= end) {
             spare::give_back(buf);
             return Ok(Ended::Limit);
+        }
+        // Checked between chunks too: a peer sending steadily, but not fast
+        // enough, never makes a wait time out.
+        if shared.past_deadline() {
+            return Err(CopyErr::MessageTimeout);
         }
         if buf.is_empty() {
             wait_for_data(from, sides.0, shared)?;
@@ -378,18 +406,15 @@ fn direction(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared) -
 
 /// `Stream.copy_to!`: write `prefix` to `to`, then copy `from` to `to` until
 /// `from` ends, or with `limit`, exactly that many more bytes, never reading
-/// past them. Returns the bytes delivered (the prefix included) and the
-/// error, if any; an early end with a limit is `Read(UnexpectedEof)`. Unlike
-/// `copy_both`, it neither shuts down nor aborts anything: the caller does
-/// what fits. On the calling task; with nothing going the other way, read
-/// timeouts apply as they are.
-pub fn copy_to(from: &Socket, to: &Socket, prefix: &[u8], limit: Option<u64>) -> (u64, Option<CopyErr>) {
-    let shared = Shared {
-        progress: AtomicU64::new(0),
-        writing: AtomicU32::new(0),
-        ended_into: [AtomicBool::new(false), AtomicBool::new(false)],
-        first_err: Mutex::new(None),
-    };
+/// past them, all by `deadline` if there is one. Returns the bytes `to`
+/// accepted (the prefix included; the peer may have received fewer, and a
+/// write that failed partway isn't counted) and the error, if any; an early
+/// end with a limit is `Read(UnexpectedEof)`. Unlike `copy_both`, it
+/// neither shuts down nor aborts anything: the caller does what fits. On
+/// the calling task; with nothing going the other way, read timeouts apply
+/// as they are.
+pub fn copy_to(from: &Socket, to: &Socket, prefix: &[u8], limit: Option<u64>, deadline: Option<Instant>) -> (u64, Option<CopyErr>) {
+    let shared = Shared::new(deadline);
     let mut total = 0;
     if !prefix.is_empty() {
         if let Err(err) = write_all(to, prefix) {
@@ -406,15 +431,11 @@ pub fn copy_to(from: &Socket, to: &Socket, prefix: &[u8], limit: Option<u64>) ->
 }
 
 /// Copy between `a` and `b` both ways until both directions end (see the
-/// module docs). Returns the bytes copied A to B and B to A, which count
-/// what got through even when the copy failed, and the first error, if any.
+/// module docs). Returns the bytes each side accepted, A to B and B to A
+/// (counted even when the copy failed; the peers may have received fewer),
+/// and the first error, if any.
 pub fn copy_both(a: &Socket, b: &Socket) -> (u64, u64, Option<CopyErr>) {
-    let shared = Arc::new(Shared {
-        progress: AtomicU64::new(0),
-        writing: AtomicU32::new(0),
-        ended_into: [AtomicBool::new(false), AtomicBool::new(false)],
-        first_err: Mutex::new(None),
-    });
+    let shared = Arc::new(Shared::new(None));
     let b_to_a = Arc::new(AtomicU64::new(0));
     let (ra, rb) = (Borrowed(a), Borrowed(b));
     let helper = {
@@ -555,6 +576,9 @@ mod splice {
                     give_back(ends);
                 }
                 return Some(Ok(Ended::Limit));
+            }
+            if shared.past_deadline() {
+                return Some(Err(CopyErr::MessageTimeout));
             }
             let (pipe_out, pipe_in) = match &pipe_ends {
                 Some(ends) => ends,

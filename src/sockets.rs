@@ -144,8 +144,11 @@ impl<T: AsRawFd> Conn<T> {
     /// edge-triggered, so data that arrived before a wait began (say, while
     /// the socket was watched for a connect) brings no new event, and waiting
     /// first would wait for more data that may never come.
-    pub fn wait_readable(&self) -> io::Result<()> {
-        self.retry(false, self.read_deadline(), |io| {
+    ///
+    /// With `by`, it gives up with `TimedOut` then too, if that's sooner than
+    /// the read timeout.
+    pub fn wait_readable(&self, by: Option<Instant>) -> io::Result<()> {
+        self.retry(false, earliest(self.read_deadline(), by), |io| {
             let mut byte = 0u8;
             let flags = libc::MSG_PEEK;
             let n = unsafe { libc::recv(io.as_raw_fd(), &mut byte as *mut u8 as *mut libc::c_void, 1, flags) };
@@ -167,6 +170,14 @@ impl<T: AsRawFd> Conn<T> {
 impl Conn<TcpStream> {
     pub fn write_all(&self, data: &[u8]) -> io::Result<()> {
         self.write_all_with(data, |s, data| (&mut &*s).write(data))
+    }
+}
+
+/// The sooner of two deadlines (`None` being never).
+pub fn earliest(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
     }
 }
 

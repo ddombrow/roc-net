@@ -207,7 +207,13 @@ Framing := [].{
 		## the next message), and the stream alone no longer has those bytes.
 		## With `Exactly(n)`, nothing past the `n`th byte is copied: bytes
 		## after it stay buffered in the reader returned, ready for its next
-		## read.
+		## read. And the `n` bytes are one message, so the reader's message
+		## timeout (60 seconds unless changed with `with_message_timeout`)
+		## bounds the whole copy, as it bounds `read_exactly!`: past it, the
+		## copy fails with `MessageTimedOut`, so a peer can't keep the
+		## connection busy by sending a byte at a time. (For a large body on a
+		## slow link, raise it.) `UntilEnd` copies a stream, not a message,
+		## so only the stream's read timeout applies.
 		##
 		## ```roc
 		## # A header line naming the payload's length, then the payload,
@@ -217,26 +223,29 @@ Framing := [].{
 		## (_, $reader) = $reader.copy_to!(sink, Exactly(length))?
 		## (next, $reader) = $reader.read_line!()?
 		## ```
-		copy_to! : Reader(s), t, [UntilEnd, Exactly(U64)] => Try((U64, Reader(s)), [CopyToErr({ failed : [Read(IOErr), Write(IOErr)], copied : U64 }), Cancelled])
+		copy_to! : Reader(s), t, [UntilEnd, Exactly(U64)] => Try((U64, Reader(s)), [CopyToErr({ failed : [Read(IOErr), Write(IOErr), MessageTimedOut], copied : U64 }), Cancelled])
 			where [s.socket : s -> Host.Socket, t.socket : t -> Host.Socket]
 		copy_to! = |Reader.(r), to, limit| {
-			(first, rest, stream_limit) =
+			(first, rest, stream_limit, timeout_ns) =
 				match limit {
-					UntilEnd => (r.buffered, [], UntilEnd)
+					UntilEnd => (r.buffered, [], UntilEnd, 0)
 					Exactly(n) => {
 						take = if n < List.len(r.buffered) n else List.len(r.buffered)
-						(List.take_first(r.buffered, take), List.drop_first(r.buffered, take), Exactly(n - take))
+						(List.take_first(r.buffered, take), List.drop_first(r.buffered, take), Exactly(n - take), r.message_timeout_ns)
 					}
 				}
-			# The host directly, as `Stream.copy_to_after!` does: on this Roc
-			# nightly, `Stream`'s functions aren't visible from this module
-			# ("Stream.copy_to_after! does not exist").
-			{ copied, outcome } = Host.stream_copy_to!(r.stream.socket(), to.socket(), first, stream_limit)
+			# TODO: call `Stream.copy_to!` rather than the host, once the
+			# compiler lets this module see `Stream`'s functions (on
+			# nightly-2026-09-24 they "do not exist" here, even a trivial one,
+			# while `Tls` can call `Tcp`'s). Until then, keep this mapping the
+			# same as `Stream.copy_to!`'s.
+			{ copied, outcome } = Host.stream_copy_to!(r.stream.socket(), to.socket(), first, stream_limit, timeout_ns)
 			match outcome {
 				Done => Ok((copied, Reader.({ ..r, buffered: rest })))
 				Cancelled => Err(Cancelled)
 				Read(err) => Err(CopyToErr({ failed: Read(err), copied }))
 				Write(err) => Err(CopyToErr({ failed: Write(err), copied }))
+				MessageTimedOut => Err(CopyToErr({ failed: MessageTimedOut, copied }))
 			}
 		}
 
