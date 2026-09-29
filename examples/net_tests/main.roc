@@ -142,6 +142,7 @@ main! = |_args| {
 		check!("copy_both!: a write to a slow reader isn't idle", copy_both_slow_reader!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
+		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
 		check!("stream: a where clause over any stream, and mixed listeners", stream_generic!),
 		check!("select: on_join, the first task to finish wins", select_join_first!),
 		check!("select: on_join, a finished task is ready at once", select_join_finished!),
@@ -2636,4 +2637,44 @@ copy_both_many_sessions! = || {
 		client.join!()?
 	}
 	Ok({})
+}
+
+# Unix sockets: `splice` on Linux (or its fallback), and mixed with TCP.
+copy_both_unix! = || {
+	backend = Unix.listen!("/tmp/roc-net-tests-copy-backend.sock")?
+	serve_length!(backend)?
+	front = Unix.listen!("/tmp/roc-net-tests-copy-front.sock")?
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		client = front.accept!()?
+		upstream = Unix.connect!("/tmp/roc-net-tests-copy-backend.sock")?
+		report_tx.send!(Stream.copy_both!(client, upstream))
+	})?
+	client = Unix.connect!("/tmp/roc-net-tests-copy-front.sock")?
+	reply = exchange!(client, "over unix sockets")?
+	unix_copied =
+		match report.receive_timeout!(Time.seconds(3))? {
+			Ok(copied) => (copied.a_to_b, copied.b_to_a)
+			other => return Err(Unexpected(Str.inspect(other)))
+		}
+
+	(tcp_backend, tcp_backend_address) = listen_anywhere!()?
+	serve_length!(tcp_backend)?
+	mixed_front = Unix.listen!("/tmp/roc-net-tests-copy-mixed.sock")?
+	(mixed_tx, mixed_report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		mixed_client = mixed_front.accept!()?
+		upstream = Tcp.connect!(tcp_backend_address)?
+		mixed_tx.send!(Stream.copy_both!(mixed_client, upstream))
+	})?
+	mixed = Unix.connect!("/tmp/roc-net-tests-copy-mixed.sock")?
+	mixed_reply = exchange!(mixed, "unix to tcp")?
+	match mixed_report.receive_timeout!(Time.seconds(3))? {
+		Ok(copied) =>
+			expect_eq(
+				(reply, unix_copied, mixed_reply, copied.a_to_b, copied.b_to_a),
+				("got 17 bytes", (17, 12), "got 11 bytes", 11, 12),
+			)
+		other => Err(Unexpected(Str.inspect(other)))
+	}
 }

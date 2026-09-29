@@ -5,8 +5,8 @@ cancellation, scopes, `Task.yield!`), except `Time.ticker`, which
 `on_timeout` with a remembered deadline covers for now (see
 `examples/chat_server`). See CHANGELOG.md.
 
-**Status (2026-09-28):** 0.3.0 (proxy features) is implemented on the
-`v0.3-proxy` branch: SNI with a certificate per name, ALPN,
+**Status (2026-09-29):** 0.3.0 (proxy features) is implemented on the
+`v0.3-proxy` branch and ready to release: SNI with a certificate per name, ALPN,
 `Stream.copy_both!` (with `splice` on Linux between plain sockets),
 `Select.on_join` for acting on whichever task ends first, and the "any
 stream" docs and `tls_proxy` example. Crypto + Noise moves to 0.4.
