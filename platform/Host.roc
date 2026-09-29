@@ -87,6 +87,12 @@ Host := [].{
 	socket_peer_addr! : Socket => Try(Str, IOErr)
 	tcp_set_nodelay! : Socket, Bool => Try({}, IOErr)
 
+	## Write `prefix` to the second stream, then copy the first stream to it
+	## until it ends or, with `Exactly(n)`, exactly `n` more bytes, never
+	## reading past them (see `Stream.copy_to!`). `copied` counts what was
+	## delivered, the prefix included, even when the copy failed.
+	stream_copy_to! : Socket, Socket, List(U8), [UntilEnd, Exactly(U64)] => { copied : U64, outcome : [Done, Read(IOErr), Write(IOErr), Cancelled] }
+
 	## Copy between two streams in both directions at once until both have
 	## ended (see `Stream.copy_both!`), on this task and a helper task. The
 	## counts are what got through, even when the copy failed.

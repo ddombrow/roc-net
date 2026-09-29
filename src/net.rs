@@ -23,6 +23,9 @@ use crate::roc_platform_abi::{
     HostStreamCopyBoth as CopyResult, CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteB as CopyOutcome,
     CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBPayload as CopyOutcomePayload,
     CancelledOrDoneOrReadAOrReadBOrTaskLimitReachedOrWriteAOrWriteBTag as CopyOutcomeTag,
+    HostStreamCopyTo as CopyToResult, CancelledOrDoneOrReadOrWrite as CopyToOutcome,
+    CancelledOrDoneOrReadOrWritePayload as CopyToOutcomePayload, CancelledOrDoneOrReadOrWriteTag as CopyToOutcomeTag,
+    ExactlyOrUntilEnd as CopyLimit, ExactlyOrUntilEndTag as CopyLimitTag,
 };
 use crate::sockets::{self, deadline_after, with_scratch, Conn, OwnedUnixListener, ServerTimeouts, Socket};
 
@@ -812,6 +815,40 @@ pub extern "C" fn roc_stream_copy_both(a: *mut u64, b: *mut u64) -> CopyResult {
         Some(CopyErr::Write(Side::B, e)) => O { payload: P { write_b: io(e) }, tag: T::WriteB },
     };
     CopyResult { a_to_b, b_to_a, outcome }
+}
+
+/// Hosted function: Host.stream_copy_to!
+#[no_mangle]
+pub extern "C" fn roc_stream_copy_to(from: *mut u64, to: *mut u64, prefix: RocListWith<u8, false>, limit: CopyLimit) -> CopyToResult {
+    use crate::copy::CopyErr;
+    type O = CopyToOutcome;
+    type P = CopyToOutcomePayload;
+    type T = CopyToOutcomeTag;
+    let limit = match limit.tag {
+        CopyLimitTag::UntilEnd => None,
+        CopyLimitTag::Exactly => Some(unsafe { *limit.borrow_payload_exactly_unchecked() }),
+    };
+    let result = with_socket(from, |from| with_socket(to, |to| Ok(crate::copy::copy_to(from, to, prefix.as_slice(), limit))));
+    unsafe { prefix.decref(roc_host()) };
+    let (copied, failed) = match result {
+        Ok(result) => result,
+        // An invalid handle: report it as a failure to read.
+        Err(err) => (0, Some(CopyErr::Read(crate::copy::Side::A, match err {
+            NetErr::Io(err) => err,
+            NetErr::Other(message) => io::Error::other(message),
+            NetErr::TooManySockets => io::Error::other("too many sockets"),
+        }))),
+    };
+    let io = |err: io::Error| ManuallyDrop::new(<IOErr as FromNetErr>::from_net_err(NetErr::Io(err)));
+    let outcome = match failed {
+        None => O { payload: P { done: [] }, tag: T::Done },
+        Some(CopyErr::Cancelled) => O { payload: P { cancelled: [] }, tag: T::Cancelled },
+        Some(CopyErr::Read(_, e)) => O { payload: P { read: io(e) }, tag: T::Read },
+        Some(CopyErr::Write(_, e)) => O { payload: P { write: io(e) }, tag: T::Write },
+        // copy_to runs on the calling task.
+        Some(CopyErr::TaskLimit) => unreachable!("copy_to starts no task"),
+    };
+    CopyToResult { copied, outcome }
 }
 
 /// Hosted function: Host.socket_abort!

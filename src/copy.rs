@@ -294,21 +294,46 @@ fn writing<R>(shared: &Shared, write: impl FnOnce() -> R) -> R {
     result
 }
 
-/// Copy `from` to `to` through a buffer until `from` ends, adding the bytes
-/// copied to `total`; then shut down writing on `to`. The buffer exists only
-/// while data is flowing, and grows while reads fill it.
-fn buffered(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared, total: &mut u64) -> Result<(), CopyErr> {
+/// Why a one-way copy stopped (errors aside).
+#[derive(PartialEq)]
+enum Ended {
+    /// `from` ended.
+    Eof,
+    /// `total` reached `end_at`.
+    Limit,
+}
+
+/// How much the next read may take: all it can, or with `end_at`, no more
+/// than is left to copy. Never reading past the limit is what leaves the
+/// stream usable for whatever follows (for TLS, rustls keeps the rest of a
+/// record for the next read).
+fn cap(len: usize, total: u64, end_at: Option<u64>) -> usize {
+    match end_at {
+        None => len,
+        Some(end) => (end.saturating_sub(total)).min(len as u64) as usize,
+    }
+}
+
+/// Copy `from` to `to` through a buffer until `from` ends or, with
+/// `end_at`, until `total` (the bytes copied, counting any before this
+/// call) reaches it. The buffer exists only while data is flowing, and
+/// grows while reads fill it.
+fn buffered(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared, total: &mut u64, end_at: Option<u64>) -> Result<Ended, CopyErr> {
     let mut buf: Vec<u8> = Vec::new();
     loop {
+        if end_at.is_some_and(|end| *total >= end) {
+            spare::give_back(buf);
+            return Ok(Ended::Limit);
+        }
         if buf.is_empty() {
             wait_for_data(from, sides.0, shared)?;
             buf = spare::buffer();
         }
-        match read_now(from, &mut buf).map_err(|err| read_err(sides.0, err))? {
+        let room = cap(buf.len(), *total, end_at);
+        match read_now(from, &mut buf[..room]).map_err(|err| read_err(sides.0, err))? {
             Some(0) => {
-                shutdown_write(to);
-                shared.ended_into(sides.1);
-                return Ok(());
+                spare::give_back(buf);
+                return Ok(Ended::Eof);
             }
             Some(n) => {
                 writing(shared, || write_all(to, &buf[..n])).map_err(|err| write_err(sides.1, err))?;
@@ -323,24 +348,61 @@ fn buffered(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared, to
     }
 }
 
+/// The one-way loop both `copy_both` and `copy_to` use: `splice` where it
+/// can (Linux, plain sockets), else through a buffer.
+fn one_way(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared, total: &mut u64, end_at: Option<u64>) -> Result<Ended, CopyErr> {
+    #[cfg(target_os = "linux")]
+    if let Some(result) = splice::copy(from, to, sides, shared, total, end_at) {
+        return result;
+    }
+    buffered(from, to, sides, shared, total, end_at)
+}
+
 /// Copy `from` to `to` until `from` ends; returns the bytes copied. On an
 /// error, aborts both streams and records the error if it's the first.
 fn direction(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared) -> u64 {
     let mut total = 0;
-    #[cfg(target_os = "linux")]
-    let result = match splice::copy(from, to, sides, shared, &mut total) {
-        Some(result) => result,
-        None => buffered(from, to, sides, shared, &mut total),
-    };
-    #[cfg(not(target_os = "linux"))]
-    let result = buffered(from, to, sides, shared, &mut total);
-    if let Err(err) = result {
-        match sides.0 {
+    match one_way(from, to, sides, shared, &mut total, None) {
+        // Pass the end of stream on.
+        Ok(_) => {
+            shutdown_write(to);
+            shared.ended_into(sides.1);
+        }
+        Err(err) => match sides.0 {
             Side::A => shared.fail(err, from, to),
             Side::B => shared.fail(err, to, from),
-        }
+        },
     }
     total
+}
+
+/// `Stream.copy_to!`: write `prefix` to `to`, then copy `from` to `to` until
+/// `from` ends, or with `limit`, exactly that many more bytes, never reading
+/// past them. Returns the bytes delivered (the prefix included) and the
+/// error, if any; an early end with a limit is `Read(UnexpectedEof)`. Unlike
+/// `copy_both`, it neither shuts down nor aborts anything: the caller does
+/// what fits. On the calling task; with nothing going the other way, read
+/// timeouts apply as they are.
+pub fn copy_to(from: &Socket, to: &Socket, prefix: &[u8], limit: Option<u64>) -> (u64, Option<CopyErr>) {
+    let shared = Shared {
+        progress: AtomicU64::new(0),
+        writing: AtomicU32::new(0),
+        ended_into: [AtomicBool::new(false), AtomicBool::new(false)],
+        first_err: Mutex::new(None),
+    };
+    let mut total = 0;
+    if !prefix.is_empty() {
+        if let Err(err) = write_all(to, prefix) {
+            return (0, Some(write_err(Side::B, err)));
+        }
+        total = prefix.len() as u64;
+    }
+    let end_at = limit.map(|n| total + n);
+    match one_way(from, to, (Side::A, Side::B), &shared, &mut total, end_at) {
+        Ok(Ended::Eof) if end_at.is_some() => (total, Some(CopyErr::Read(Side::A, io::ErrorKind::UnexpectedEof.into()))),
+        Ok(_) => (total, None),
+        Err(err) => (total, Some(err)),
+    }
 }
 
 /// Copy between `a` and `b` both ways until both directions end (see the
@@ -384,7 +446,7 @@ mod splice {
     use std::io;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-    use super::{read_err, shutdown_write, wait_for_data, write_err, writing, CopyErr, Shared, Side};
+    use super::{cap, read_err, wait_for_data, write_err, writing, CopyErr, Ended, Shared, Side};
     use crate::sockets::Socket;
 
     /// How much to move per `splice`: a default pipe's capacity.
@@ -468,16 +530,32 @@ mod splice {
         matches!(err.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS | libc::EOPNOTSUPP))
     }
 
-    /// Copy `from` to `to` with `splice` until `from` ends, like
-    /// `buffered`, with a pipe only while data flows (idle sessions keep no
-    /// pipe, and so no extra descriptors; see `pipe`). `None` (having copied nothing
-    /// since the last pipe was closed) if either isn't a plain stream, no
-    /// pipe can be made, or the kernel won't splice them: the buffered copy
+    /// Copy `from` to `to` with `splice`, like `buffered` (and under the
+    /// same limit), with a pipe only while data flows (idle sessions keep no
+    /// pipe, and so no extra descriptors; see `pipe`). `None` (with the pipe
+    /// empty, so `total` is exact) if either isn't a plain stream, no pipe
+    /// can be made, or the kernel won't splice them: the buffered copy
     /// carries on from there.
-    pub fn copy(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared, total: &mut u64) -> Option<Result<(), CopyErr>> {
+    pub fn copy(
+        from: &Socket,
+        to: &Socket,
+        sides: (Side, Side),
+        shared: &Shared,
+        total: &mut u64,
+        end_at: Option<u64>,
+    ) -> Option<Result<Ended, CopyErr>> {
         let (from_fd, to_fd) = (plain_fd(from)?, plain_fd(to)?);
         let mut pipe_ends: Option<(OwnedFd, OwnedFd)> = None;
+        // Bytes spliced by this call: a refusal before any means the kernel
+        // won't splice these sockets at all.
+        let mut spliced = 0;
         loop {
+            if end_at.is_some_and(|end| *total >= end) {
+                if let Some(ends) = pipe_ends.take() {
+                    give_back(ends);
+                }
+                return Some(Ok(Ended::Limit));
+            }
             let (pipe_out, pipe_in) = match &pipe_ends {
                 Some(ends) => ends,
                 None => {
@@ -490,7 +568,7 @@ mod splice {
             };
             // The pipe is empty here, so `WouldBlock` means `from` has
             // nothing now.
-            let n = match splice(from_fd, pipe_in.as_raw_fd(), CHUNK) {
+            let n = match splice(from_fd, pipe_in.as_raw_fd(), cap(CHUNK, *total, end_at)) {
                 Ok(n) => n,
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     // Drained (the pipe is empty): give it back while waiting
@@ -500,13 +578,14 @@ mod splice {
                     }
                     continue;
                 }
-                Err(err) if *total == 0 && unsupported(&err) => return None,
+                Err(err) if spliced == 0 && unsupported(&err) => return None,
                 Err(err) => return Some(Err(read_err(sides.0, err))),
             };
             if n == 0 {
-                shutdown_write(to);
-                shared.ended_into(sides.1);
-                return Some(Ok(()));
+                if let Some(ends) = pipe_ends.take() {
+                    give_back(ends);
+                }
+                return Some(Ok(Ended::Eof));
             }
             // Drain the pipe; with bytes in it, `WouldBlock` means `to` is
             // full.
@@ -524,6 +603,7 @@ mod splice {
                 return Some(Err(write_err(sides.1, err)));
             }
             *total += n as u64;
+            spliced += n;
         }
     }
 }

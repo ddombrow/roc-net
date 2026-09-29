@@ -1,4 +1,6 @@
 import Bytes
+import Host
+import IOErr
 import Time
 
 ## Split a byte stream into messages: lines, delimited records, fixed-size
@@ -192,6 +194,51 @@ Framing := [].{
 
 		## For `Select.on_frame`: `read_frame!`, like `try_read_line!`.
 		try_read_frame! = |reader| try_read_with!(reader, frame_complete, |r| r.read_frame!())
+
+		## Copy the next bytes of the stream to `to`: until it ends
+		## (`UntilEnd`) or exactly `n` of them (`Exactly(n)`), starting with
+		## the ones this reader has already buffered. Returns how many were
+		## copied and the reader to carry on with. Everything else is as for
+		## `Stream.copy_to!`.
+		##
+		## Use this, not `Stream.copy_to!` on the underlying stream, after
+		## reading from the stream with a reader: a read can bring in more
+		## than was asked for (the rest of a header, a body, even the start of
+		## the next message), and the stream alone no longer has those bytes.
+		## With `Exactly(n)`, nothing past the `n`th byte is copied: bytes
+		## after it stay buffered in the reader returned, ready for its next
+		## read.
+		##
+		## ```roc
+		## # A header line naming the payload's length, then the payload,
+		## # streamed to `sink`; then the next header, on the same connection.
+		## (line, $reader) = $reader.read_line!()?
+		## length = parse_length(line)?
+		## (_, $reader) = $reader.copy_to!(sink, Exactly(length))?
+		## (next, $reader) = $reader.read_line!()?
+		## ```
+		copy_to! : Reader(s), t, [UntilEnd, Exactly(U64)] => Try((U64, Reader(s)), [CopyToErr({ failed : [Read(IOErr), Write(IOErr)], copied : U64 }), Cancelled])
+			where [s.socket : s -> Host.Socket, t.socket : t -> Host.Socket]
+		copy_to! = |Reader.(r), to, limit| {
+			(first, rest, stream_limit) =
+				match limit {
+					UntilEnd => (r.buffered, [], UntilEnd)
+					Exactly(n) => {
+						take = if n < List.len(r.buffered) n else List.len(r.buffered)
+						(List.take_first(r.buffered, take), List.drop_first(r.buffered, take), Exactly(n - take))
+					}
+				}
+			# The host directly, as `Stream.copy_to_after!` does: on this Roc
+			# nightly, `Stream`'s functions aren't visible from this module
+			# ("Stream.copy_to_after! does not exist").
+			{ copied, outcome } = Host.stream_copy_to!(r.stream.socket(), to.socket(), first, stream_limit)
+			match outcome {
+				Done => Ok((copied, Reader.({ ..r, buffered: rest })))
+				Cancelled => Err(Cancelled)
+				Read(err) => Err(CopyToErr({ failed: Read(err), copied }))
+				Write(err) => Err(CopyToErr({ failed: Write(err), copied }))
+			}
+		}
 
 		## The underlying stream's host socket, for `Select` to wait on.
 		socket = |Reader.(r)| r.stream.socket()

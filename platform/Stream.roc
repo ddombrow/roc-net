@@ -91,7 +91,8 @@ Stream := [].{
 	##
 	## It copies from the streams themselves, so bytes a `Framing` reader has
 	## already buffered from one (say, after reading a header line to choose
-	## the backend) aren't included: write those to the other side first.
+	## the backend) aren't included: send those on first (with
+	## `reader.copy_to!(backend, Exactly(...))`, or by writing them).
 	##
 	## The second direction runs on a task of its own, so this fails with
 	## `TaskLimitReached` (copying nothing) at the task limit.
@@ -115,6 +116,61 @@ Stream := [].{
 			ReadB(err) => failed(ReadB(err))
 			WriteA(err) => failed(WriteA(err))
 			WriteB(err) => failed(WriteB(err))
+		}
+	}
+
+	## Copy what arrives on `from` to `to`, until `from` ends (`UntilEnd`) or
+	## exactly `n` more bytes have been copied (`Exactly(n)`), and return how
+	## many were. The one-way counterpart of `copy_both!`, for protocols that
+	## handle one direction in Roc and stream the other, or send a message's
+	## header and then its body:
+	##
+	## ```roc
+	## # A 4-byte length, then that many bytes of payload.
+	## (header, $reader) = $reader.read_exactly!(4)?
+	## (length, _) = Bytes.take_u32_be(header)?
+	## backend.write!(header)?
+	## (_, $reader) = $reader.copy_to!(backend, Exactly(length.to_u64()))?
+	## ```
+	##
+	## (Use `Framing.Reader.copy_to!`, as here, when a `Framing` reader has
+	## been reading `from`: the bytes it has buffered go first. This function
+	## copies from the stream itself.)
+	##
+	## - `Exactly(n)` never reads past the `n`th byte, so `from` is ready for
+	##   whatever follows, on the same connection. (For TLS, the rest of a
+	##   record stays in the stream for its next read.) If `from` ends first,
+	##   this fails with `Read(UnexpectedEof)`.
+	## - It doesn't shut down or close either stream when it's done, even at
+	##   the end of `from`: what comes next is up to you (`to.shutdown!(Write)`
+	##   to pass the end on, or carry on with the next message).
+	## - On an error, `copied` says how much got through. Neither stream is
+	##   usable for anything else afterwards: `from` may have given up bytes
+	##   that never reached `to`. To give up, `abort!` whichever peer
+	##   mustn't take a cut-off transfer for a complete one.
+	## - Read timeouts apply as they are: with only one direction, being busy
+	##   the other way (in other Roc code) doesn't count. For a two-way
+	##   session, use `copy_both!`.
+	## - The bytes are copied by the platform, never becoming Roc lists; on
+	##   Linux, between two plain (`Tcp` or `Unix`) streams, they don't pass
+	##   through the program's memory at all (`splice`). Cancelling the task
+	##   returns `Err(Cancelled)`.
+	copy_to! : a, b, [UntilEnd, Exactly(U64)] => Try(U64, [CopyToErr({ failed : [Read(IOErr), Write(IOErr)], copied : U64 }), Cancelled])
+		where [a.socket : a -> Host.Socket, b.socket : b -> Host.Socket]
+	copy_to! = |from, to, limit| copy_to_after!(from, to, [], limit)
+
+	## `copy_to!`, writing `first` to `to` before copying (it counts toward
+	## the bytes copied, but not toward `limit`): for forwarding bytes you've
+	## already read, such as a header, ahead of the rest.
+	copy_to_after! : a, b, List(U8), [UntilEnd, Exactly(U64)] => Try(U64, [CopyToErr({ failed : [Read(IOErr), Write(IOErr)], copied : U64 }), Cancelled])
+		where [a.socket : a -> Host.Socket, b.socket : b -> Host.Socket]
+	copy_to_after! = |from, to, first, limit| {
+		{ copied, outcome } = Host.stream_copy_to!(from.socket(), to.socket(), first, limit)
+		match outcome {
+			Done => Ok(copied)
+			Cancelled => Err(Cancelled)
+			Read(err) => Err(CopyToErr({ failed: Read(err), copied }))
+			Write(err) => Err(CopyToErr({ failed: Write(err), copied }))
 		}
 	}
 }

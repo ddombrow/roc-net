@@ -4,6 +4,28 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.3.1 (unreleased)
+
+Added:
+
+- **`Stream.copy_to!(from, to, limit)`**: the one-way counterpart of
+  `copy_both!`, for streaming one direction while handling the other in
+  Roc, or sending a message's body after its header. `UntilEnd` copies
+  until `from` ends; `Exactly(n)` copies exactly `n` bytes and never reads
+  past them, so the connection is ready for the next message (for TLS, the
+  rest of a record stays in the stream). It shuts down and aborts nothing:
+  what comes next is the caller's choice. Errors are
+  `CopyToErr({ failed: Read(...) | Write(...), copied })`, a tag of its own,
+  so code using `?` on both `copy_to!` and `copy_both!` still typechecks.
+  Same copying as `copy_both!` (the two share one loop): no Roc lists, no
+  buffer while idle, and `splice` on Linux between plain sockets.
+- **`Framing.Reader.copy_to!(to, limit)`**: the same, starting with the
+  bytes the reader has already buffered, and returning the reader with
+  whatever came after the limit (the start of the next message) still
+  buffered. Use it instead of `Stream.copy_to!` once a reader has read from
+  the stream. `Stream.copy_to_after!` writes given bytes first, for
+  forwarding a header you've read yourself.
+
 ## 0.3.0
 
 Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,
