@@ -1,5 +1,4 @@
 import Host
-import Stderr
 
 ## Concurrent tasks.
 ##
@@ -165,9 +164,9 @@ Task := [].{
 			if !watched and !Host.task_is_cancelled!({}) {
 				match result {
 					Ok(_) => {}
-					Err(err) => {
-						_ = Stderr.line!("task failed: ${Str.inspect(err)}")
-					}
+					# Through the log writer, so a failing task can't stall its
+					# worker on a slow stderr.
+					Err(err) => Host.log_write!(3, "task failed", [{ key: "error", value: Str(Str.inspect(err)) }])
 				}
 			}
 		}

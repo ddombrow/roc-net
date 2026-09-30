@@ -40,13 +40,15 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Channel, Dns, Framing, IOErr, Random, Select, Stdout, Stderr, Stdin, Stream, Task, Tcp, Time, Tls, Udp, Unix]
+	exposes [Bytes, Channel, Dns, Framing, IOErr, Log, Random, Select, Stdout, Stderr, Stdin, Stream, Task, Tcp, Time, Tls, Udp, Unix]
 	packages { roc: "nightly-2026-09-24-f45bfbe" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
 		"roc_stderr_line": Host.stderr_line!,
 		"roc_stdin_line": Host.stdin_line!,
 		"roc_stdout_line": Host.stdout_line!,
+		"roc_log_enabled": Host.log_enabled!,
+		"roc_log_write": Host.log_write!,
 		"roc_task_spawn": Host.task_spawn!,
 		"roc_task_finish": Host.task_finish!,
 		"roc_task_join": Host.task_join!,
@@ -67,6 +69,7 @@ platform ""
 		"roc_random_bytes": Host.random_bytes!,
 		"roc_time_now_ns": Host.time_now_ns!,
 		"roc_time_sleep_ns": Host.time_sleep_ns!,
+		"roc_time_utc_now_ns": Host.time_utc_now_ns!,
 		"roc_socket_abort": Host.socket_abort!,
 		"roc_socket_accept": Host.socket_accept!,
 		"roc_socket_local_addr": Host.socket_local_addr!,
@@ -124,6 +127,7 @@ import Channel
 import Dns
 import Stream
 import Framing
+import Log
 import Tcp
 import Time
 import Tls
@@ -150,7 +154,10 @@ main_for_host! = |args| {
 		Ok({}) => 0
 		Err(Exit(code)) => code
 		Err(other) => {
-			_ = Stderr.line!("ERROR: ${Str.inspect(other)}")
+			# Through the log writer, which the host flushes (for up to a second)
+			# before exiting: a stalled stderr can't hang the exit, and this
+			# comes out after the lines logged before it.
+			Host.log_write!(3, "main! failed", [{ key: "error", value: Str(Str.inspect(other)) }])
 			-1
 		}
 	}

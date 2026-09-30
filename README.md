@@ -105,6 +105,13 @@ Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
 Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 
 - `Stdout.line!`, `Stderr.line!`, `Stdin.line!`: line-based standard I/O
+- `Log.info!(message, fields)` (and `debug!`, `warn!`, `error!`): structured
+  log lines on stderr, with a wall-clock timestamp, the level and the task,
+  as text or JSON (`ROC_NET_LOG_FORMAT`), filtered by `ROC_NET_LOG`. Logging
+  never waits: a thread of its own writes the lines, so a slow or stalled
+  stderr can't stall a server (past about 1 MiB waiting, the oldest lines
+  are dropped, and counted; raise `ROC_NET_LOG_BUFFER_KIB` if bursts hit
+  that). Use it rather than `Stderr.line!` in servers.
 - `Tcp.listen!`, `Tcp.listen_with!`, `Tcp.connect!`, `Tcp.connect_timeout!`: blocking TCP sockets
   - Accepted streams get 60-second idle (read) and write timeouts, so a
     client that goes quiet or stops reading can't hold a server task forever;
@@ -175,7 +182,8 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 - `Random`: `u8!()` ... `u64!()`, `bytes!(n)`, `between!(low, high)`,
   cryptographically secure
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
-  `Duration`s (`Time.millis(500)`, `.to_micros()`, ...)
+  `Duration`s (`Time.millis(500)`, `.to_micros()`, ...); `utc_now!` for the
+  wall clock (`Utc`: `.to_rfc3339()`, `.to_millis_since_epoch()`, ...)
 - `Dns.resolve!`, `Dns.resolve_timeout!`: a host name's IP addresses, from the
   OS resolver. Connect timeouts include the name lookup.
 - `Task.spawn!`: run a closure concurrently, as a lightweight task. Returns a
@@ -274,6 +282,9 @@ just run unix_client /tmp/echo.sock "hello"
   every socket it creates (`SO_NOSIGPIPE` on macOS, `MSG_NOSIGNAL` on Linux),
   so the host doesn't touch signal handling. Stdout and stderr keep the
   default, so `app | head` exits quietly like other command-line tools.
+  The one exception is `Log`'s writer thread, which blocks SIGPIPE for
+  itself only, so a closed log pipe loses the lines rather than ending the
+  program.
 - Platform Roc code must never `Box.unbox` or re-box a socket handle. The
   compiler can reuse an unboxed box's memory in place, which would bypass
   `roc_dealloc` and leak the socket.

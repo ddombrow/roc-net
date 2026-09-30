@@ -187,6 +187,47 @@ From building a TLS-terminating reverse proxy on 0.2:
 - A `Select` arm for a task finishing (`on_join`), which covers stopping
   every task when the first one ends (see `Task.scope!`'s docs).
 
+## 0.3.2: Structured logging with a non-blocking sink
+
+**Status (2026-09-30):** implemented on the `v0.3.2-log` branch and ready to release: `Log`
+(`platform/Log.roc`, `src/log.rs`), `Time.utc_now!` and `Time.Utc`, task ids,
+and the platform's own messages routed through it. See `Log`'s docs for the
+behaviour and the CHANGELOG for the summary. As built:
+
+- One writer thread, not a task worker, drains a queue of whole, formatted
+  lines to stderr, a batch at a time, pausing a millisecond between batches
+  so a busy server doesn't wake it for every line (that cut the cost of a
+  line from about 5 to 1-2 µs). It blocks SIGPIPE for itself. It writes under
+  Rust's stderr lock, which `Stderr.line!` also holds while writing a line,
+  so the two never tear each other's lines (writing to the file descriptor
+  directly let a batch land inside one); `tests/log`'s `mixed` mode checks
+  it.
+- Memory: lines queued plus the batch being written stay within
+  `ROC_NET_LOG_BUFFER_KIB` (1 MiB by default), give or take a line; batches
+  are at most a sixteenth of it. When full, the **oldest** queued lines are
+  dropped and counted in a `log lines dropped` warning. Strings past 16 KiB
+  and lines past 64 KiB are cut short and marked.
+- Text (the default) or JSON (`ROC_NET_LOG_FORMAT`); a text message
+  containing `=` or `"` is quoted, so interpolated data can't pass for
+  fields. Floats are written in their shortest form.
+- `task`: 1 for `main!`, counting up; no field outside a task.
+- `Stderr.line!` is unchanged (synchronous, lossless); its docs point
+  servers at `Log`. `main!` failing and detached tasks failing are logged at
+  error level; `ROC_NET_LOG=off` silences them too (the exit code still
+  reports `main!` failing). When `main!` returns, the queue gets up to a
+  second.
+- Tests: `tests/log` and `scripts/run_log_tests.sh` check the exact lines in
+  both formats, levels and settings, truncation, `main!` failing (including
+  with stderr stalled, where it must still exit), and a stalled stderr
+  (20,000 lines logged in about 10 ms, the oldest dropped, every line
+  written or counted). `scripts/run_net_tests.sh` runs them when the program
+  is built alongside `net_tests`, and says SKIPPED when it isn't. There are
+  no Rust unit tests: the host library doesn't link without Roc's symbols.
+- Measured (macOS, 64 connections, one line per request): about 1-2 µs of
+  server CPU per line to `/dev/null`, against about 8 µs for
+  `Stderr.line!`; with a stalled stderr, `Log` carries on at full speed and
+  `Stderr.line!` stops the server.
+
 ## 0.4.0: Crypto + Noise (moved from the first draft of this plan)
 
 - `Crypto` from AWS-LC (already linked): SHA-2, HMAC, HKDF, ChaCha20-Poly1305

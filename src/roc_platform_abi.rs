@@ -1210,6 +1210,33 @@ const _: () = assert!(core::mem::size_of::<AnonStruct4f4f23a245dfe10a>() == 24, 
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<AnonStruct4f4f23a245dfe10a>() == 4, "AnonStruct4f4f23a245dfe10a alignment mismatch");
 
+/// Element type for __AnonStruct_be833d82c728025b
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStructBe833d82c728025b {
+    pub value: BoolOrF64OrI64OrStrOrU64,
+    pub key: RocStr,
+}
+
+/// Element type for __AnonStruct_be833d82c728025b
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStructBe833d82c728025b {
+    pub value: BoolOrF64OrI64OrStrOrU64,
+    pub key: RocStr,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<AnonStructBe833d82c728025b>() == 56, "AnonStructBe833d82c728025b size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<AnonStructBe833d82c728025b>() == 8, "AnonStructBe833d82c728025b alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<AnonStructBe833d82c728025b>() == 32, "AnonStructBe833d82c728025b size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<AnonStructBe833d82c728025b>() == 8, "AnonStructBe833d82c728025b alignment mismatch");
+
 /// Element type for __AnonStruct_dfa5943259877aa7
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
@@ -2957,6 +2984,247 @@ const _: () = assert!(core::mem::align_of::<HostUdpRecvFromResult>() == 4, "Host
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostUdpRecvFromResult, tag) == 24, "HostUdpRecvFromResult tag offset mismatch");
 
+/// Tag discriminant for BoolOrF64OrI64OrStrOrU64.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoolOrF64OrI64OrStrOrU64Tag {
+    Bool = 0,
+    F64 = 1,
+    I64 = 2,
+    Str = 3,
+    U64 = 4,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union BoolOrF64OrI64OrStrOrU64Payload {
+    pub bool: core::mem::ManuallyDrop<bool>,
+    pub f64: core::mem::ManuallyDrop<f64>,
+    pub i64: core::mem::ManuallyDrop<i64>,
+    pub str: core::mem::ManuallyDrop<RocStr>,
+    pub u64: core::mem::ManuallyDrop<u64>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(8))]
+#[derive(Clone, Copy)]
+pub struct BoolOrF64OrI64OrStrOrU64PayloadAlignment;
+
+/// Tag union: BoolOrF64OrI64OrStrOrU64
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BoolOrF64OrI64OrStrOrU64 {
+    pub _payload_alignment: [BoolOrF64OrI64OrStrOrU64PayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: BoolOrF64OrI64OrStrOrU64Tag,
+}
+
+/// Tag union: BoolOrF64OrI64OrStrOrU64
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BoolOrF64OrI64OrStrOrU64 {
+    pub payload: BoolOrF64OrI64OrStrOrU64Payload,
+    pub tag: BoolOrF64OrI64OrStrOrU64Tag,
+}
+
+impl BoolOrF64OrI64OrStrOrU64 {
+    /// Borrow the `Bool` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::Bool` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_bool_unchecked(&self) -> &bool {
+        unsafe { &*(self.payload.as_ptr() as *const bool) }
+    }
+
+    /// Borrow the `Bool` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::Bool` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_bool_unchecked(&self) -> &bool {
+        unsafe { &*(&self.payload.bool as *const core::mem::ManuallyDrop<bool> as *const bool) }
+    }
+
+    /// Move the `Bool` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::Bool`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_bool_unchecked(&mut self) -> bool {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const bool) }
+    }
+
+    /// Move the `Bool` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::Bool`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_bool_unchecked(&mut self) -> bool {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.bool) }
+    }
+
+    /// Borrow the `F64` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::F64` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_f64_unchecked(&self) -> &f64 {
+        unsafe { &*(self.payload.as_ptr() as *const f64) }
+    }
+
+    /// Borrow the `F64` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::F64` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_f64_unchecked(&self) -> &f64 {
+        unsafe { &*(&self.payload.f64 as *const core::mem::ManuallyDrop<f64> as *const f64) }
+    }
+
+    /// Move the `F64` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::F64`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_f64_unchecked(&mut self) -> f64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const f64) }
+    }
+
+    /// Move the `F64` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::F64`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_f64_unchecked(&mut self) -> f64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.f64) }
+    }
+
+    /// Borrow the `I64` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::I64` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_i64_unchecked(&self) -> &i64 {
+        unsafe { &*(self.payload.as_ptr() as *const i64) }
+    }
+
+    /// Borrow the `I64` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::I64` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_i64_unchecked(&self) -> &i64 {
+        unsafe { &*(&self.payload.i64 as *const core::mem::ManuallyDrop<i64> as *const i64) }
+    }
+
+    /// Move the `I64` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::I64`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_i64_unchecked(&mut self) -> i64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const i64) }
+    }
+
+    /// Move the `I64` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::I64`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_i64_unchecked(&mut self) -> i64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.i64) }
+    }
+
+    /// Borrow the `Str` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::Str` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_str_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Str` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::Str` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_str_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.str as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Str` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::Str`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_str_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Str` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::Str`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_str_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.str) }
+    }
+
+    /// Borrow the `U64` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::U64` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_u64_unchecked(&self) -> &u64 {
+        unsafe { &*(self.payload.as_ptr() as *const u64) }
+    }
+
+    /// Borrow the `U64` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::U64` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_u64_unchecked(&self) -> &u64 {
+        unsafe { &*(&self.payload.u64 as *const core::mem::ManuallyDrop<u64> as *const u64) }
+    }
+
+    /// Move the `U64` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::U64`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_u64_unchecked(&mut self) -> u64 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u64) }
+    }
+
+    /// Move the `U64` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `BoolOrF64OrI64OrStrOrU64Tag::U64`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_u64_unchecked(&mut self) -> u64 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.u64) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<BoolOrF64OrI64OrStrOrU64>() == 32, "BoolOrF64OrI64OrStrOrU64 size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<BoolOrF64OrI64OrStrOrU64>() == 8, "BoolOrF64OrI64OrStrOrU64 alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(BoolOrF64OrI64OrStrOrU64, tag) == 24, "BoolOrF64OrI64OrStrOrU64 tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<BoolOrF64OrI64OrStrOrU64>() == 16, "BoolOrF64OrI64OrStrOrU64 size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<BoolOrF64OrI64OrStrOrU64>() == 8, "BoolOrF64OrI64OrStrOrU64 alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(BoolOrF64OrI64OrStrOrU64, tag) == 12, "BoolOrF64OrI64OrStrOrU64 tag offset mismatch");
+
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4147,6 +4415,26 @@ pub struct HostStdoutLineArgs {
     pub arg0: RocStr,
 }
 
+/// Arguments for Host.log_enabled!
+/// Roc signature: U8 => Bool
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostLogEnabledArgs {
+    pub arg0: u8,
+}
+
+/// Arguments for Host.log_write!
+/// Roc signature: U8, Str, List({ key : Str, value : [Bool(Bool), F64(F64), I64(I64), Str(Str), U64(U64)] }) => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostLogWriteArgs {
+    pub arg0: u8,
+    pub arg1: RocStr,
+    pub arg2: RocList<AnonStructBe833d82c728025b>,
+}
+
 /// Arguments for Host.task_spawn!
 /// Roc signature: Box({} => {}) => Try(Host.TaskHandle, [TaskLimitReached])
 /// Refcounted fields are owned by the hosted function.
@@ -4643,6 +4931,7 @@ pub struct HostUnixListenArgs {
 
 // Platform Type Aliases
 
+pub type HostLogWriteArg2 = AnonStructBe833d82c728025b;
 pub type HostSelectWaitArg0 = JoinableOrReadableOrReceivableOrSendableOrWritable;
 pub type HostSelectWaitArg0Payload = JoinableOrReadableOrReceivableOrSendableOrWritablePayload;
 pub type HostSelectWaitArg0Tag = JoinableOrReadableOrReceivableOrSendableOrWritableTag;
@@ -5562,6 +5851,86 @@ unsafe impl RocRelease<AnonStruct4f4f23a245dfe10a> for AnonStruct4f4f23a245dfe10
     }
 }
 
+impl AnonStructBe833d82c728025b {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.value.decref(roc_host); }
+        unsafe { value.key.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.value.incref(amount); }
+        unsafe { value.key.incref(amount); }
+    }
+}
+
+pub struct AnonStructBe833d82c728025bRelease;
+
+unsafe impl RocRelease<AnonStructBe833d82c728025b> for AnonStructBe833d82c728025bRelease {
+    unsafe fn release(value: AnonStructBe833d82c728025b, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl BoolOrF64OrI64OrStrOrU64 {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            BoolOrF64OrI64OrStrOrU64Tag::Bool => {},
+            BoolOrF64OrI64OrStrOrU64Tag::F64 => {},
+            BoolOrF64OrI64OrStrOrU64Tag::I64 => {},
+            BoolOrF64OrI64OrStrOrU64Tag::Str => {
+                let payload = unsafe { value.take_payload_str_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            BoolOrF64OrI64OrStrOrU64Tag::U64 => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            BoolOrF64OrI64OrStrOrU64Tag::Bool => {},
+            BoolOrF64OrI64OrStrOrU64Tag::F64 => {},
+            BoolOrF64OrI64OrStrOrU64Tag::I64 => {},
+            BoolOrF64OrI64OrStrOrU64Tag::Str => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_str_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            BoolOrF64OrI64OrStrOrU64Tag::U64 => {},
+        }
+    }
+}
+
+pub struct BoolOrF64OrI64OrStrOrU64Release;
+
+unsafe impl RocRelease<BoolOrF64OrI64OrStrOrU64> for BoolOrF64OrI64OrStrOrU64Release {
+    unsafe fn release(value: BoolOrF64OrI64OrStrOrU64, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl HostDnsResolveResult {
     /// Recursively decrement Roc-owned payloads.
     ///
@@ -6130,6 +6499,17 @@ pub unsafe fn decref_list_of_anon_struct_f1e164f99c294fde(value: RocList<AnonStr
     unsafe { value.release_with::<AnonStructF1e164f99c294fdeRelease>(roc_host); }
 }
 
+/// Release one owned reference to a `RocList<AnonStructBe833d82c728025b>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_anon_struct_be833d82c728025b(value: RocList<AnonStructBe833d82c728025b>, roc_host: &RocHost) {
+    unsafe { value.release_with::<AnonStructBe833d82c728025bRelease>(roc_host); }
+}
+
 /// Release one owned reference to a `RocList<JoinableOrReadableOrReceivableOrSendableOrWritable>`.
 ///
 /// The allocation's final reference is claimed atomically before any element
@@ -6219,6 +6599,18 @@ unsafe extern "C" {
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_stdout_line(arg0: RocStr) -> HostStdoutLineResult;
+
+    /// Hosted symbol for Host.log_enabled!
+    /// Roc signature: U8 => Bool
+    pub fn roc_log_enabled(arg0: u8) -> bool;
+
+    /// Hosted symbol for Host.log_write!
+    /// Roc signature: U8, Str, List({ key : Str, value : [Bool(Bool), F64(F64), I64(I64), Str(Str), U64(U64)] }) => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { decref_list_of_anon_struct_be833d82c728025b(arg2, roc_host); }
+    pub fn roc_log_write(arg0: u8, arg1: RocStr, arg2: RocList<AnonStructBe833d82c728025b>);
 
     /// Hosted symbol for Host.task_spawn!
     /// Roc signature: Box({} => {}) => Try(Host.TaskHandle, [TaskLimitReached])
@@ -6344,6 +6736,10 @@ unsafe extern "C" {
     /// Hosted symbol for Host.time_sleep_ns!
     /// Roc signature: U64 => Bool
     pub fn roc_time_sleep_ns(arg0: u64) -> bool;
+
+    /// Hosted symbol for Host.time_utc_now_ns!
+    /// Roc signature: {} => I64
+    pub fn roc_time_utc_now_ns() -> i64;
 
     /// Hosted symbol for Host.socket_abort!
     /// Roc signature: Host.Socket => {}

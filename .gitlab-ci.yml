@@ -25,10 +25,12 @@ stages: [build, link, test]
 # Variables available to every job (and to the shell as environment variables).
 variables:
   # The programs built for Linux: the test suite, the example servers the e2e
-  # checks talk to, and the e2e client.
+  # checks talk to, the e2e client, and the `Log` checks' program (which
+  # scripts/run_net_tests.sh runs from next to net_tests).
   LINUX_PROGRAMS: >-
     examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server
     examples/line_server examples/chat_server tests/e2e tests/resolve_deadline
+    tests/log
   # Keep Cargo's downloads inside the project directory so `cache` can save them.
   CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
 

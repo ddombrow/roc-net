@@ -9,6 +9,7 @@ use std::mem::ManuallyDrop;
 mod channels;
 mod copy;
 mod limits;
+mod log;
 mod resource;
 mod roc_platform_abi;
 mod sockets;
@@ -279,6 +280,9 @@ fn run(args: &[String]) -> i32 {
     limits::workers();
     limits::task_stack_bytes();
     limits::share_after();
+    limits::log_level();
+    limits::log_json();
+    limits::log_buffer_bytes();
 
     // Leaked so it stays valid for tasks that are still running when `main!` returns.
     let roc_host: &'static mut RocHost = Box::leak(Box::new(RocHost {
@@ -299,5 +303,8 @@ fn run(args: &[String]) -> i32 {
         }
     }
     let args = Args(args_list);
-    sched::run_main(move || unsafe { roc_main(args.into_list()) })
+    let code = sched::run_main(move || unsafe { roc_main(args.into_list()) });
+    // Log lines still queued get a moment to be written.
+    log::flush(std::time::Duration::from_secs(1));
+    code
 }

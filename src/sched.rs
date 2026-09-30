@@ -121,6 +121,8 @@ const NOTIFIED: u8 = 2;
 const DONE: u8 = 4;
 
 struct Task {
+    /// For logs to tell tasks apart: 1 for `main!`'s, then counting up.
+    id: u64,
     /// Resumed only by the worker that set `RUNNING`.
     co: UnsafeCell<Option<Co>>,
     state: AtomicU8,
@@ -154,6 +156,7 @@ unsafe impl Send for Task {}
 unsafe impl Sync for Task {}
 
 static NEXT_WAIT: AtomicU64 = AtomicU64::new(1);
+static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 
 fn new_wait_id() -> u64 {
     NEXT_WAIT.fetch_add(1, Ordering::Relaxed)
@@ -360,7 +363,11 @@ fn new_shared(index: usize) -> io::Result<(Arc<Shared>, Poll)> {
 fn warn_worker_start(index: usize, err: &io::Error) {
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
-        eprintln!("roc-net: can't start worker thread {index} ({err}); running tasks on the workers already started");
+        crate::log::log(
+            crate::log::WARN,
+            "roc-net: can't start a worker thread; running tasks on the workers already started",
+            &[("worker", crate::log::Value::U64(index as u64)), ("error", crate::log::Value::Str(&err.to_string()))],
+        );
     }
 }
 
@@ -738,6 +745,7 @@ fn new_task(job: impl FnOnce() + Send + 'static, stack: DefaultStack, main: bool
         job();
     });
     Arc::new(Task {
+        id: NEXT_TASK.fetch_add(1, Ordering::Relaxed),
         co: UnsafeCell::new(Some(co)),
         state: AtomicU8::new(NOTIFIED),
         wait: AtomicU64::new(0),
@@ -867,6 +875,11 @@ impl TaskRef {
             }
         }
     }
+}
+
+/// The running task's id (see [`Task::id`]), if code is running in a task.
+pub fn current_task_id() -> Option<u64> {
+    current_task().map(|task| task.id)
 }
 
 /// Whether the running task has been cancelled.

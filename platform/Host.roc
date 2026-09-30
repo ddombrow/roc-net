@@ -111,6 +111,17 @@ Host := [].{
 
 	## Nanoseconds on a monotonic clock, counted from when the program started.
 	time_now_ns! : {} => U64
+	## Nanoseconds since the Unix epoch on the wall clock (negative before it).
+	time_utc_now_ns! : {} => I64
+
+	## A `Log` field, as the host takes it.
+	LogField : { key : Str, value : [Str(Str), U64(U64), I64(I64), F64(F64), Bool(Bool)] }
+	## Whether a line at `level` (0 debug, 1 info, 2 warn, 3 error) would be
+	## written (`ROC_NET_LOG`).
+	log_enabled! : U8 => Bool
+	## Format a log line and queue it for the log writer; never waits (see
+	## `Log`).
+	log_write! : U8, Str, List(LogField) => {}
 	## Pause the calling task for `ns` nanoseconds.
 	## False if the task was cancelled while sleeping.
 	time_sleep_ns! : U64 => Bool
