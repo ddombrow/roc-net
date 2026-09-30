@@ -136,8 +136,10 @@ impl<T> ResourceHeap<T> {
         let Some(index) = self.base_index(ptr as usize) else {
             if self.contains(ptr as usize) {
                 // Inside the heap but not a slot base: never ours to free normally.
-                eprintln!(
-                    "roc-net: freed pointer {ptr:?} is inside the resource heap but not a slot"
+                crate::log::log(
+                    crate::log::ERROR,
+                    "roc-net: freed pointer is inside the resource heap but not a slot",
+                    &[("pointer", crate::log::Value::Str(&format!("{ptr:?}")))],
                 );
                 return true;
             }
@@ -145,7 +147,11 @@ impl<T> ResourceHeap<T> {
         };
         let mut state = self.lock();
         if !state.live[index] {
-            eprintln!("roc-net: resource slot {index} released twice");
+            crate::log::log(
+                crate::log::ERROR,
+                "roc-net: resource slot released twice",
+                &[("slot", crate::log::Value::U64(index as u64))],
+            );
             return true;
         }
         state.live[index] = false;

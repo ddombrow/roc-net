@@ -111,10 +111,13 @@ fn warn_no_stack(err: &std::io::Error) {
     use std::sync::atomic::AtomicBool;
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
-        eprintln!(
-            "roc-net: can't allocate a task stack ({err}) with {} tasks running; \
-             spawns fail with TaskLimitReached until some finish",
-            LIVE_TASKS.load(Ordering::Relaxed)
+        crate::log::log(
+            crate::log::WARN,
+            "roc-net: can't allocate a task stack; spawns fail with TaskLimitReached until some tasks finish",
+            &[
+                ("error", crate::log::Value::Str(&err.to_string())),
+                ("tasks", crate::log::Value::U64(LIVE_TASKS.load(Ordering::Relaxed) as u64)),
+            ],
         );
     }
 }

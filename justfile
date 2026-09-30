@@ -138,13 +138,19 @@ licenses:
 
 # Run the network tests (see scripts/run_net_tests.sh), every example's
 # `expect`s, then the smoke test
-test: (build-example "net_tests") smoke
+test: (build-example "net_tests") build-log-tests smoke
     #!/usr/bin/env bash
     set -uo pipefail
     scripts/run_net_tests.sh {{bin_dir}}/net_tests || exit 1
     for f in $(grep -lE '^expect' examples/*/*.roc | xargs -n1 dirname | sort -u); do roc test "$f/main.roc" || exit 1; done
 
-linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline"
+linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline tests/log"
+
+# Build the `Log` test program (tests/log) next to net_tests, where
+# scripts/run_net_tests.sh finds it
+build-log-tests: build
+    @mkdir -p {{bin_dir}}
+    roc build tests/log/main.roc --output={{bin_dir}}/log
 compose := "docker compose -f tests/e2e/compose.yaml"
 roc_linux := ".tools/linux-arm64/roc_nightly-linux_arm64-" + nightly_suffix + "/roc"
 

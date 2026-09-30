@@ -4,6 +4,7 @@ import pf.Bytes
 import pf.Channel
 import pf.Dns
 import pf.Framing
+import pf.Log
 import pf.Random
 import pf.Select
 import pf.Stdout
@@ -153,6 +154,10 @@ main! = |_args| {
 		check!("copy_to!: cancelling returns Cancelled", copy_to_cancelled!),
 		check!("reader.copy_to!: Exactly(n) is one message, under the message timeout", copy_to_message_timeout!),
 		check!("reader.copy_to!: UntilEnd isn't a message, so no message timeout", copy_to_until_end_no_message_timeout!),
+		check!("time: Utc as RFC 3339, around the epoch, a leap day, the range's edges", time_utc_rfc3339!),
+		check!("time: Utc conversions round towards the past", time_utc_conversions!),
+		check!("time: utc_now! is the wall clock", time_utc_now!),
+		check!("log: many tasks logging at once, and the default level", log_many_tasks!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
 		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
@@ -3072,4 +3077,55 @@ copy_to_until_end_no_message_timeout! = || {
 	(copied, _) = reader.copy_to!(sink, UntilEnd)?
 	sink.close!()
 	expect_eq((copied, got.receive_timeout!(Time.seconds(10))?), (12, "xxxxxxxxxxxx"))
+}
+
+# The edges of the range are an I64 of nanoseconds; past them, conversions
+# from milliseconds or seconds saturate there.
+time_utc_rfc3339! = || {
+	formatted = List.map([0, 951782400000, -1, -86400001, 1759235696789], |ms| Time.utc_from_millis(ms).to_rfc3339())
+	edges = [Time.utc_from_nanos(I64.highest).to_rfc3339(), Time.utc_from_nanos(I64.lowest).to_rfc3339(), Time.utc_from_millis(I64.highest).to_rfc3339()]
+	expect_eq(
+		(formatted, edges),
+		(
+			["1970-01-01T00:00:00.000Z", "2000-02-29T00:00:00.000Z", "1969-12-31T23:59:59.999Z", "1969-12-30T23:59:59.999Z", "2025-09-30T12:34:56.789Z"],
+			["2262-04-11T23:47:16.854Z", "1677-09-21T00:12:43.145Z", "2262-04-11T23:47:16.854Z"],
+		),
+	)
+}
+
+time_utc_conversions! = || {
+	before = Time.utc_from_nanos(-1)
+	after = Time.utc_from_nanos(1999999999)
+	expect_eq(
+		(before.to_millis_since_epoch(), before.to_seconds_since_epoch(), after.to_millis_since_epoch(), after.to_seconds_since_epoch(), Time.utc_from_seconds(2).to_nanos_since_epoch()),
+		(-1, -1, 1999, 1, 2000000000),
+	)
+}
+
+# After this code was written, and before it's likely to still run.
+time_utc_now! = || {
+	now = Time.utc_now!()
+	later = Time.utc_now!()
+	seconds = now.to_seconds_since_epoch()
+	expect_eq((seconds > 1790000000, seconds < 4102444800, later.is_lt(now)), (True, True, False))
+}
+
+# Logging from many tasks at once only queues lines, so it's quick; whether
+# the lines come out whole is scripts/run_log_tests.sh's to check.
+log_many_tasks! = || {
+	start = Time.now!()
+	var $tasks = []
+	for i in U64.until(0, 50) {
+		task = Task.spawn!(|| {
+			for n in U64.until(0, 20) {
+				Log.debug!("not written at the default level", [U64("task", i), U64("n", n)])
+			}
+			Ok({})
+		})?
+		$tasks = List.append($tasks, task)
+	}
+	for task in $tasks {
+		task.join!()?
+	}
+	expect_eq((Log.enabled!(Debug), Log.enabled!(Info), start.elapsed!().to_millis() < 5000), (False, True, True))
 }

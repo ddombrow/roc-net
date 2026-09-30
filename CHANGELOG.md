@@ -4,6 +4,41 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.3.2
+
+Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,
+x86-64) and static Linux (musl: arm64, x86-64).
+
+Added:
+
+- **`Log`**: structured log lines for servers. `Log.info!("session ended",
+  [Str("peer", peer), U64("up", n)])` writes
+  `2026-09-30T12:34:56.789Z INFO session ended peer=... up=120 task=17` to
+  stderr, with the wall-clock time, the level and the task that logged it;
+  or one JSON object per line with `ROC_NET_LOG_FORMAT=json`. `ROC_NET_LOG`
+  sets the level (`debug`, `info`, `warn`, `error`, `off`), and
+  `Log.enabled!` lets code skip building fields that wouldn't be written.
+  - **It never waits**: a thread of its own writes the lines, so a slow or
+    stalled stderr (a full pipe, a paused terminal) can't stall a server, as
+    `Stderr.line!` can. Waiting lines are capped at about 1 MiB
+    (`ROC_NET_LOG_BUFFER_KIB`); past that the oldest are dropped, and a
+    warning counts them. Very long strings and lines are cut short, and
+    marked.
+  - The platform's own messages go through it: a detached task failing,
+    `main!` returning an error (`main! failed`), and warnings such as running
+    out of file descriptors. What's queued gets up to a second to be
+    written when the program exits.
+- **`Time.utc_now!`** and `Time.Utc`: the wall clock, with
+  `to_rfc3339()` (`2026-09-30T12:34:56.789Z`) and conversions to and from
+  Unix times in seconds, milliseconds and nanoseconds.
+
+Changed:
+
+- `main!` returning an error is reported as a log line
+  (`... ERROR main! failed error=...`) instead of `ERROR: ...`, and a detached
+  task failing as `... ERROR task failed error=...` instead of
+  `task failed: ...`.
+
 ## 0.3.1
 
 Built for Roc `nightly-2026-09-24-f45bfbe`, with hosts for macOS (arm64,

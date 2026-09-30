@@ -25,7 +25,7 @@ run() {
     out=$("$@" 2>&1)
     code=$?
     echo "$out" | grep -v '^ok'
-    if echo "$out" | grep -q '^task failed'; then
+    if echo "$out" | grep -q ' ERROR task failed'; then
         echo "FAILED: a task failed unexpectedly (see above)"
         return 1
     fi
@@ -36,4 +36,13 @@ run "$bin" || exit 1
 echo "== again, moving tasks between threads at every backlog"
 run env ROC_NET_SHARE_AFTER_US=0 "$bin" || exit 1
 echo "== again, on one worker thread (anything that blocks the thread hangs)"
-run env ROC_NET_WORKERS=1 "$bin"
+run env ROC_NET_WORKERS=1 "$bin" || exit 1
+# The `Log` checks, when their program (tests/log) was built alongside.
+log_bin="$(dirname "$bin")/log"
+if [ -x "$log_bin" ]; then
+    echo "== log"
+    "$(dirname "$0")/run_log_tests.sh" "$log_bin"
+else
+    # Loudly: a job that forgot to build it must not look like it passed.
+    echo "SKIPPED: the Log checks ($log_bin, from tests/log, wasn't built)"
+fi

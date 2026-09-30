@@ -418,9 +418,12 @@ fn warn_out_of_fds() {
     use std::sync::atomic::{AtomicBool, Ordering};
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
-        eprintln!(
-            "roc-net: out of file descriptors; waiting before accepting more connections \
-             (raise the limit with `ulimit -n`)"
+        // Through the log writer: this runs in an accept loop, which a slow
+        // stderr mustn't stall.
+        crate::log::log(
+            crate::log::WARN,
+            "roc-net: out of file descriptors; waiting before accepting more connections (raise the limit with `ulimit -n`)",
+            &[],
         );
     }
 }

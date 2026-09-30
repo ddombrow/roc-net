@@ -53,6 +53,43 @@ pub fn max_channels() -> usize {
     *VALUE.get_or_init(|| from_env("ROC_NET_MAX_CHANNELS", 8_192, 1, 32_767))
 }
 
+/// `ROC_NET_LOG`: the least severe `Log` level written: `debug`, `info`
+/// (the default), `warn`, `error`, or `off`. As a number: 0 (debug) to 4
+/// (off).
+pub fn log_level() -> u8 {
+    static VALUE: OnceLock<u8> = OnceLock::new();
+    *VALUE.get_or_init(|| from_env_choice("ROC_NET_LOG", &["debug", "info", "warn", "error", "off"], 1) as u8)
+}
+
+/// `ROC_NET_LOG_FORMAT`: how `Log` lines look: `text` (the default) or
+/// `json`. True for JSON.
+pub fn log_json() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| from_env_choice("ROC_NET_LOG_FORMAT", &["text", "json"], 0) == 1)
+}
+
+/// `ROC_NET_LOG_BUFFER_KIB`: how much logging may wait to be written before
+/// the oldest lines are dropped (see `log.rs`).
+pub fn log_buffer_bytes() -> usize {
+    static VALUE: OnceLock<usize> = OnceLock::new();
+    *VALUE.get_or_init(|| from_env("ROC_NET_LOG_BUFFER_KIB", 1024, 4, 1024 * 1024) * 1024)
+}
+
+/// One of `choices` (case doesn't matter), as its index; `default` if the
+/// variable is unset or isn't one of them.
+fn from_env_choice(name: &str, choices: &[&str], default: usize) -> usize {
+    let Ok(raw) = std::env::var(name) else {
+        return default;
+    };
+    match choices.iter().position(|choice| raw.trim().eq_ignore_ascii_case(choice)) {
+        Some(index) => index,
+        None => {
+            eprintln!("roc-net: ignoring {name}={raw:?}; expected one of {}. Using {}.", choices.join(", "), choices[default]);
+            default
+        }
+    }
+}
+
 fn from_env(name: &str, default: usize, min: usize, max: usize) -> usize {
     let Ok(raw) = std::env::var(name) else {
         return default;
