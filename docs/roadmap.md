@@ -228,22 +228,110 @@ behaviour and the CHANGELOG for the summary. As built:
   `Stderr.line!`; with a stalled stderr, `Log` carries on at full speed and
   `Stderr.line!` stops the server.
 
+## Next use case: an encrypted chat, as a test, not a target
+
+After the proxy (0.3.x), the next program to build against the platform is
+an end-to-end encrypted chat over Noise: 1:1 and peer-to-peer first, a relay
+and groups later if at all. It's there to show what's missing and what's
+awkward, in the way `tls_proxy` did. It is not a product, and the platform
+must not bend towards it. So, for everything this leads to:
+
+1. **The chat lives only in `examples/`.** No platform module gets a
+   chat-specific type, name or behaviour.
+2. **Every platform addition needs a user other than the chat**, named in
+   its plan: libp2p, the proxy, a CLI tool, an existing example. If only the
+   chat wants it, it stays in the example.
+3. **Specifications decide the shape, not the app.** `Noise` follows the
+   Noise spec (rev 34): its names, every handshake pattern, `psk`, checked
+   against test vectors and the `snow` crate. What a handshake hands back is
+   what the spec defines (the remote static key, the handshake hash), not an
+   app notion such as a "fingerprint".
+4. **The platform defines no message formats.** The chat's protocol, message
+   types, identity file layout, fingerprints, trust-on-first-use list and
+   reconnect policy are example code.
+5. **The docs test**: every new platform API's doc example is written
+   without the chat. If that reads awkwardly, the API is bent towards it.
+
+Where the pieces go:
+
+| Piece | Where | Its users other than the chat |
+| --- | --- | --- |
+| `Crypto`, the `Noise` handshake and `Noise.Stream` | platform, 0.4 | libp2p (libp2p-noise is XX), any encrypted protocol |
+| `File`: read, write, append, create owner-only, rename (atomic replace) | platform, 0.5 | keys, config and state for servers and CLI tools; the proxy's routes |
+| stdin as a `Select` arm | platform, 0.5 | any tool reading the terminal and the network at once (an `nc`-style client, a REPL) |
+| identity format, fingerprints, `known_peers`, the protocol, reconnecting | `examples/noise_chat` | none: example code |
+
 ## 0.4.0: Crypto + Noise (moved from the first draft of this plan)
 
-- `Crypto` from AWS-LC (already linked): SHA-2, HMAC, HKDF, ChaCha20-Poly1305
-  and AES-GCM, X25519, Ed25519, constant-time compare; `Bytes` uvarints.
-  Spike first: whether hosted functions may be pure (`->`), and aws-lc-rs as
-  a direct dependency at rustls's version.
+- Primitives from AWS-LC (already linked): SHA-2, HMAC, HKDF,
+  ChaCha20-Poly1305 and AES-GCM, X25519, Ed25519, constant-time compare;
+  `Bytes` uvarints.
+- **Spike results (2026-09-30, `v0.4-spike`):**
+  - *Hosted functions can't be pure.* The compiler rejects a `->` hosted
+    function ("Every function the host provides is effectful"), so every
+    host primitive is a `!` function, even for pure work such as encrypting.
+  - *Roc has a builtin `Crypto`* (nightly-2026-09-24): pure SHA-256 and
+    BLAKE3 digests, with incremental hashers, and nothing else ("not ...
+    HMAC ... KDF ... or digital signature APIs"). So the platform can't have
+    a module called `Crypto` (it shadows the builtin; pick another name), and
+    SHA-256, HMAC-SHA-256 and HKDF can be **pure Roc** on the builtin: all of
+    Noise's `SymmetricState` hashing and key derivation stays pure. Only
+    X25519 and the AEADs (and Ed25519, random keys, the constant-time
+    compare) need the host, as `!` functions. Don't write X25519 or
+    ChaCha20 in Roc to make them pure: nothing guarantees constant time,
+    and it would be slow.
+  - *aws-lc-rs as a direct dependency works*: pinned `=1.18.1` with
+    `default-features = false, features = ["aws-lc-sys"]`, as rustls takes
+    it, so there's one AWS-LC build (`cargo tree -i aws-lc-sys`), for macOS
+    and Linux. A spike `sha256!` through it matched the test vectors. It has
+    what Noise needs: X25519 from stored key bytes
+    (`agreement::PrivateKey::from_private_key`), AEADs with caller-chosen
+    nonces (`aead::LessSafeKey`), Ed25519 from a seed, HMAC, and
+    `constant_time::verify_slices_are_equal`. The dependency is in
+    `Cargo.toml`; the spike code isn't.
+  - *Layout (decided)*: one platform module, **`Cryptography`**, with a
+    nested type per primitive, as the builtin does `Crypto.SHA256`:
+    `Cryptography.X25519`, `.ChaChaPoly`, `.AesGcm`, `.Ed25519`,
+    `.HmacSha256`, `.Hkdf`, and `Cryptography.constant_time_eq!`. A spike
+    showed nested types work from apps and from other platform modules
+    (so `Noise` can use them), `!` functions in them can call the host, and
+    imports can be aliased (`import pf.Cryptography as C`). `HmacSha256` and
+    `Hkdf` are pure Roc on the builtin SHA-256; the rest are host-backed `!`
+    functions. `Noise` stays a module of its own (a protocol, not a
+    primitive). Secret keys are opaque types, so `Str.inspect` can't print
+    them.
 - `Noise` in Roc (rev 34, `25519_ChaChaPoly_SHA256`, patterns as token
   tables: XX, NN, NK, IK, XK, psk), a handshake over any stream, and a
   host-backed `Noise.Stream` (like `src/tls.rs`) so `Framing` works over it.
+  After the handshake: the remote static key and the handshake hash (for
+  channel binding), as the spec defines them. Transport messages framed with
+  the usual 2-byte length prefix (as libp2p-noise does), and longer writes
+  split across messages, since Noise caps a message at 65,535 bytes.
 - Verify with RFC/NIST vectors, cacophony vectors, and interop against the
   `snow` crate (test-only).
+- Acceptance: `examples/noise_chat`, a minimal 1:1 chat over XX, written
+  against the new API (see "Next use case" above for what may and may not
+  move into the platform because of it). Its identity key is generated per
+  run until 0.5 adds `File`.
+
+## 0.5.0: Files and terminal input (plan)
+
+Driven by the chat example, justified without it (see the table above):
+
+- `File`: read and write whole files, append, create with owner-only
+  permissions (for keys), and rename for atomic replacement; errors like
+  `IOErr`. Blocking file I/O runs off the task workers, as `Stdin` and DNS
+  lookups do (`sched::blocking`), so it can't stall them.
+- stdin in `Select`: an arm for the next line from stdin (or stdin as a
+  stream), so a program can wait for the terminal and the network in one
+  loop.
+- `examples/noise_chat` grows persistent identities (a key file),
+  fingerprints and a `known_peers` file, all in the example.
 
 ## Later
 
-- 0.5: libp2p over TCP (peer IDs, libp2p-noise, multistream-select, yamux on
+- 0.6: libp2p over TCP (peer IDs, libp2p-noise, multistream-select, yamux on
   Select + scopes, identify, ping), interop with rust-libp2p.
-- 0.6: sans-I/O UDP foundation with QUIC (quinn-proto); libp2p over QUIC.
+- 0.7: sans-I/O UDP foundation with QUIC (quinn-proto); libp2p over QUIC.
 - Then DTLS (rtc-dtls with aws-lc vs dimpl), mDNS/STUN/NAT traversal,
   WebSocket, mTLS/ALPN, graceful shutdown, a deterministic network simulator.

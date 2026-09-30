@@ -8,6 +8,7 @@ use std::mem::ManuallyDrop;
 
 mod channels;
 mod copy;
+mod crypto;
 mod limits;
 mod log;
 mod resource;
@@ -17,6 +18,7 @@ mod tasks;
 mod time;
 mod tls;
 mod net;
+mod noise;
 mod random;
 mod resolve;
 mod sched;

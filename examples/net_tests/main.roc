@@ -2,9 +2,11 @@ app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/ma
 
 import pf.Bytes
 import pf.Channel
+import pf.Cryptography as C
 import pf.Dns
 import pf.Framing
 import pf.Log
+import pf.Noise
 import pf.Random
 import pf.Select
 import pf.Stdout
@@ -158,6 +160,18 @@ main! = |_args| {
 		check!("time: Utc conversions round towards the past", time_utc_conversions!),
 		check!("time: utc_now! is the wall clock", time_utc_now!),
 		check!("log: many tasks logging at once, and the default level", log_many_tasks!),
+		check!("crypto: HMAC-SHA-256, RFC 4231", crypto_hmac!),
+		check!("crypto: HKDF-SHA-256, RFC 5869", crypto_hkdf!),
+		check!("crypto: X25519, RFC 7748, and a low-order point", crypto_x25519!),
+		check!("crypto: ChaCha20-Poly1305, RFC 8439, and tampering", crypto_chachapoly!),
+		check!("crypto: AES-256-GCM, the GCM spec's test cases", crypto_aesgcm!),
+		check!("crypto: Ed25519, RFC 8032", crypto_ed25519!),
+		check!("crypto: generated keys, wrong lengths, constant-time compare", crypto_misc!),
+		check!("noise: XX over tcp, with payloads, keys, and Framing on top", noise_xx_tcp!),
+		check!("noise: a write larger than a message is split and rejoined", noise_large_write!),
+		check!("noise: the wrong static key, or a different psk, fails the handshake", noise_wrong_keys!),
+		check!("noise: a flipped byte in transit fails to authenticate", noise_tampered!),
+		check!("noise: over a unix socket", noise_unix!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
 		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
@@ -3128,4 +3142,322 @@ log_many_tasks! = || {
 		task.join!()?
 	}
 	expect_eq((Log.enabled!(Debug), Log.enabled!(Info), start.elapsed!().to_millis() < 5000), (False, True, True))
+}
+
+## Bytes from hex (test vectors), ignoring spaces.
+hex = |text| {
+	digit = |c| if c >= 97 c - 87 else if c >= 65 c - 55 else c - 48
+	digits = List.keep_if(Str.to_utf8(text), |c| c != 32)
+	var $out = []
+	var $i = 0
+	while $i + 1 < List.len(digits) {
+		high = digit(List.get(digits, $i) ?? 48)
+		low = digit(List.get(digits, $i + 1) ?? 48)
+		$out = List.append($out, high * 16 + low)
+		$i = $i + 2
+	}
+	$out
+}
+
+crypto_hmac! = || {
+	case1 = C.HmacSha256.tag(List.repeat(0x0b, 20), Str.to_utf8("Hi There"))
+	case2 = C.HmacSha256.tag(Str.to_utf8("Jefe"), Str.to_utf8("what do ya want for nothing?"))
+	# A key longer than the 64-byte block is hashed first.
+	case6 = C.HmacSha256.tag(List.repeat(0xaa, 131), Str.to_utf8("Test Using Larger Than Block-Size Key - Hash Key First"))
+	expect_eq(
+		(case1, case2, case6),
+		(
+			hex("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"),
+			hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"),
+			hex("60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"),
+		),
+	)
+}
+
+crypto_hkdf! = || {
+	ikm = List.repeat(0x0b, 22)
+	prk = C.HkdfSha256.extract(hex("000102030405060708090a0b0c"), ikm)
+	okm1 = C.HkdfSha256.expand(prk, hex("f0f1f2f3f4f5f6f7f8f9"), 42)?
+	# No salt and no info.
+	okm3 = C.HkdfSha256.derive({ salt: [], input: ikm, info: [], length: 42 })?
+	too_long = C.HkdfSha256.expand(prk, [], 255 * 32 + 1)
+	expect_eq(
+		(prk, okm1, okm3, too_long),
+		(
+			hex("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"),
+			hex("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"),
+			hex("8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8"),
+			Err(TooLong),
+		),
+	)
+}
+
+crypto_x25519! = || {
+	alice = C.X25519.secret_key_from_bytes(hex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"))?
+	bob = C.X25519.secret_key_from_bytes(hex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb"))?
+	alice_public = C.X25519.public_key!(alice)
+	bob_public = C.X25519.public_key!(bob)
+	from_alice = C.X25519.shared_secret!(alice, bob_public)?
+	from_bob = C.X25519.shared_secret!(bob, alice_public)?
+	low_order = C.X25519.shared_secret!(alice, C.X25519.public_key_from_bytes(List.repeat(0, 32))?)
+	expect_eq(
+		(alice_public.to_bytes(), bob_public.to_bytes(), from_alice, from_bob, low_order),
+		(
+			hex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"),
+			hex("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"),
+			hex("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"),
+			hex("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"),
+			Err(LowOrderPoint),
+		),
+	)
+}
+
+crypto_chachapoly! = || {
+	key = C.ChaChaPoly.key_from_bytes(hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"))?
+	nonce = C.ChaChaPoly.nonce_from_bytes(hex("070000004041424344454647"))?
+	ad = hex("50515253c0c1c2c3c4c5c6c7")
+	plaintext = Str.to_utf8("Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.")
+	sealed = C.ChaChaPoly.seal!(key, nonce, ad, plaintext)
+	want =
+		hex(
+			"d31a8d34648e60db7b86afbc53ef7ec2 a4aded51296e08fea9e2b5a736ee62d6 3dbea45e8ca9671282fafb69da92728b 1a71de0a9e060b2905d6a5b67ecd3b36 92ddbd7f2d778b8c9803aee328091b58 fab324e4fad675945585808b4831d7bc 3ff4def08e4b7a9de576d26586cec64b 6116 1ae10b594f09e26a7e902ecbd0600691",
+		)
+	opened = C.ChaChaPoly.open!(key, nonce, ad, sealed)
+	flipped = List.concat([U8.bitwise_xor(List.first(sealed) ?? 0, 1)], List.drop_first(sealed, 1))
+	tampered = C.ChaChaPoly.open!(key, nonce, ad, flipped)
+	other_ad = C.ChaChaPoly.open!(key, nonce, [], sealed)
+	expect_eq((sealed == want, opened, tampered, other_ad), (True, Ok(plaintext), Err(Invalid), Err(Invalid)))
+}
+
+crypto_aesgcm! = || {
+	key = C.AesGcm.key_from_bytes(List.repeat(0, 32))?
+	nonce = C.AesGcm.nonce_from_bytes(List.repeat(0, 12))?
+	# Test case 13: nothing to encrypt, just the tag.
+	empty = C.AesGcm.seal!(key, nonce, [], [])
+	# Test case 14: 16 zero bytes.
+	block = C.AesGcm.seal!(key, nonce, [], List.repeat(0, 16))
+	expect_eq(
+		(empty, block, C.AesGcm.open!(key, nonce, [], block)),
+		(
+			hex("530f8afbc74536b9a963b4f1c4cb738b"),
+			hex("cea7403d4d606b6e074ec5d3baf39d18 d0d1c8a799996bf0265b98b5d48ab919"),
+			Ok(List.repeat(0, 16)),
+		),
+	)
+}
+
+crypto_ed25519! = || {
+	secret = C.Ed25519.secret_key_from_bytes(hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"))?
+	public = C.Ed25519.public_key!(secret)
+	signature = C.Ed25519.sign!(secret, [])
+	want_signature = hex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+	expect_eq(
+		(public.to_bytes(), signature, C.Ed25519.verify!(public, [], signature), C.Ed25519.verify!(public, [0], signature)),
+		(hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"), want_signature, True, False),
+	)
+}
+
+crypto_misc! = || {
+	# Fresh keys work end to end.
+	a = C.X25519.generate!({})
+	b = C.X25519.generate!({})
+	agreed = C.X25519.shared_secret!(a, C.X25519.public_key!(b))? == C.X25519.shared_secret!(b, C.X25519.public_key!(a))?
+	key = C.ChaChaPoly.generate!({})
+	nonce = C.ChaChaPoly.nonce_from_bytes(List.repeat(1, 12))?
+	round_trip = C.ChaChaPoly.open!(key, nonce, [], C.ChaChaPoly.seal!(key, nonce, [], Str.to_utf8("hi")))
+	signer = C.Ed25519.generate!({})
+	signed = C.Ed25519.verify!(C.Ed25519.public_key!(signer), [1, 2, 3], C.Ed25519.sign!(signer, [1, 2, 3]))
+	# Secret keys have no `==` (on purpose), so match the error.
+	short =
+		# From random bytes, so the compiler can't settle it in advance.
+		match C.X25519.secret_key_from_bytes(Random.bytes!(3)) {
+			Err(WrongLength(lengths)) => Err(WrongLength(lengths))
+			Ok(_) => Ok({})
+		}
+	secret_shown = Str.inspect(a)
+	expect_eq(
+		(agreed, round_trip, signed, short, C.constant_time_eq!([1, 2], [1, 2]), C.constant_time_eq!([1, 2], [1, 3]), C.constant_time_eq!([1], [1, 1]), Str.contains(secret_shown, "opaque")),
+		(True, Ok(Str.to_utf8("hi")), True, Err(WrongLength({ expected: 32, actual: 3 })), True, False, False, True),
+	)
+}
+
+## A responder on `listener` for one connection, with `config`: it runs
+## the handshake with `payloads`, then echoes lines until the end, reporting
+## the handshake's outcome on the channel returned.
+noise_responder! = |listener, config, payloads| {
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		tcp = listener.accept!()?
+		match Noise.handshake!(tcp, config, payloads) {
+			Ok(done) => {
+				_ = report_tx.send!(Ok({ handshake_hash: done.handshake_hash, remote_static_key: done.remote_static_key, payloads: done.payloads }))
+				var $reader = Framing.reader(done.stream)
+				while True {
+					match $reader.read_line!() {
+						Ok((line, next)) => {
+							done.stream.write_str!("echo: ${line}\n")?
+							$reader = next
+						}
+						Err(_) => break
+					}
+				}
+				Ok({})
+			}
+			Err(err) => {
+				_ = report_tx.send!(Err(Str.inspect(err)))
+				Ok({})
+			}
+		}
+	})?
+	Ok(report)
+}
+
+key_bytes = |key|
+	match key {
+		Key(public) => public.to_bytes()
+		NoKey => []
+	}
+
+noise_xx_tcp! = || {
+	server_key = C.X25519.generate!({})
+	client_key = C.X25519.generate!({})
+	(listener, address) = listen_anywhere!()?
+	report = noise_responder!(listener, Noise.config(XX, Responder).with_static_key(server_key).with_prologue(Str.to_utf8("test v1")), [Str.to_utf8("hi from the responder")])?
+	tcp = Tcp.connect!(address)?
+	tcp.set_read_timeout!(Millis(5000))?
+	done = Noise.handshake!(tcp, Noise.config(XX, Initiator).with_static_key(client_key).with_prologue(Str.to_utf8("test v1")), [[], Str.to_utf8("hi from the initiator")])?
+	reported = report.receive_timeout!(Time.seconds(5))?
+	server =
+		match reported {
+			Ok(value) => value
+			Err(message) => return Err(Unexpected(message))
+		}
+	done.stream.write_str!("one\ntwo\n")?
+	var $reader = Framing.reader(done.stream)
+	(first, r1) = $reader.read_line!()?
+	(second, _) = r1.read_line!()?
+	expect_eq(
+		(
+			key_bytes(done.remote_static_key) == C.X25519.public_key!(server_key).to_bytes(),
+			key_bytes(server.remote_static_key) == C.X25519.public_key!(client_key).to_bytes(),
+			done.handshake_hash == server.handshake_hash,
+			List.map(done.payloads, Str.from_utf8_lossy),
+			List.map(server.payloads, Str.from_utf8_lossy),
+			(first, second),
+		),
+		# In XX the responder writes one message (the second), the initiator two.
+		(True, True, True, ["hi from the responder"], ["", "hi from the initiator"], ("echo: one", "echo: two")),
+	)
+}
+
+# 200,000 bytes in one write: several Noise messages, one line.
+noise_large_write! = || {
+	(listener, address) = listen_anywhere!()?
+	report = noise_responder!(listener, Noise.config(NN, Responder), [])?
+	tcp = Tcp.connect!(address)?
+	tcp.set_read_timeout!(Millis(5000))?
+	done = Noise.handshake!(tcp, Noise.config(NN, Initiator), [])?
+	reported = report.receive_timeout!(Time.seconds(5))?
+	_ =
+		match reported {
+			Ok(value) => value
+			Err(message) => return Err(Unexpected(message))
+		}
+	done.stream.write!(List.append(List.repeat(120, 200000), 10))?
+	(line, _) = Framing.reader_with_max(done.stream, 300000).read_line!()?
+	expect_eq(Str.count_utf8_bytes(line), 200006)
+}
+
+noise_wrong_keys! = || {
+	server_key = C.X25519.generate!({})
+	someone_else = C.X25519.generate!({})
+	(listener, address) = listen_anywhere!()?
+	report = noise_responder!(listener, Noise.config(IK, Responder).with_static_key(server_key), [])?
+	tcp = Tcp.connect!(address)?
+	tcp.set_read_timeout!(Millis(5000))?
+	# The initiator thinks the server's key is someone else's.
+	wrong_key = Noise.handshake!(tcp, Noise.config(IK, Initiator).with_static_key(C.X25519.generate!({})).with_remote_static_key(C.X25519.public_key!(someone_else)), [])
+	server_saw = report.receive_timeout!(Time.seconds(5))?
+	(psk_listener, psk_address) = listen_anywhere!()?
+	psk_report = noise_responder!(psk_listener, Noise.config(NN, Responder).with_psk(0, List.repeat(1, 32)), [])?
+	psk_tcp = Tcp.connect!(psk_address)?
+	psk_tcp.set_read_timeout!(Millis(5000))?
+	wrong_psk = Noise.handshake!(psk_tcp, Noise.config(NN, Initiator).with_psk(0, List.repeat(2, 32)), [])
+	psk_server_saw = psk_report.receive_timeout!(Time.seconds(5))?
+	# The initiator's first message doesn't authenticate at the responder,
+	# which gives up; the initiator sees the stream end.
+	failed = |result|
+		match result {
+			Err(_) => True
+			Ok(_) => False
+		}
+	expect_eq(
+		(failed(wrong_key), Str.inspect(server_saw), failed(wrong_psk), Str.inspect(psk_server_saw)),
+		(True, "Err(\"Invalid\")", True, "Err(\"Invalid\")"),
+	)
+}
+
+# A relay between the two flips one byte in the first transport message.
+noise_tampered! = || {
+	(listener, address) = listen_anywhere!()?
+	(result_tx, result) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		tcp = listener.accept!()?
+		done = Noise.handshake!(tcp, Noise.config(NN, Responder), [])?
+		_ = result_tx.send!(done.stream.read!(100))
+		Ok({})
+	})?
+	(relay, relay_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		client = relay.accept!()?
+		upstream = Tcp.connect!(address)?
+		# Pass the handshake through (NN: 2 + 32 bytes, then 2 + 48 back), then
+		# flip the last byte of the next message.
+		upstream.write!(read_exactly_tcp!(client, 34)?)?
+		client.write!(read_exactly_tcp!(upstream, 50)?)?
+		message = read_exactly_tcp!(client, 2 + 5 + 16)?
+		last = List.len(message) - 1
+		upstream.write!(List.concat(List.take_first(message, last), [U8.bitwise_xor(List.last(message) ?? 0, 1)]))?
+		Time.sleep!(Time.seconds(2))?
+		client.close!()
+		upstream.close!()
+		Ok({})
+	})?
+	tcp = Tcp.connect!(relay_address)?
+	tcp.set_read_timeout!(Millis(5000))?
+	done = Noise.handshake!(tcp, Noise.config(NN, Initiator), [])?
+	done.stream.write_str!("hello")?
+	match result.receive_timeout!(Time.seconds(5))? {
+		Err(NoiseErr(Other(message))) => expect_eq(Str.contains(message, "authenticate"), True)
+		other => Err(Unexpected(Str.inspect(other)))
+	}
+}
+
+read_exactly_tcp! = |stream, count| {
+	var $bytes = []
+	while List.len($bytes) < count {
+		chunk = stream.read!(count - List.len($bytes))?
+		if List.is_empty(chunk) {
+			return Err(Unexpected("ended early"))
+		}
+		$bytes = List.concat($bytes, chunk)
+	}
+	Ok($bytes)
+}
+
+noise_unix! = || {
+	path = "/tmp/roc-net-tests-noise.sock"
+	listener = Unix.listen!(path)?
+	report = noise_responder!(listener, Noise.config(NN, Responder), [])?
+	unix = Unix.connect!(path)?
+	done = Noise.handshake!(unix, Noise.config(NN, Initiator), [])?
+	reported = report.receive_timeout!(Time.seconds(5))?
+	_ =
+		match reported {
+			Ok(value) => value
+			Err(message) => return Err(Unexpected(message))
+		}
+	done.stream.write_str!("over unix\n")?
+	(line, _) = Framing.reader(done.stream).read_line!()?
+	expect_eq(line, "echo: over unix")
 }

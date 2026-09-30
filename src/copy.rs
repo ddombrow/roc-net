@@ -153,6 +153,7 @@ pub fn abort(socket: &Socket) {
     match socket {
         Socket::TcpStream(s) => s.abort(),
         Socket::Tls(s) => s.abort(),
+        Socket::Noise(s) => s.wire().abort(),
         Socket::UnixStream(s) => {
             let _ = s.io.shutdown(Shutdown::Both);
         }

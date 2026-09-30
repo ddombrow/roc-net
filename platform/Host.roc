@@ -50,6 +50,10 @@ Host := [].{
 	## Let a TLS stream treat a connection closed without close_notify as a
 	## normal end of stream.
 	tls_ignore_unexpected_eof! : Socket, Bool => Try({}, IOErr)
+	## Switch a TCP or Unix stream to Noise transport messages, with the
+	## handshake's cipher states: the cipher (0 ChaChaPoly, 1 AESGCM), then
+	## each direction's 32-byte key and next nonce, sending first.
+	noise_wrap! : Socket, U8, List(U8), U64, List(U8), U64 => Try(Socket, IOErr)
 	## Upgrade a connected TCP stream to TLS as the client (STARTTLS), giving
 	## up if the handshake takes longer than `timeout_ms` (0 means no limit).
 	tls_wrap_client! : Socket, Str, Str, List(Str), U64 => Try(Socket, IOErr)
@@ -128,6 +132,31 @@ Host := [].{
 	## Resolve a host name to IP addresses with the OS resolver, giving up
 	## after `timeout_ms` (0 means no limit).
 	dns_resolve! : Str, U64 => Try(List(Str), IOErr)
+
+	## `Cryptography`, from AWS-LC. Hosted functions are always effectful,
+	## so these are too, though they only compute. Lengths are checked in Roc
+	## (by the key and nonce types) and again here.
+	##
+	## X25519 (RFC 7748): the public key for a 32-byte secret key.
+	x25519_public_key! : List(U8) => List(U8)
+	## The shared secret; `LowOrder` if it would be all zeros (the public key
+	## is a low-order point) or a key is the wrong length.
+	x25519_shared! : List(U8), List(U8) => [Shared(List(U8)), LowOrder]
+	## An AEAD (0: ChaCha20-Poly1305, 1: AES-256-GCM), with a 32-byte key and
+	## a 12-byte nonce: the ciphertext with its 16-byte tag appended.
+	aead_seal! : U8, List(U8), List(U8), List(U8), List(U8) => List(U8)
+	## The plaintext, or `Invalid` if the tag doesn't check out (or a length
+	## is wrong).
+	aead_open! : U8, List(U8), List(U8), List(U8), List(U8) => [Opened(List(U8)), Invalid]
+	## Ed25519 (RFC 8032): the public key for a 32-byte seed.
+	ed25519_public_key! : List(U8) => List(U8)
+	## The 64-byte signature of a message, by a 32-byte seed.
+	ed25519_sign! : List(U8), List(U8) => List(U8)
+	## Whether a signature of a message is valid for a public key.
+	ed25519_verify! : List(U8), List(U8), List(U8) => Bool
+	## Whether two lists are equal, in time that depends only on their
+	## lengths.
+	constant_time_eq! : List(U8), List(U8) => Bool
 
 	## `count` bytes from the OS's secure random source.
 	random_bytes! : U64 => List(U8)

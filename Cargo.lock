@@ -181,6 +181,7 @@ dependencies = [
 name = "roc_host"
 version = "0.3.2"
 dependencies = [
+ "aws-lc-rs",
  "corosensei",
  "libc",
  "mio",

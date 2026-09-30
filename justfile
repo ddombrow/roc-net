@@ -138,13 +138,19 @@ licenses:
 
 # Run the network tests (see scripts/run_net_tests.sh), every example's
 # `expect`s, then the smoke test
-test: (build-example "net_tests") build-log-tests smoke
+test: (build-example "net_tests") build-log-tests build-noise-tests smoke
     #!/usr/bin/env bash
     set -uo pipefail
     scripts/run_net_tests.sh {{bin_dir}}/net_tests || exit 1
     for f in $(grep -lE '^expect' examples/*/*.roc | xargs -n1 dirname | sort -u); do roc test "$f/main.roc" || exit 1; done
 
-linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline tests/log"
+linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline tests/log tests/noise"
+
+# Build the Noise test vectors' program (tests/noise) next to net_tests, where
+# scripts/run_net_tests.sh finds it
+build-noise-tests: build
+    @mkdir -p {{bin_dir}}
+    roc build tests/noise/main.roc --output={{bin_dir}}/noise
 
 # Build the `Log` test program (tests/log) next to net_tests, where
 # scripts/run_net_tests.sh finds it
