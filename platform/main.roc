@@ -40,13 +40,22 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Channel, Dns, Framing, IOErr, Log, Random, Select, Stdout, Stderr, Stdin, Stream, Task, Tcp, Time, Tls, Udp, Unix]
-	packages { roc: "nightly-2026-09-24-f45bfbe" }
+	exposes [Bytes, Channel, Cryptography, Dns, Noise, Framing, IOErr, Log, Random, Pipe, Select, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
+	packages { roc: "nightly-2026-09-29-7f11a82" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
 		"roc_stderr_line": Host.stderr_line!,
 		"roc_stdin_line": Host.stdin_line!,
+		"roc_stdin_read_line": Host.stdin_read_line!,
 		"roc_stdout_line": Host.stdout_line!,
+		"roc_aead_open": Host.aead_open!,
+		"roc_aead_seal": Host.aead_seal!,
+		"roc_constant_time_eq": Host.constant_time_eq!,
+		"roc_ed25519_public_key": Host.ed25519_public_key!,
+		"roc_ed25519_sign": Host.ed25519_sign!,
+		"roc_ed25519_verify": Host.ed25519_verify!,
+		"roc_x25519_public_key": Host.x25519_public_key!,
+		"roc_x25519_shared": Host.x25519_shared!,
 		"roc_log_enabled": Host.log_enabled!,
 		"roc_log_write": Host.log_write!,
 		"roc_task_spawn": Host.task_spawn!,
@@ -84,6 +93,7 @@ platform ""
 		"roc_socket_write": Host.socket_write!,
 		"roc_stream_copy_both": Host.stream_copy_both!,
 		"roc_stream_copy_to": Host.stream_copy_to!,
+		"roc_noise_wrap": Host.noise_wrap!,
 		"roc_tcp_connect": Host.tcp_connect!,
 		"roc_tcp_listen": Host.tcp_listen!,
 		"roc_tcp_set_nodelay": Host.tcp_set_nodelay!,
@@ -125,7 +135,9 @@ import Task
 import Bytes
 import Channel
 import Dns
-import Stream
+import Pipe
+import Cryptography
+import Noise
 import Framing
 import Log
 import Tcp
@@ -140,7 +152,7 @@ import Select
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {
-	# Compiler workaround (nightly-2026-09-24): if an app never calls
+	# Compiler workaround (nightly-2026-09-24, still needed on 2026-09-29): if an app never calls
 	# Task.spawn!, `run_task_for_host!` calls a closure of no known type, the
 	# LLVM backend emits a call to `roc_boxy_init_embedded`, and the linker
 	# doesn't include the runtime that defines it ("undefined symbol").

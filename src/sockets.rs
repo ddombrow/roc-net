@@ -23,6 +23,8 @@ pub enum Socket {
     /// socket heap is sized for the largest kind of socket, so inline it would
     /// make each of the (by default) 16,384 slots that big.
     Tls(Box<crate::tls::TlsStream>),
+    /// Noise transport messages over a TCP or Unix stream (boxed, as `Tls`).
+    Noise(Box<crate::noise::NoiseStream>),
 }
 
 /// A non-blocking socket, and what's needed to wait for it: its event-queue
@@ -304,6 +306,7 @@ impl Socket {
             Socket::UnixStream(s) => s.read_deadline(),
             Socket::Udp(s) => s.read_deadline(),
             Socket::Tls(s) => s.conn().read_deadline(),
+            Socket::Noise(s) => s.wire().read_deadline(),
             _ => None,
         };
         let handshake = match self {
@@ -326,6 +329,7 @@ impl Socket {
             Socket::Udp(s) => s.io_parts(),
             Socket::TlsListener(s) => s.listener.io_parts(),
             Socket::Tls(s) => s.conn().io_parts(),
+            Socket::Noise(s) => s.wire().io_parts(),
         }
     }
 }

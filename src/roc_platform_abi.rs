@@ -1482,6 +1482,135 @@ const _: () = assert!(core::mem::align_of::<HostStdinLineResult>() == 4, "HostSt
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostStdinLineResult, tag) == 12, "HostStdinLineResult tag offset mismatch");
 
+/// Tag discriminant for EndOrFailedOrLine.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndOrFailedOrLineTag {
+    End = 0,
+    Failed = 1,
+    Line = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union EndOrFailedOrLinePayload {
+    pub end: [u8; 0],
+    pub failed: core::mem::ManuallyDrop<RocStr>,
+    pub line: core::mem::ManuallyDrop<RocStr>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct EndOrFailedOrLinePayloadAlignment;
+
+/// Tag union: EndOrFailedOrLine
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct EndOrFailedOrLine {
+    pub _payload_alignment: [EndOrFailedOrLinePayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: EndOrFailedOrLineTag,
+}
+
+/// Tag union: EndOrFailedOrLine
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct EndOrFailedOrLine {
+    pub payload: EndOrFailedOrLinePayload,
+    pub tag: EndOrFailedOrLineTag,
+}
+
+impl EndOrFailedOrLine {
+    /// Borrow the `Failed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Failed` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_failed_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Failed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Failed` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_failed_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.failed as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Failed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Failed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_failed_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Failed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Failed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_failed_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.failed) }
+    }
+
+    /// Borrow the `Line` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Line` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_line_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Line` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Line` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_line_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.line as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Line` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Line`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_line_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Line` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Line`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_line_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.line) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<EndOrFailedOrLine>() == 32, "EndOrFailedOrLine size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<EndOrFailedOrLine>() == 8, "EndOrFailedOrLine alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(EndOrFailedOrLine, tag) == 24, "EndOrFailedOrLine tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<EndOrFailedOrLine>() == 16, "EndOrFailedOrLine size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<EndOrFailedOrLine>() == 4, "EndOrFailedOrLine alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(EndOrFailedOrLine, tag) == 12, "EndOrFailedOrLine tag offset mismatch");
+
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3473,6 +3602,188 @@ const _: () = assert!(core::mem::align_of::<HostIOErr>() == 4, "HostIOErr alignm
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostIOErr, tag) == 12, "HostIOErr tag offset mismatch");
 
+/// Tag discriminant for LowOrderOrShared.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LowOrderOrSharedTag {
+    LowOrder = 0,
+    Shared = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union LowOrderOrSharedPayload {
+    pub low_order: [u8; 0],
+    pub shared: core::mem::ManuallyDrop<RocListWith<u8, false>>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct LowOrderOrSharedPayloadAlignment;
+
+/// Tag union: LowOrderOrShared
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct LowOrderOrShared {
+    pub _payload_alignment: [LowOrderOrSharedPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: LowOrderOrSharedTag,
+}
+
+/// Tag union: LowOrderOrShared
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct LowOrderOrShared {
+    pub payload: LowOrderOrSharedPayload,
+    pub tag: LowOrderOrSharedTag,
+}
+
+impl LowOrderOrShared {
+    /// Borrow the `Shared` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `LowOrderOrSharedTag::Shared` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_shared_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(self.payload.as_ptr() as *const RocListWith<u8, false>) }
+    }
+
+    /// Borrow the `Shared` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `LowOrderOrSharedTag::Shared` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_shared_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(&self.payload.shared as *const core::mem::ManuallyDrop<RocListWith<u8, false>> as *const RocListWith<u8, false>) }
+    }
+
+    /// Move the `Shared` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `LowOrderOrSharedTag::Shared`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_shared_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocListWith<u8, false>) }
+    }
+
+    /// Move the `Shared` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `LowOrderOrSharedTag::Shared`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_shared_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.shared) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<LowOrderOrShared>() == 32, "LowOrderOrShared size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<LowOrderOrShared>() == 8, "LowOrderOrShared alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(LowOrderOrShared, tag) == 24, "LowOrderOrShared tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<LowOrderOrShared>() == 16, "LowOrderOrShared size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<LowOrderOrShared>() == 4, "LowOrderOrShared alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(LowOrderOrShared, tag) == 12, "LowOrderOrShared tag offset mismatch");
+
+/// Tag discriminant for InvalidOrOpened.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidOrOpenedTag {
+    Invalid = 0,
+    Opened = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union InvalidOrOpenedPayload {
+    pub invalid: [u8; 0],
+    pub opened: core::mem::ManuallyDrop<RocListWith<u8, false>>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct InvalidOrOpenedPayloadAlignment;
+
+/// Tag union: InvalidOrOpened
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct InvalidOrOpened {
+    pub _payload_alignment: [InvalidOrOpenedPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: InvalidOrOpenedTag,
+}
+
+/// Tag union: InvalidOrOpened
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct InvalidOrOpened {
+    pub payload: InvalidOrOpenedPayload,
+    pub tag: InvalidOrOpenedTag,
+}
+
+impl InvalidOrOpened {
+    /// Borrow the `Opened` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `InvalidOrOpenedTag::Opened` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_opened_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(self.payload.as_ptr() as *const RocListWith<u8, false>) }
+    }
+
+    /// Borrow the `Opened` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `InvalidOrOpenedTag::Opened` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_opened_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(&self.payload.opened as *const core::mem::ManuallyDrop<RocListWith<u8, false>> as *const RocListWith<u8, false>) }
+    }
+
+    /// Move the `Opened` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `InvalidOrOpenedTag::Opened`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_opened_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocListWith<u8, false>) }
+    }
+
+    /// Move the `Opened` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `InvalidOrOpenedTag::Opened`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_opened_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.opened) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<InvalidOrOpened>() == 32, "InvalidOrOpened size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<InvalidOrOpened>() == 8, "InvalidOrOpened alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(InvalidOrOpened, tag) == 24, "InvalidOrOpened tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<InvalidOrOpened>() == 16, "InvalidOrOpened size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<InvalidOrOpened>() == 4, "InvalidOrOpened alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(InvalidOrOpened, tag) == 12, "InvalidOrOpened tag offset mismatch");
+
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4415,6 +4726,91 @@ pub struct HostStdoutLineArgs {
     pub arg0: RocStr,
 }
 
+/// Arguments for Host.aead_open!
+/// Roc signature: U8, List(U8), List(U8), List(U8), List(U8) => [Invalid, Opened(List(U8))]
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostAeadOpenArgs {
+    pub arg0: u8,
+    pub arg1: RocListWith<u8, false>,
+    pub arg2: RocListWith<u8, false>,
+    pub arg3: RocListWith<u8, false>,
+    pub arg4: RocListWith<u8, false>,
+}
+
+/// Arguments for Host.aead_seal!
+/// Roc signature: U8, List(U8), List(U8), List(U8), List(U8) => List(U8)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostAeadSealArgs {
+    pub arg0: u8,
+    pub arg1: RocListWith<u8, false>,
+    pub arg2: RocListWith<u8, false>,
+    pub arg3: RocListWith<u8, false>,
+    pub arg4: RocListWith<u8, false>,
+}
+
+/// Arguments for Host.constant_time_eq!
+/// Roc signature: List(U8), List(U8) => Bool
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostConstantTimeEqArgs {
+    pub arg0: RocListWith<u8, false>,
+    pub arg1: RocListWith<u8, false>,
+}
+
+/// Arguments for Host.ed25519_public_key!
+/// Roc signature: List(U8) => List(U8)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostEd25519PublicKeyArgs {
+    pub arg0: RocListWith<u8, false>,
+}
+
+/// Arguments for Host.ed25519_sign!
+/// Roc signature: List(U8), List(U8) => List(U8)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostEd25519SignArgs {
+    pub arg0: RocListWith<u8, false>,
+    pub arg1: RocListWith<u8, false>,
+}
+
+/// Arguments for Host.ed25519_verify!
+/// Roc signature: List(U8), List(U8), List(U8) => Bool
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostEd25519VerifyArgs {
+    pub arg0: RocListWith<u8, false>,
+    pub arg1: RocListWith<u8, false>,
+    pub arg2: RocListWith<u8, false>,
+}
+
+/// Arguments for Host.x25519_public_key!
+/// Roc signature: List(U8) => List(U8)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostX25519PublicKeyArgs {
+    pub arg0: RocListWith<u8, false>,
+}
+
+/// Arguments for Host.x25519_shared!
+/// Roc signature: List(U8), List(U8) => [LowOrder, Shared(List(U8))]
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostX25519SharedArgs {
+    pub arg0: RocListWith<u8, false>,
+    pub arg1: RocListWith<u8, false>,
+}
+
 /// Arguments for Host.log_enabled!
 /// Roc signature: U8 => Bool
 /// Refcounted fields are owned by the hosted function.
@@ -4718,6 +5114,20 @@ pub struct HostStreamCopyToArgs {
     pub arg4: u64,
 }
 
+/// Arguments for Host.noise_wrap!
+/// Roc signature: Host.Socket, U8, List(U8), U64, List(U8), U64 => Try(Host.Socket, IOErr)
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostNoiseWrapArgs {
+    pub arg0: *mut u64,
+    pub arg1: u8,
+    pub arg2: RocListWith<u8, false>,
+    pub arg3: u64,
+    pub arg4: RocListWith<u8, false>,
+    pub arg5: u64,
+}
+
 /// Arguments for Host.tcp_connect!
 /// Roc signature: Str, U64 => Try(Host.Socket, IOErr)
 /// Refcounted fields are owned by the hosted function.
@@ -4954,6 +5364,9 @@ pub type HostSocketWriteResultPayload = HostSocketSetTimeoutResultPayload;
 pub type HostSocketWriteResultTag = HostSocketSetTimeoutResultTag;
 pub type HostStreamCopyBoth = AnonStruct91380971f8261c26;
 pub type HostStreamCopyTo = AnonStruct3db9d1cc6db3a401;
+pub type HostNoiseWrapResult = HostSocketAcceptResult;
+pub type HostNoiseWrapResultPayload = HostSocketAcceptResultPayload;
+pub type HostNoiseWrapResultTag = HostSocketAcceptResultTag;
 pub type HostTcpConnectResult = HostSocketAcceptResult;
 pub type HostTcpConnectResultPayload = HostSocketAcceptResultPayload;
 pub type HostTcpConnectResultTag = HostSocketAcceptResultTag;
@@ -5105,6 +5518,57 @@ pub struct HostStdinLineResultRelease;
 
 unsafe impl RocRelease<HostStdinLineResult> for HostStdinLineResultRelease {
     unsafe fn release(value: HostStdinLineResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl EndOrFailedOrLine {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            EndOrFailedOrLineTag::End => {},
+            EndOrFailedOrLineTag::Failed => {
+                let payload = unsafe { value.take_payload_failed_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            EndOrFailedOrLineTag::Line => {
+                let payload = unsafe { value.take_payload_line_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            EndOrFailedOrLineTag::End => {},
+            EndOrFailedOrLineTag::Failed => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_failed_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            EndOrFailedOrLineTag::Line => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_line_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct EndOrFailedOrLineRelease;
+
+unsafe impl RocRelease<EndOrFailedOrLine> for EndOrFailedOrLineRelease {
+    unsafe fn release(value: EndOrFailedOrLine, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -6053,6 +6517,92 @@ unsafe impl RocRelease<HostIOErr> for HostIOErrRelease {
     }
 }
 
+impl LowOrderOrShared {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            LowOrderOrSharedTag::LowOrder => {},
+            LowOrderOrSharedTag::Shared => {
+                let payload = unsafe { value.take_payload_shared_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            LowOrderOrSharedTag::LowOrder => {},
+            LowOrderOrSharedTag::Shared => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_shared_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct LowOrderOrSharedRelease;
+
+unsafe impl RocRelease<LowOrderOrShared> for LowOrderOrSharedRelease {
+    unsafe fn release(value: LowOrderOrShared, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl InvalidOrOpened {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            InvalidOrOpenedTag::Invalid => {},
+            InvalidOrOpenedTag::Opened => {
+                let payload = unsafe { value.take_payload_opened_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            InvalidOrOpenedTag::Invalid => {},
+            InvalidOrOpenedTag::Opened => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_opened_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct InvalidOrOpenedRelease;
+
+unsafe impl RocRelease<InvalidOrOpened> for InvalidOrOpenedRelease {
+    unsafe fn release(value: InvalidOrOpened, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl HostChannelNewResult {
     /// Recursively decrement Roc-owned payloads.
     ///
@@ -6592,6 +7142,11 @@ unsafe extern "C" {
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_stdin_line() -> HostStdinLineResult;
 
+    /// Hosted symbol for Host.stdin_read_line!
+    /// Roc signature: {} => [End, Failed(Str), Line(Str)]
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_stdin_read_line() -> EndOrFailedOrLine;
+
     /// Hosted symbol for Host.stdout_line!
     /// Roc signature: Str => Try({}, [StdoutErr(Str)])
     /// Owned arguments. Release each exactly once before returning, unless it is
@@ -6599,6 +7154,79 @@ unsafe extern "C" {
     ///     unsafe { arg0.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_stdout_line(arg0: RocStr) -> HostStdoutLineResult;
+
+    /// Hosted symbol for Host.aead_open!
+    /// Roc signature: U8, List(U8), List(U8), List(U8), List(U8) => [Invalid, Opened(List(U8))]
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    ///     unsafe { arg3.decref(roc_host); }
+    ///     unsafe { arg4.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_aead_open(arg0: u8, arg1: RocListWith<u8, false>, arg2: RocListWith<u8, false>, arg3: RocListWith<u8, false>, arg4: RocListWith<u8, false>) -> InvalidOrOpened;
+
+    /// Hosted symbol for Host.aead_seal!
+    /// Roc signature: U8, List(U8), List(U8), List(U8), List(U8) => List(U8)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    ///     unsafe { arg3.decref(roc_host); }
+    ///     unsafe { arg4.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_aead_seal(arg0: u8, arg1: RocListWith<u8, false>, arg2: RocListWith<u8, false>, arg3: RocListWith<u8, false>, arg4: RocListWith<u8, false>) -> RocListWith<u8, false>;
+
+    /// Hosted symbol for Host.constant_time_eq!
+    /// Roc signature: List(U8), List(U8) => Bool
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    pub fn roc_constant_time_eq(arg0: RocListWith<u8, false>, arg1: RocListWith<u8, false>) -> bool;
+
+    /// Hosted symbol for Host.ed25519_public_key!
+    /// Roc signature: List(U8) => List(U8)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_ed25519_public_key(arg0: RocListWith<u8, false>) -> RocListWith<u8, false>;
+
+    /// Hosted symbol for Host.ed25519_sign!
+    /// Roc signature: List(U8), List(U8) => List(U8)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_ed25519_sign(arg0: RocListWith<u8, false>, arg1: RocListWith<u8, false>) -> RocListWith<u8, false>;
+
+    /// Hosted symbol for Host.ed25519_verify!
+    /// Roc signature: List(U8), List(U8), List(U8) => Bool
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    pub fn roc_ed25519_verify(arg0: RocListWith<u8, false>, arg1: RocListWith<u8, false>, arg2: RocListWith<u8, false>) -> bool;
+
+    /// Hosted symbol for Host.x25519_public_key!
+    /// Roc signature: List(U8) => List(U8)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_x25519_public_key(arg0: RocListWith<u8, false>) -> RocListWith<u8, false>;
+
+    /// Hosted symbol for Host.x25519_shared!
+    /// Roc signature: List(U8), List(U8) => [LowOrder, Shared(List(U8))]
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    ///     unsafe { arg1.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_x25519_shared(arg0: RocListWith<u8, false>, arg1: RocListWith<u8, false>) -> LowOrderOrShared;
 
     /// Hosted symbol for Host.log_enabled!
     /// Roc signature: U8 => Bool
@@ -6858,6 +7486,16 @@ unsafe extern "C" {
     ///     unsafe { arg3.decref(roc_host); }
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_stream_copy_to(arg0: *mut u64, arg1: *mut u64, arg2: RocListWith<u8, false>, arg3: ExactlyOrUntilEnd, arg4: u64) -> AnonStruct3db9d1cc6db3a401;
+
+    /// Hosted symbol for Host.noise_wrap!
+    /// Roc signature: Host.Socket, U8, List(U8), U64, List(U8), U64 => Try(Host.Socket, IOErr)
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    ///     unsafe { arg2.decref(roc_host); }
+    ///     unsafe { arg4.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_noise_wrap(arg0: *mut u64, arg1: u8, arg2: RocListWith<u8, false>, arg3: u64, arg4: RocListWith<u8, false>, arg5: u64) -> HostSocketAcceptResult;
 
     /// Hosted symbol for Host.tcp_connect!
     /// Roc signature: Str, U64 => Try(Host.Socket, IOErr)

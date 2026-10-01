@@ -1,11 +1,11 @@
-app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/main.roc" }
+app [main!] { roc: "nightly-2026-09-29-7f11a82", pf: platform "../../platform/main.roc" }
 
 import pf.Stdout
 import pf.Task
 import pf.Tcp
 
 # Demonstrates: a task per direction, kept together with `Task.scope!`
-# (`Stream.copy_both!` does the same in the platform, without each chunk
+# (`Pipe.copy_both!` does the same in the platform, without each chunk
 # becoming a Roc list; see `tls_proxy`)
 #
 # Usage: tcp_proxy LISTEN_ADDRESS UPSTREAM_ADDRESS

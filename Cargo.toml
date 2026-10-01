@@ -1,6 +1,6 @@
 [package]
 name = "roc_host"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 
 [lib]
@@ -12,6 +12,9 @@ name = "host"
 path = "src/main.rs"
 
 [dependencies]
+# Pinned to the version rustls uses, with the same features, so there's one
+# AWS-LC build, not two (`Crypto` uses it directly).
+aws-lc-rs = { version = "=1.18.1", default-features = false, features = ["aws-lc-sys"] }
 corosensei = "0.3.4"
 libc = "0.2.189"
 mio = { version = "1.2.3", features = ["os-poll", "net", "os-ext"] }

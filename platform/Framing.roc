@@ -199,9 +199,9 @@ Framing := [].{
 		## (`UntilEnd`) or exactly `n` of them (`Exactly(n)`), starting with
 		## the ones this reader has already buffered. Returns how many were
 		## copied and the reader to carry on with. Everything else is as for
-		## `Stream.copy_to!`.
+		## `Pipe.copy_to!`.
 		##
-		## Use this, not `Stream.copy_to!` on the underlying stream, after
+		## Use this, not `Pipe.copy_to!` on the underlying stream, after
 		## reading from the stream with a reader: a read can bring in more
 		## than was asked for (the rest of a header, a body, even the start of
 		## the next message), and the stream alone no longer has those bytes.
@@ -234,11 +234,9 @@ Framing := [].{
 						(List.take_first(r.buffered, take), List.drop_first(r.buffered, take), Exactly(n - take), r.message_timeout_ns)
 					}
 				}
-			# TODO: call `Stream.copy_to!` rather than the host, once the
-			# compiler lets this module see `Stream`'s functions (on
-			# nightly-2026-09-24 they "do not exist" here, even a trivial one,
-			# while `Tls` can call `Tcp`'s). Until then, keep this mapping the
-			# same as `Stream.copy_to!`'s.
+			# The host directly, not `Pipe.copy_to!`: this sends the buffered
+			# bytes first and applies the message timeout, which `Pipe.copy_to!`
+			# doesn't take. Keep this mapping the same as `Pipe.copy_to!`'s.
 			{ copied, outcome } = Host.stream_copy_to!(r.stream.socket(), to.socket(), first, stream_limit, timeout_ns)
 			match outcome {
 				Done => Ok((copied, Reader.({ ..r, buffered: rest })))
