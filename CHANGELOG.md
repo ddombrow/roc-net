@@ -4,6 +4,25 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.4.1
+
+Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,
+x86-64) and static Linux (musl: arm64, x86-64).
+
+Added (from building a relay-based chat on 0.4.0):
+
+- **`CipherState.nonce` and `CipherState.with_nonce`**: the Noise spec's
+  `SetNonce`, for transports that can lose or reorder messages (datagrams):
+  send each message's nonce with it, and set it before decrypting. Keeping a
+  replay window is up to the caller.
+- **`Bytes.to_hex` and `Bytes.from_hex`**: lowercase hex out; upper- or
+  lowercase in, with `InvalidHex({ index })` for the first bad character.
+- **`scope.cancel_all!()`**: cancel a `Task.scope!`'s unfinished tasks from
+  inside its body, without leaving it, for helper tasks that should last
+  only as long as the body (a connection's writer while the body reads).
+  `scope!` still waits for them, and still cancels on its own only when the
+  body fails.
+
 ## 0.4.0
 
 Built for Roc `nightly-2026-09-29-7f11a82` (0.3.2 was built for

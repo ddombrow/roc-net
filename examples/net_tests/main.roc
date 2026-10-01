@@ -172,6 +172,9 @@ main! = |_args| {
 		check!("noise: the wrong static key, or a different psk, fails the handshake", noise_wrong_keys!),
 		check!("noise: a flipped byte in transit fails to authenticate", noise_tampered!),
 		check!("noise: over a unix socket", noise_unix!),
+		check!("bytes: hex both ways, and its errors", bytes_hex!),
+		check!("noise: CipherState.with_nonce decrypts out of order", noise_with_nonce!),
+		check!("scope: cancel_all! stops a helper the body no longer needs", scope_cancel_all!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
 		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
@@ -3144,20 +3147,8 @@ log_many_tasks! = || {
 	expect_eq((Log.enabled!(Debug), Log.enabled!(Info), start.elapsed!().to_millis() < 5000), (False, True, True))
 }
 
-## Bytes from hex (test vectors), ignoring spaces.
-hex = |text| {
-	digit = |c| if c >= 97 c - 87 else if c >= 65 c - 55 else c - 48
-	digits = List.keep_if(Str.to_utf8(text), |c| c != 32)
-	var $out = []
-	var $i = 0
-	while $i + 1 < List.len(digits) {
-		high = digit(List.get(digits, $i) ?? 48)
-		low = digit(List.get(digits, $i + 1) ?? 48)
-		$out = List.append($out, high * 16 + low)
-		$i = $i + 2
-	}
-	$out
-}
+## Bytes from hex (test vectors), ignoring the spaces they're grouped with.
+hex = |text| Bytes.from_hex(Str.from_utf8_lossy(List.keep_if(Str.to_utf8(text), |c| c != 32))) ?? []
 
 crypto_hmac! = || {
 	case1 = C.HmacSha256.tag(List.repeat(0x0b, 20), Str.to_utf8("Hi There"))
@@ -3460,4 +3451,64 @@ noise_unix! = || {
 	done.stream.write_str!("over unix\n")?
 	(line, _) = Framing.reader(done.stream).read_line!()?
 	expect_eq(line, "echo: over unix")
+}
+
+bytes_hex! = || {
+	random = Random.bytes!(32)
+	odd = Bytes.from_hex("abc")
+	bad = Bytes.from_hex("0g")
+	expect_eq(
+		(Bytes.to_hex([0, 10, 255, 16]), Bytes.from_hex("000aff10"), Bytes.from_hex("0AFF"), Bytes.to_hex([]), Bytes.from_hex(Bytes.to_hex(random)) == Ok(random), odd, bad),
+		("000aff10", Ok([0, 10, 255, 16]), Ok([10, 255]), "", True, Err(InvalidHex({ index: 3 })), Err(InvalidHex({ index: 1 }))),
+	)
+}
+
+# A finished NN handshake, then three messages decrypted out of order, as a
+# datagram transport would deliver them, each with its nonce set first.
+noise_with_nonce! = || {
+	initiator = Noise.start!(Noise.config(NN, Initiator))?
+	responder = Noise.start!(Noise.config(NN, Responder))?
+	(m1, i2) = initiator.write_message!([])?
+	(_, r2) = responder.read_message!(m1)?
+	(m2, r3) = r2.write_message!([])?
+	(_, i3) = i2.read_message!(m2)?
+	sending = i3.finish()?.send
+	receiving = r3.finish()?.receive
+	(c0, s1) = sending.encrypt!([], Str.to_utf8("zero"))?
+	(c1, s2) = s1.encrypt!([], Str.to_utf8("one"))?
+	(c2, s3) = s2.encrypt!([], Str.to_utf8("two"))?
+	(p2, _) = receiving.with_nonce(2).decrypt!([], c2)?
+	(p0, after_zero) = receiving.with_nonce(0).decrypt!([], c0)?
+	(p1, _) = receiving.with_nonce(1).decrypt!([], c1)?
+	wrong =
+		match receiving.with_nonce(5).decrypt!([], c1) {
+			Err(Invalid) => True
+			_ => False
+		}
+	expect_eq(
+		(List.map([p0, p1, p2], Str.from_utf8_lossy), after_zero.nonce(), s3.nonce(), wrong),
+		(["zero", "one", "two"], 1, 3, True),
+	)
+}
+
+# The trap from a relay: a writer in the scope waits for messages; the body
+# reads until the peer leaves and returns Ok. Without cancel_all! the scope
+# would wait for the writer forever.
+scope_cancel_all! = || {
+	(outbox, inbox) = Channel.new!(1)?
+	start = Time.now!()
+	(writer_ended, body) =
+		Task.scope!(|scope| {
+			writer = scope.spawn!(|| {
+				_ = inbox.receive!()?
+				Ok({})
+			})?
+			Time.sleep!(Time.millis(20))?
+			scope.cancel_all!()
+			Ok((writer.join!(), "body done"))
+		})?
+	# Used only now, so the channel stays open (and the writer waiting)
+	# throughout: an unused sender would be released, closing it at once.
+	outbox.close!()
+	expect_eq((writer_ended, body, start.elapsed!().to_millis() < 2000), (Err(Cancelled), "body done", True))
 }

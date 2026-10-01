@@ -4886,6 +4886,15 @@ pub struct HostGroupAddArgs {
     pub arg1: *mut u64,
 }
 
+/// Arguments for Host.group_cancel!
+/// Roc signature: Host.TaskGroup => {}
+/// Refcounted fields are owned by the hosted function.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostGroupCancelArgs {
+    pub arg0: *mut u64,
+}
+
 /// Arguments for Host.group_close!
 /// Roc signature: Host.TaskGroup, Bool => {}
 /// Refcounted fields are owned by the hosted function.
@@ -7297,6 +7306,13 @@ unsafe extern "C" {
     ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     ///     unsafe { decref_box_with(arg1 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
     pub fn roc_group_add(arg0: *mut u64, arg1: *mut u64);
+
+    /// Hosted symbol for Host.group_cancel!
+    /// Roc signature: Host.TaskGroup => {}
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { decref_box_with(arg0 as RocBox, core::mem::align_of::<u64>(), false, None, roc_host); }
+    pub fn roc_group_cancel(arg0: *mut u64);
 
     /// Hosted symbol for Host.group_close!
     /// Roc signature: Host.TaskGroup, Bool => {}

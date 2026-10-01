@@ -180,7 +180,8 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   - `write_frame!`: write a 4-byte big-endian length, then the bytes
 - `Bytes`: encode and decode `U16`/`U32`/`U64`, big- and little-endian:
   `u32_be` to encode, `take_u32_be` to decode from the front of a list, and
-  `u32_be_at` to decode at an offset; plus `take`, `take_u8`, `u8_at`, `bytes_at`
+  `u32_be_at` to decode at an offset; plus `take`, `take_u8`, `u8_at`, `bytes_at`;
+  `to_hex` and `from_hex`
 - `Cryptography`: `X25519` key agreement, `ChaChaPoly` and `AesGcm`
   encryption, `Ed25519` signatures, `HmacSha256`, `HkdfSha256`, and
   `constant_time_eq!` (from AWS-LC, the library `Tls` uses; SHA-256 is
@@ -191,7 +192,8 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   Unix stream and gives back a `Noise.Stream`, which has the same methods
   as `Tcp.Stream` (so `Framing` works over it). Underneath, the spec's own
   sans-I/O `Handshake` and `CipherState`, for protocols that carry
-  handshake messages their own way.
+  handshake messages their own way (`CipherState.with_nonce` for transports
+  that lose or reorder messages).
 - `Random`: `u8!()` ... `u64!()`, `bytes!(n)`, `between!(low, high)`,
   cryptographically secure
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
@@ -207,6 +209,8 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     outlive the scope. It waits for them when the body succeeds and cancels
     them first when it fails. A task in the scope failing doesn't stop the
     others; see `Task.scope!`'s docs for stopping them all.
+    `scope.cancel_all!()` cancels them from inside the body, for helper
+    tasks that should last only as long as it.
   - `Task.yield!`, `Task.is_cancelled!`: for long computations, which
     otherwise hold their thread
 - `Select`: wait for whichever happens first, with an arm for each thing and

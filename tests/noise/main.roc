@@ -1,5 +1,6 @@
 app [main!] { roc: "nightly-2026-09-29-7f11a82", pf: platform "../../platform/main.roc" }
 
+import pf.Bytes
 import pf.Cryptography as C
 import pf.Noise
 import pf.Stdout
@@ -32,18 +33,8 @@ main! = |_| {
 	}
 }
 
-## Bytes from hex.
-hex = |text| {
-	digit = |c| if c >= 97 c - 87 else if c >= 65 c - 55 else c - 48
-	digits = Str.to_utf8(text)
-	var $out = []
-	var $i = 0
-	while $i + 1 < List.len(digits) {
-		$out = List.append($out, digit(List.get(digits, $i) ?? 48) * 16 + digit(List.get(digits, $i + 1) ?? 48))
-		$i = $i + 2
-	}
-	$out
-}
+## Bytes from hex (the vectors' hex is well formed).
+hex = |text| Bytes.from_hex(text) ?? []
 
 ## One side's configuration, from the vector's keys for it.
 side_config = |vector, role| {

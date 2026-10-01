@@ -321,9 +321,30 @@ Where the pieces go:
   move into the platform because of it). Its identity key is generated per
   run until 0.5 adds `File`.
 
-## 0.5.0: Files and terminal input (plan)
+## 0.4.1: Small gaps the chat found (ready to release)
+
+From building a relay-based chat against 0.4.0 (2026-10-01); each has users
+besides the chat:
+
+- `CipherState.nonce` and `CipherState.with_nonce`: the spec's `SetNonce`
+  (§5.1), for transports that can lose or reorder messages (§11.4):
+  datagrams, the QUIC/UDP work. Replay windows stay the caller's job.
+- `Bytes.to_hex` and `Bytes.from_hex`: printing and parsing keys, hashes and
+  binary ids (CLI tools, test vectors, logs).
+- `scope.cancel_all!()`: cancel a scope's unfinished tasks without leaving
+  it, for "a helper task as long as this block runs" (a proxy's writer, a
+  heartbeat). `scope!` still only cancels on its own when the body fails.
+
+## 0.5.0: Files, terminal input, and Select on Noise (plan)
 
 Driven by the chat example, justified without it (see the table above):
+
+- `Select` on `Noise.Stream` (and `Pipe.copy_both!` / `copy_to!` over it):
+  a non-blocking read in the host that reassembles partial frames. Users:
+  libp2p (yamux over Noise), servers that wait on a Noise connection, timers
+  and channels at once. Today that takes a task per direction.
+- Environment variables (`Env.var!`): configuration and secrets for any
+  server or CLI tool, beside `File`.
 
 - `File`: read and write whole files, append, create with owner-only
   permissions (for keys), and rename for atomic replacement; errors like
