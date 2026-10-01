@@ -40,12 +40,13 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Channel, Cryptography, Dns, Noise, Framing, IOErr, Log, Random, Select, Stdout, Stderr, Stdin, Stream, Task, Tcp, Time, Tls, Udp, Unix]
-	packages { roc: "nightly-2026-09-24-f45bfbe" }
+	exposes [Bytes, Channel, Cryptography, Dns, Noise, Framing, IOErr, Log, Random, Pipe, Select, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
+	packages { roc: "nightly-2026-09-29-7f11a82" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
 		"roc_stderr_line": Host.stderr_line!,
 		"roc_stdin_line": Host.stdin_line!,
+		"roc_stdin_read_line": Host.stdin_read_line!,
 		"roc_stdout_line": Host.stdout_line!,
 		"roc_aead_open": Host.aead_open!,
 		"roc_aead_seal": Host.aead_seal!,
@@ -134,7 +135,7 @@ import Task
 import Bytes
 import Channel
 import Dns
-import Stream
+import Pipe
 import Cryptography
 import Noise
 import Framing
@@ -151,7 +152,7 @@ import Select
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {
-	# Compiler workaround (nightly-2026-09-24): if an app never calls
+	# Compiler workaround (nightly-2026-09-24, still needed on 2026-09-29): if an app never calls
 	# Task.spawn!, `run_task_for_host!` calls a closure of no known type, the
 	# LLVM backend emits a call to `roc_boxy_init_embedded`, and the linker
 	# doesn't include the runtime that defines it ("undefined symbol").

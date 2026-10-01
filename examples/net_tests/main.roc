@@ -1,4 +1,4 @@
-app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/main.roc" }
+app [main!] { roc: "nightly-2026-09-29-7f11a82", pf: platform "../../platform/main.roc" }
 
 import pf.Bytes
 import pf.Channel
@@ -10,7 +10,7 @@ import pf.Noise
 import pf.Random
 import pf.Select
 import pf.Stdout
-import pf.Stream
+import pf.Pipe
 import pf.Task
 import pf.Tcp
 import pf.Time
@@ -2313,7 +2313,7 @@ proxy_once_with! = |listener, backend_address, idle_ms| {
 		client = listener.accept!()?
 		_ = client.set_read_timeout!(Millis(idle_ms))
 		backend = Tcp.connect!(backend_address)?
-		report_tx.send!(Stream.copy_both!(client, backend))
+		report_tx.send!(Pipe.copy_both!(client, backend))
 	})?
 	Ok(report)
 }
@@ -2405,7 +2405,7 @@ copy_both_cancelled! = || {
 	proxy = Task.spawn!(|| {
 		client = front.accept!()?
 		backend_stream = Tcp.connect!(backend_address)?
-		Stream.copy_both!(client, backend_stream)
+		Pipe.copy_both!(client, backend_stream)
 	})?
 	client = Tcp.connect!(front_address)?
 	client.set_read_timeout!(Millis(3000))?
@@ -2418,7 +2418,7 @@ copy_both_cancelled! = || {
 	}
 }
 
-## Any stream with `read!` and `write!`, as in `Stream`'s docs.
+## Any stream with `read!` and `write!`, as in `Pipe`'s docs.
 echo_once! : s => Try({}, e)
 	where [
 		s.read! : s, U64 => Try(List(U8), e),
@@ -2696,7 +2696,7 @@ copy_both_many_sessions! = || {
 			client = front.accept!()?
 			_ = Task.spawn!(|| {
 				upstream = Tcp.connect!(backend_address)?
-				_ = Stream.copy_both!(client, upstream)
+				_ = Pipe.copy_both!(client, upstream)
 				Ok({})
 			})
 		}
@@ -2734,7 +2734,7 @@ copy_both_unix! = || {
 	_ = Task.spawn!(|| {
 		client = front.accept!()?
 		upstream = Unix.connect!("/tmp/roc-net-tests-copy-backend.sock")?
-		report_tx.send!(Stream.copy_both!(client, upstream))
+		report_tx.send!(Pipe.copy_both!(client, upstream))
 	})?
 	client = Unix.connect!("/tmp/roc-net-tests-copy-front.sock")?
 	reply = exchange!(client, "over unix sockets")?
@@ -2751,7 +2751,7 @@ copy_both_unix! = || {
 	_ = Task.spawn!(|| {
 		mixed_client = mixed_front.accept!()?
 		upstream = Tcp.connect!(tcp_backend_address)?
-		mixed_tx.send!(Stream.copy_both!(mixed_client, upstream))
+		mixed_tx.send!(Pipe.copy_both!(mixed_client, upstream))
 	})?
 	mixed = Unix.connect!("/tmp/roc-net-tests-copy-mixed.sock")?
 	mixed_reply = exchange!(mixed, "unix to tcp")?
@@ -2788,7 +2788,7 @@ copy_both_data_waiting! = || {
 		upstream = Tcp.connect!(backend_address)?
 		Time.sleep!(Time.millis(100))?
 		# Best effort: only read when the test fails.
-		_ = report_tx.send!(Stream.copy_both!(client, upstream))
+		_ = report_tx.send!(Pipe.copy_both!(client, upstream))
 		Ok({})
 	})?
 	client = Tcp.connect!(front_address)?
@@ -2887,7 +2887,7 @@ copy_to_within_tls_record! = || {
 	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		sink = Tcp.connect!(sink_address)?
-		copied = Stream.copy_to!(stream, sink, Exactly(100))
+		copied = Pipe.copy_to!(stream, sink, Exactly(100))
 		sink.close!()
 		rest = read_to_end!(stream)
 		_ = result_tx.send!((copied, rest))
@@ -2918,7 +2918,7 @@ copy_to_zero! = || {
 	})?
 	source = Tcp.connect!(address)?
 	sink = Tcp.connect!(sink_address)?
-	copied = Stream.copy_to!(source, sink, Exactly(0))?
+	copied = Pipe.copy_to!(source, sink, Exactly(0))?
 	sink.close!()
 	rest = read_to_end!(source)?
 	expect_eq((copied, got.receive_timeout!(Time.seconds(10))?, rest), (0, "", "untouched"))
@@ -2936,7 +2936,7 @@ copy_to_ends_early! = || {
 	})?
 	source = Tcp.connect!(address)?
 	sink = Tcp.connect!(sink_address)?
-	result = Stream.copy_to!(source, sink, Exactly(1000))
+	result = Pipe.copy_to!(source, sink, Exactly(1000))
 	sink.close!()
 	match result {
 		Err(CopyToErr({ failed: Read(UnexpectedEof), copied })) =>
@@ -2959,7 +2959,7 @@ copy_to_until_end! = || {
 	})?
 	source = Tcp.connect!(address)?
 	sink = Tcp.connect!(sink_address)?
-	copied = Stream.copy_to!(source, sink, UntilEnd)?
+	copied = Pipe.copy_to!(source, sink, UntilEnd)?
 	sink.write_str!("then more")?
 	sink.shutdown!(Write)?
 	expect_eq((copied, got.receive_timeout!(Time.seconds(10))?), (17, "from the source; then more"))
@@ -2979,7 +2979,7 @@ copy_to_tls_to_tls! = || {
 	_ = Task.spawn!(|| {
 		stream = listener.accept!()?
 		sink = Tls.connect_with!(tls_sink_address, trusting_test_ca)?
-		copied = Stream.copy_to!(stream, sink, Exactly(50000))
+		copied = Pipe.copy_to!(stream, sink, Exactly(50000))
 		sink.shutdown!(Write)?
 		_ = result_tx.send!(copied)
 		Ok({})
@@ -3011,7 +3011,7 @@ copy_to_cancelled! = || {
 	copier = Task.spawn!(|| {
 		source = Tcp.connect!(address)?
 		sink = Tcp.connect!(sink_address)?
-		Stream.copy_to!(source, sink, Exactly(1000))
+		Pipe.copy_to!(source, sink, Exactly(1000))
 	})?
 	Time.sleep!(Time.millis(100))?
 	copier.cancel!()

@@ -379,7 +379,7 @@ Noise := [].{
 	## messages: a protocol that must know it got everything has to say so
 	## itself (a length up front, or a last message).
 	##
-	## Not yet supported: `Select` arms and `Stream.copy_both!` / `copy_to!`
+	## Not yet supported: `Select` arms and `Pipe.copy_both!` / `copy_to!`
 	## on it. Every operation fails with `NoiseErr(IOErr)`.
 	Stream :: Host.Socket.{
 

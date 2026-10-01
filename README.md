@@ -18,7 +18,7 @@ platform's URL and the Roc nightly it's built for. Use them in your app's
 header:
 
 ```roc
-app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "<release URL>" }
+app [main!] { roc: "nightly-2026-09-29-7f11a82", pf: platform "<release URL>" }
 
 import pf.Stdout
 import pf.Tcp
@@ -69,7 +69,7 @@ complete programs, and `just docs` builds the full reference.
 - Docker with Compose, only for `just linux-test`. On an Apple Silicon Mac the
   x86-64 builds run under emulation, which must be Rosetta (Colima:
   `colima start --vz-rosetta`); QEMU mis-runs Roc's default x86-64 code.
-- Roc `nightly-2026-09-24-f45bfbe`, the compiler pinned in `platform/main.roc`
+- Roc `nightly-2026-09-29-7f11a82`, the compiler pinned in `platform/main.roc`
 
 Common tasks use [just](https://github.com/casey/just). Run `just` to list them.
 
@@ -104,7 +104,9 @@ Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
 
 Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 
-- `Stdout.line!`, `Stderr.line!`, `Stdin.line!`: line-based standard I/O
+- `Stdout.line!`, `Stderr.line!`, `Stdin.line!`: line-based standard I/O;
+  `Stdin.read_line!` tells an empty line (`Line("")`) from the end of input
+  (`End`)
 - `Log.info!(message, fields)` (and `debug!`, `warn!`, `error!`): structured
   log lines on stderr, with a wall-clock timestamp, the level and the task,
   as text or JSON (`ROC_NET_LOG_FORMAT`), filtered by `ROC_NET_LOG`. Logging
@@ -147,14 +149,14 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   - `Tls.wrap_client!`, `Tls.wrap_server!`: upgrade a TCP connection (STARTTLS)
   - Errors are `TlsErr(IOErr)`; certificate problems arrive as `TlsErr(Other(message))`,
     and so do certificate and key files that can't be loaded, naming the file.
-- `Stream.copy_both!(a, b)`: copy between two streams (any kinds) in both
+- `Pipe.copy_both!(a, b)`: copy between two streams (any kinds) in both
   directions until both end, the core of a proxy. Half-closes are passed on,
   the first error aborts both (so a truncated response is never passed off
   as complete), the bytes never become Roc lists, idle sessions hold no
-  buffers, and the session is idle only when neither direction moves. `Stream`'s docs also
+  buffers, and the session is idle only when neither direction moves. `Pipe`'s docs also
   show how to annotate code that takes any kind of stream (a `where` clause)
   and keep listeners of different kinds in one list.
-- `Stream.copy_to!(from, to, UntilEnd | Exactly(n))`: one direction, such as
+- `Pipe.copy_to!(from, to, UntilEnd | Exactly(n))`: one direction, such as
   a message's body after its header; `Exactly(n)` never reads past the
   `n`th byte. After reading with a `Framing` reader, use
   `reader.copy_to!(to, limit)`, which sends the reader's buffered bytes
@@ -179,6 +181,17 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 - `Bytes`: encode and decode `U16`/`U32`/`U64`, big- and little-endian:
   `u32_be` to encode, `take_u32_be` to decode from the front of a list, and
   `u32_be_at` to decode at an offset; plus `take`, `take_u8`, `u8_at`, `bytes_at`
+- `Cryptography`: `X25519` key agreement, `ChaChaPoly` and `AesGcm`
+  encryption, `Ed25519` signatures, `HmacSha256`, `HkdfSha256`, and
+  `constant_time_eq!` (from AWS-LC, the library `Tls` uses; SHA-256 is
+  Roc's builtin `Crypto.SHA256`). Secret keys are opaque.
+- `Noise`: the Noise Protocol Framework (rev 34), checked against the
+  cacophony test vectors. `Noise.handshake!(stream, config, payloads)` runs
+  a handshake (`XX`, `IK`, `NK`, ... with pre-shared keys) over a TCP or
+  Unix stream and gives back a `Noise.Stream`, which has the same methods
+  as `Tcp.Stream` (so `Framing` works over it). Underneath, the spec's own
+  sans-I/O `Handshake` and `CipherState`, for protocols that carry
+  handshake messages their own way.
 - `Random`: `u8!()` ... `u64!()`, `bytes!(n)`, `between!(low, high)`,
   cryptographically secure
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
@@ -249,6 +262,8 @@ just run tcp_proxy 127.0.0.1:9000 127.0.0.1:8080     # proxy in front of the ech
 just run tls_proxy 127.0.0.1:9080 127.0.0.1:9443 \
     examples/net_tests/certs/server.pem examples/net_tests/certs/server-key.pem \
     127.0.0.1:8080 localhost=127.0.0.1:8081           # terminate TLS, route by SNI name
+just run noise_chat listen 127.0.0.1:7000 ada         # an encrypted 1:1 chat over Noise; then, elsewhere:
+just run noise_chat connect 127.0.0.1:7000 grace
 
 just run udp_echo_server 127.0.0.1:8081
 just run udp_client 127.0.0.1:8081 "hello"

@@ -1,4 +1,4 @@
-//! `Stream.copy_both!`: a proxy's two directions, copied by the host so the
+//! `Pipe.copy_both!`: a proxy's two directions, copied by the host so the
 //! bytes never become Roc lists.
 //!
 //! A to B runs on the calling task and B to A on a helper task, each a
@@ -405,7 +405,7 @@ fn direction(from: &Socket, to: &Socket, sides: (Side, Side), shared: &Shared) -
     total
 }
 
-/// `Stream.copy_to!`: write `prefix` to `to`, then copy `from` to `to` until
+/// `Pipe.copy_to!`: write `prefix` to `to`, then copy `from` to `to` until
 /// `from` ends, or with `limit`, exactly that many more bytes, never reading
 /// past them, all by `deadline` if there is one. Returns the bytes `to`
 /// accepted (the prefix included; the peer may have received fewer, and a

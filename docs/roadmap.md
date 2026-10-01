@@ -7,7 +7,7 @@ cancellation, scopes, `Task.yield!`), except `Time.ticker`, which
 
 **Status (2026-09-29):** 0.3.0 (proxy features) is implemented on the
 `v0.3-proxy` branch and ready to release: SNI with a certificate per name, ALPN,
-`Stream.copy_both!` (with `splice` on Linux between plain sockets),
+`Pipe.copy_both!` (with `splice` on Linux between plain sockets),
 `Select.on_join` for acting on whichever task ends first, and the "any
 stream" docs and `tls_proxy` example. Crypto + Noise moves to 0.4.
 
@@ -175,7 +175,7 @@ From building a TLS-terminating reverse proxy on 0.2:
   cert_file, key_file }, ...])` (rustls `ResolvesServerCertUsingSni`), with a
   default for clients that send no name. ALPN fits here too
   (`with_alpn([...])`, `stream.alpn_protocol!()`).
-- **Host-side bidirectional copy**: `Stream.copy_both!(a, b)` (or
+- **Host-side bidirectional copy**: `Pipe.copy_both!(a, b)` (or
   `copy_to!`) doing the proxy loop in Rust: half-close passed through,
   errors and cancellation handled in one place, no Roc list per chunk
   (TLS through `fill`/`try_read`), and room for `splice` on Linux later.
@@ -309,6 +309,13 @@ Where the pieces go:
   split across messages, since Noise caps a message at 65,535 bytes.
 - Verify with RFC/NIST vectors, cacophony vectors, and interop against the
   `snow` crate (test-only).
+- **Status (2026-10-01):** implemented on `v0.4-noise` and ready to release: `Cryptography`,
+  `Noise` (the sans-I/O core, `Noise.Stream`, `handshake!`, `wrap!`), the
+  cacophony vectors in `tests/noise`, `Stdin.read_line!` (found by the chat:
+  `Stdin.line!` can't tell an empty line from the end of input), and
+  `examples/noise_chat`, checked by running two of them against each other.
+  Not yet: `Select`, `copy_both!` and `copy_to!` on a `Noise.Stream`; the
+  deferred patterns (`NK1` and so on); interop against `snow`.
 - Acceptance: `examples/noise_chat`, a minimal 1:1 chat over XX, written
   against the new API (see "Next use case" above for what may and may not
   move into the platform because of it). Its identity key is generated per

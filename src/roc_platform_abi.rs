@@ -1482,6 +1482,135 @@ const _: () = assert!(core::mem::align_of::<HostStdinLineResult>() == 4, "HostSt
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostStdinLineResult, tag) == 12, "HostStdinLineResult tag offset mismatch");
 
+/// Tag discriminant for EndOrFailedOrLine.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndOrFailedOrLineTag {
+    End = 0,
+    Failed = 1,
+    Line = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union EndOrFailedOrLinePayload {
+    pub end: [u8; 0],
+    pub failed: core::mem::ManuallyDrop<RocStr>,
+    pub line: core::mem::ManuallyDrop<RocStr>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct EndOrFailedOrLinePayloadAlignment;
+
+/// Tag union: EndOrFailedOrLine
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct EndOrFailedOrLine {
+    pub _payload_alignment: [EndOrFailedOrLinePayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: EndOrFailedOrLineTag,
+}
+
+/// Tag union: EndOrFailedOrLine
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct EndOrFailedOrLine {
+    pub payload: EndOrFailedOrLinePayload,
+    pub tag: EndOrFailedOrLineTag,
+}
+
+impl EndOrFailedOrLine {
+    /// Borrow the `Failed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Failed` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_failed_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Failed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Failed` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_failed_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.failed as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Failed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Failed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_failed_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Failed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Failed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_failed_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.failed) }
+    }
+
+    /// Borrow the `Line` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Line` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_line_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Line` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Line` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_line_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.line as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Line` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Line`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_line_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Line` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `EndOrFailedOrLineTag::Line`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_line_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.line) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<EndOrFailedOrLine>() == 32, "EndOrFailedOrLine size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<EndOrFailedOrLine>() == 8, "EndOrFailedOrLine alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(EndOrFailedOrLine, tag) == 24, "EndOrFailedOrLine tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<EndOrFailedOrLine>() == 16, "EndOrFailedOrLine size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<EndOrFailedOrLine>() == 4, "EndOrFailedOrLine alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(EndOrFailedOrLine, tag) == 12, "EndOrFailedOrLine tag offset mismatch");
+
 /// Tag discriminant for Try.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5393,6 +5522,57 @@ unsafe impl RocRelease<HostStdinLineResult> for HostStdinLineResultRelease {
     }
 }
 
+impl EndOrFailedOrLine {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            EndOrFailedOrLineTag::End => {},
+            EndOrFailedOrLineTag::Failed => {
+                let payload = unsafe { value.take_payload_failed_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            EndOrFailedOrLineTag::Line => {
+                let payload = unsafe { value.take_payload_line_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            EndOrFailedOrLineTag::End => {},
+            EndOrFailedOrLineTag::Failed => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_failed_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            EndOrFailedOrLineTag::Line => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_line_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct EndOrFailedOrLineRelease;
+
+unsafe impl RocRelease<EndOrFailedOrLine> for EndOrFailedOrLineRelease {
+    unsafe fn release(value: EndOrFailedOrLine, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl HostStdoutLineResult {
     /// Recursively decrement Roc-owned payloads.
     ///
@@ -6961,6 +7141,11 @@ unsafe extern "C" {
     /// Roc signature: {} => Try(Str, [StdinErr(Str)])
     /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_stdin_line() -> HostStdinLineResult;
+
+    /// Hosted symbol for Host.stdin_read_line!
+    /// Roc signature: {} => [End, Failed(Str), Line(Str)]
+    /// The result is owned by Roc: return exactly one owned reference.
+    pub fn roc_stdin_read_line() -> EndOrFailedOrLine;
 
     /// Hosted symbol for Host.stdout_line!
     /// Roc signature: Str => Try({}, [StdoutErr(Str)])

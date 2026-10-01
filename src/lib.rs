@@ -166,6 +166,27 @@ pub extern "C" fn roc_stdin_line() -> HostStdinLineResult {
     }
 }
 
+/// Hosted function: Host.stdin_read_line!
+#[no_mangle]
+pub extern "C" fn roc_stdin_read_line() -> roc_platform_abi::EndOrFailedOrLine {
+    use roc_platform_abi::{EndOrFailedOrLine as Out, EndOrFailedOrLinePayload as P, EndOrFailedOrLineTag as T};
+    // On a helper thread, as `stdin_line!`; `None` at the end of input.
+    let read = sched::blocking(None, || {
+        let mut line = String::new();
+        io::stdin().lock().read_line(&mut line).map(|n| (n > 0).then_some(line))
+    })
+    .and_then(|line| line.expect("no deadline"));
+    match read {
+        Ok(Some(line)) => {
+            let text = line.strip_suffix('\n').unwrap_or(&line);
+            let text = text.strip_suffix('\r').unwrap_or(text);
+            Out { payload: P { line: ManuallyDrop::new(RocStr::from_str(text, roc_host())) }, tag: T::Line }
+        }
+        Ok(None) => Out { payload: P { end: [] }, tag: T::End },
+        Err(err) => Out { payload: P { failed: err_str(err) }, tag: T::Failed },
+    }
+}
+
 /// Hosted function: Host.stdout_line!
 #[no_mangle]
 pub extern "C" fn roc_stdout_line(message: RocStr) -> HostStdoutLineResult {
