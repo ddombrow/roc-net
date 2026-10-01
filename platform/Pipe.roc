@@ -1,9 +1,13 @@
 import Host
 import IOErr
 
-## Code that works with any kind of stream: `Tcp.Stream`, `Tls.Stream` and
-## `Unix.Stream` have the same methods, so a function that only calls those
-## methods takes any of them.
+## Moving bytes between streams, done by the platform: `copy_both!` for the
+## two directions of a proxy, and `copy_to!` for one.
+##
+## These, and code of your own, work with any kind of stream: `Tcp.Stream`,
+## `Tls.Stream`, `Unix.Stream` and `Noise.Stream` have the same methods, so a
+## function that only calls those methods takes any of them. (`copy_both!`
+## and `copy_to!` don't support `Noise.Stream` yet.)
 ##
 ## Without an annotation, Roc works out what a function needs by itself. To
 ## write the annotation, list the methods it calls in a `where` clause, with
@@ -45,7 +49,7 @@ import IOErr
 ## ```
 ##
 ## `examples/tls_proxy` does both.
-Stream := [].{
+Pipe := [].{
 
 	## Copy between `a` and `b` in both directions at once, until both
 	## directions have ended, and return how many bytes went each way. The
@@ -54,7 +58,7 @@ Stream := [].{
 	## ```roc
 	## client = listener.accept!()?
 	## backend = Tcp.connect!(backend_address)?
-	## copied = Stream.copy_both!(client, backend)?
+	## copied = Pipe.copy_both!(client, backend)?
 	## ```
 	##
 	## Works with any two streams (`Tcp`, `Tls`, `Unix`), of the same kind

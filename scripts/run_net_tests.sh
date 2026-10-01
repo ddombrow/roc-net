@@ -46,3 +46,11 @@ else
     # Loudly: a job that forgot to build it must not look like it passed.
     echo "SKIPPED: the Log checks ($log_bin, from tests/log, wasn't built)"
 fi
+# The Noise test vectors (tests/noise), likewise.
+noise_bin="$(dirname "$bin")/noise"
+if [ -x "$noise_bin" ]; then
+    echo "== noise vectors"
+    "$noise_bin" || exit 1
+else
+    echo "SKIPPED: the Noise test vectors ($noise_bin, from tests/noise, wasn't built)"
+fi

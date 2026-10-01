@@ -1,15 +1,15 @@
-app [main!] { roc: "nightly-2026-09-24-f45bfbe", pf: platform "../../platform/main.roc" }
+app [main!] { roc: "nightly-2026-09-29-7f11a82", pf: platform "../../platform/main.roc" }
 
 import pf.Select
 import pf.Stderr
 import pf.Stdout
-import pf.Stream
+import pf.Pipe
 import pf.Task
 import pf.Tcp
 import pf.Tls
 
 # Demonstrates: terminating TLS and routing by the host name the client asks
-# for (SNI), `Stream.copy_both!`, and plain and TLS listeners served by the
+# for (SNI), `Pipe.copy_both!`, and plain and TLS listeners served by the
 # same code.
 #
 # Usage: tls_proxy PLAIN_ADDRESS TLS_ADDRESS CERT_FILE KEY_FILE BACKEND [NAME=BACKEND ...]
@@ -111,7 +111,7 @@ proxy! = |client, route!| {
 					_ = Stderr.line!("${peer} -> ${backend_address}: ${Str.inspect(err)}")
 				}
 				Ok(backend) =>
-					match Stream.copy_both!(client, backend) {
+					match Pipe.copy_both!(client, backend) {
 						Ok(copied) => {
 							_ = Stdout.line!("${peer} -> ${backend_address}: ${copied.a_to_b.to_str()} bytes up, ${copied.b_to_a.to_str()} down")
 						}

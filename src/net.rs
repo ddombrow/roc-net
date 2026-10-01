@@ -600,6 +600,9 @@ fn read_now(socket: &Socket, max: u64) -> NetResult<Option<RocListWith<u8, false
                 break None;
             }
         },
+        Socket::Noise(_) => {
+            return Err(NetErr::Io(io::Error::new(io::ErrorKind::Unsupported, "Select doesn't support Noise streams yet")))
+        }
         _ => return Err(wrong_kind("read")),
     })
 }
@@ -660,6 +663,7 @@ fn read_stream<R>(socket: &Socket, max: u64, what: &str, mut got: impl FnMut(&[u
                 None => s.fill()?,
             }
         },
+        Socket::Noise(s) => got(&s.read(max)?),
         _ => return Err(wrong_kind(what)),
     })
 }
@@ -749,6 +753,7 @@ pub extern "C" fn roc_socket_write(socket: *mut u64, bytes: RocListWith<u8, fals
             Socket::UnixStream(s) => s.write_all_with(data, |s, data| (&mut &*s).write(data))?,
             Socket::Udp(s) => check_datagram_sent(s.retry(true, s.write_deadline(), |s| s.send(data))?, data.len())?,
             Socket::Tls(s) => s.write_all(data)?,
+            Socket::Noise(s) => s.write_all(data)?,
             _ => return Err(wrong_kind("write")),
         }
         Ok(())
@@ -780,6 +785,7 @@ pub extern "C" fn roc_socket_shutdown(socket: *mut u64, how: u8) -> HostSocketSe
             Socket::TcpStream(s) => s.io.shutdown(how),
             Socket::UnixStream(s) => s.io.shutdown(how),
             Socket::Tls(s) => s.shutdown(how),
+            Socket::Noise(s) => s.wire().shutdown(how),
             _ => return Err(wrong_kind("shutdown")),
         };
         match result {
@@ -898,6 +904,7 @@ pub extern "C" fn roc_socket_set_timeout(socket: *mut u64, which: u8, timeout_ms
             Socket::UnixStream(s) => set(&|ms| s.set_read_timeout_ms(ms), &|ms| s.set_write_timeout_ms(ms)),
             Socket::Udp(s) => set(&|ms| s.set_read_timeout_ms(ms), &|ms| s.set_write_timeout_ms(ms)),
             Socket::Tls(s) => set(&|ms| s.conn().set_read_timeout_ms(ms), &|ms| s.conn().set_write_timeout_ms(ms)),
+            Socket::Noise(s) => set(&|ms| s.wire().set_read_timeout_ms(ms), &|ms| s.wire().set_write_timeout_ms(ms)),
             _ => return Err(wrong_kind("setting a timeout")),
         }
         Ok(())
@@ -922,6 +929,10 @@ pub extern "C" fn roc_socket_local_addr(socket: *mut u64) -> HostSocketLocalAddr
             Socket::UnixStream(s) => unix_path(s.io.local_addr()?),
             Socket::TlsListener(s) => s.listener.io.local_addr()?.to_string(),
             Socket::Tls(s) => s.tcp().local_addr()?.to_string(),
+            Socket::Noise(s) => match s.wire() {
+                crate::noise::Wire::Tcp(c) => c.io.local_addr()?.to_string(),
+                crate::noise::Wire::Unix(c) => unix_path(c.io.local_addr()?),
+            },
         })
     }))
 }
@@ -935,6 +946,10 @@ pub extern "C" fn roc_socket_peer_addr(socket: *mut u64) -> HostSocketLocalAddrR
             Socket::Udp(s) => s.io.peer_addr()?.to_string(),
             Socket::UnixStream(s) => unix_path(s.io.peer_addr()?),
             Socket::Tls(s) => s.tcp().peer_addr()?.to_string(),
+            Socket::Noise(s) => match s.wire() {
+                crate::noise::Wire::Tcp(c) => c.io.peer_addr()?.to_string(),
+                crate::noise::Wire::Unix(c) => unix_path(c.io.peer_addr()?),
+            },
             _ => return Err(wrong_kind("peer_addr")),
         })
     }))
@@ -946,6 +961,10 @@ pub extern "C" fn roc_tcp_set_nodelay(socket: *mut u64, enabled: bool) -> HostSo
     unit_result(with_socket(socket, |socket| match socket {
         Socket::TcpStream(s) => Ok(s.io.set_nodelay(enabled)?),
         Socket::Tls(s) => Ok(s.tcp().set_nodelay(enabled)?),
+        Socket::Noise(s) => match s.wire() {
+            crate::noise::Wire::Tcp(c) => Ok(c.io.set_nodelay(enabled)?),
+            crate::noise::Wire::Unix(_) => Err(wrong_kind("set_nodelay")),
+        },
         _ => Err(wrong_kind("set_nodelay")),
     }))
 }
@@ -1237,6 +1256,33 @@ pub extern "C" fn roc_tls_alpn_protocol(socket: *mut u64) -> HostSocketLocalAddr
         Socket::Tls(s) => Ok(s.alpn_protocol()?.map(|id| String::from_utf8_lossy(&id).into_owned()).unwrap_or_default()),
         _ => Err(wrong_kind("alpn_protocol")),
     }))
+}
+
+/// Hosted function: Host.noise_wrap!
+#[no_mangle]
+pub extern "C" fn roc_noise_wrap(
+    socket: *mut u64,
+    cipher: u8,
+    send_key: RocListWith<u8, false>,
+    send_nonce: u64,
+    receive_key: RocListWith<u8, false>,
+    receive_nonce: u64,
+) -> HostSocketAcceptResult {
+    let result = with_socket(socket, |socket| {
+        let wire = crate::noise::wire_of(socket)?;
+        let stream = crate::noise::NoiseStream::new(
+            wire,
+            cipher,
+            (send_key.as_slice(), send_nonce),
+            (receive_key.as_slice(), receive_nonce),
+        )?;
+        open_socket(|| Ok(Socket::Noise(Box::new(stream))))
+    });
+    unsafe {
+        send_key.decref(roc_host());
+        receive_key.decref(roc_host());
+    }
+    handle_result(result)
 }
 
 /// Hosted function: Host.tls_ignore_unexpected_eof!
