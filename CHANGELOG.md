@@ -4,6 +4,20 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.5.0 (unreleased)
+
+Added:
+
+- **`File`**: read, write, append, rename and delete whole files, and check
+  whether one exists. `write_new!` creates a file only if it doesn't exist,
+  with the permissions given (`0o600` for a secret key); `write_atomic!`
+  replaces one through a temporary file, flushed and renamed, so readers
+  never see it half written. Calls run on helper threads, like DNS lookups,
+  so they never stall other tasks. Errors are `FileErr(IOErr)`.
+- **`Env.var!`**: read an environment variable.
+- **`IOErr.AlreadyExists`**, from `File.write_new!`. Code that matches every
+  `IOErr` tag without a `_` case needs the new one.
+
 ## 0.4.1
 
 Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,

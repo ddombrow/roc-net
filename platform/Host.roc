@@ -136,6 +136,17 @@ Host := [].{
 	## after `timeout_ms` (0 means no limit).
 	dns_resolve! : Str, U64 => Try(List(Str), IOErr)
 
+	## `File`, on helper threads. `file_write!`'s `how`: 0 create or replace,
+	## 1 append (creating), 2 create only if absent, 3 replace atomically
+	## (temporary file, flushed, renamed). `mode` is for files it creates.
+	file_read! : Str => Try(List(U8), IOErr)
+	file_write! : Str, List(U8), U8, U32 => Try({}, IOErr)
+	file_rename! : Str, Str => Try({}, IOErr)
+	file_delete! : Str => Try({}, IOErr)
+	file_exists! : Str => Try(Bool, IOErr)
+	## `Env`.
+	env_var! : Str => [Found(Str), Missing, NotUtf8]
+
 	## `Cryptography`, from AWS-LC. Hosted functions are always effectful,
 	## so these are too, though they only compute. Lengths are checked in Roc
 	## (by the key and nonce types) and again here.

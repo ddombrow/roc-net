@@ -64,6 +64,7 @@ macro_rules! io_err {
             NetErr::Io(err) => match err.kind() {
                 K::AddrInUse => unit($tag::AddrInUse),
                 K::AddrNotAvailable => unit($tag::AddrNotAvailable),
+                K::AlreadyExists => unit($tag::AlreadyExists),
                 K::BrokenPipe => unit($tag::BrokenPipe),
                 K::ConnectionAborted => unit($tag::ConnectionAborted),
                 K::ConnectionRefused => unit($tag::ConnectionRefused),
@@ -88,7 +89,7 @@ macro_rules! io_err {
 /// emits identical copies (`IOErr`, `HostIOErr`) and which result gets which
 /// can change when it's regenerated, so results name neither: the payload's
 /// field type picks the implementation.
-trait FromNetErr {
+pub(crate) trait FromNetErr {
     fn from_net_err(err: NetErr) -> Self;
 }
 

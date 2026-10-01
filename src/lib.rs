@@ -9,6 +9,7 @@ use std::mem::ManuallyDrop;
 mod channels;
 mod copy;
 mod crypto;
+mod files;
 mod limits;
 mod log;
 mod resource;

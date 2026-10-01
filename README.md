@@ -194,6 +194,13 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   sans-I/O `Handshake` and `CipherState`, for protocols that carry
   handshake messages their own way (`CipherState.with_nonce` for transports
   that lose or reorder messages).
+- `File`: whole files. `read_bytes!`, `read_utf8!`, `write_bytes!`,
+  `write_utf8!`, `append_bytes!`, `append_utf8!`, `rename!`, `delete!`,
+  `exists!`; `write_new!(path, bytes, 0o600)` creates a file only if it's
+  absent (for a secret key), and `write_atomic!` replaces one so readers see
+  the old contents or the new, never part. Calls run on helper threads, so
+  a slow disk doesn't stall other tasks. Errors are `FileErr(IOErr)`.
+- `Env.var!(name)`: an environment variable, or `VarNotFound(name)`
 - `Random`: `u8!()` ... `u64!()`, `bytes!(n)`, `between!(low, high)`,
   cryptographically secure
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and

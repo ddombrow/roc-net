@@ -4,6 +4,8 @@ import pf.Bytes
 import pf.Channel
 import pf.Cryptography as C
 import pf.Dns
+import pf.Env
+import pf.File
 import pf.Framing
 import pf.Log
 import pf.Noise
@@ -175,6 +177,13 @@ main! = |_args| {
 		check!("bytes: hex both ways, and its errors", bytes_hex!),
 		check!("noise: CipherState.with_nonce decrypts out of order", noise_with_nonce!),
 		check!("scope: cancel_all! stops a helper the body no longer needs", scope_cancel_all!),
+		check!("file: write, read, append, replace, delete", file_round_trip!),
+		check!("file: write_new! refuses an existing file", file_write_new!),
+		check!("file: write_atomic! replaces, and creates", file_write_atomic!),
+		check!("file: rename! moves, replacing the target", file_rename!),
+		check!("file: errors (missing, a directory, bad UTF-8)", file_errors!),
+		check!("file: 20 tasks at once, each with its own file", file_many_tasks!),
+		check!("env: var! finds, misses, and rejects impossible names", env_var!),
 		check!("abort!: the peer sees an error, not a clean end (tcp, tls)", abort_is_not_clean!),
 		check!("copy_both!: many small exchanges at once, across threads", copy_both_many_sessions!),
 		check!("copy_both!: unix to unix, and unix to tcp", copy_both_unix!),
@@ -3512,3 +3521,129 @@ scope_cancel_all! = || {
 	outbox.close!()
 	expect_eq((writer_ended, body, start.elapsed!().to_millis() < 2000), (Err(Cancelled), "body done", True))
 }
+
+## A path in the temporary directory that nothing else uses.
+temp_path! = |label| {
+	dir = Env.var!("TMPDIR") ?? "/tmp"
+	base = if Str.ends_with(dir, "/") dir else "${dir}/"
+	"${base}roc-net-test-${label}-${Bytes.to_hex(Random.bytes!(8))}"
+}
+
+file_round_trip! = || {
+	path = temp_path!("round-trip")
+	before = File.exists!(path)?
+	File.write_utf8!(path, "one\n")?
+	first = File.read_utf8!(path)?
+	File.append_utf8!(path, "two\n")?
+	appended = File.read_utf8!(path)?
+	File.write_bytes!(path, [0, 255])?
+	replaced = File.read_bytes!(path)?
+	during = File.exists!(path)?
+	File.delete!(path)?
+	after = File.exists!(path)?
+	again = shown(File.delete!(path))
+	expect_eq(
+		(before, first, appended, replaced, during, after, again),
+		(False, "one\n", "one\ntwo\n", [0, 255], True, False, "Err(FileErr(NotFound))"),
+	)
+}
+
+file_write_new! = || {
+	path = temp_path!("new")
+	File.write_new!(path, Str.to_utf8("first"), 0o600)?
+	second = shown(File.write_new!(path, Str.to_utf8("second"), 0o600))
+	kept = File.read_utf8!(path)?
+	File.delete!(path)?
+	expect_eq((second, kept), ("Err(FileErr(AlreadyExists))", "first"))
+}
+
+file_write_atomic! = || {
+	path = temp_path!("atomic")
+	File.write_atomic!(path, Str.to_utf8("created"), 0o644)?
+	created = File.read_utf8!(path)?
+	File.write_atomic!(path, Str.to_utf8("replaced"), 0o600)?
+	replaced = File.read_utf8!(path)?
+	File.delete!(path)?
+	# Into a directory that doesn't exist: the temporary file can't be made.
+	missing = shown(File.write_atomic!("${path}/nested", [1], 0o600))
+	expect_eq((created, replaced, missing), ("created", "replaced", "Err(FileErr(NotFound))"))
+}
+
+file_rename! = || {
+	from = temp_path!("from")
+	to = temp_path!("to")
+	File.write_utf8!(from, "moved")?
+	File.write_utf8!(to, "old")?
+	File.rename!(from, to)?
+	result = (File.exists!(from)?, File.read_utf8!(to)?)
+	File.delete!(to)?
+	expect_eq(result, (False, "moved"))
+}
+
+file_errors! = || {
+	dir = Env.var!("TMPDIR") ?? "/tmp"
+	missing = shown(File.read_bytes!("/nonexistent-roc-net/file"))
+	write_into_missing = shown(File.write_bytes!("/nonexistent-roc-net/file", []))
+	reading_a_directory =
+		match File.read_bytes!(dir) {
+			Err(FileErr(Other(_))) => True
+			_ => False
+		}
+	path = temp_path!("bad-utf8")
+	File.write_bytes!(path, [104, 105, 255])?
+	bad =
+		match File.read_utf8!(path) {
+			Err(BadUtf8({ index, .. })) => Ok(index)
+			_ => Err({})
+		}
+	File.delete!(path)?
+	expect_eq(
+		(missing, write_into_missing, reading_a_directory, bad),
+		("Err(FileErr(NotFound))", "Err(FileErr(NotFound))", True, Ok(2)),
+	)
+}
+
+# Every task's file calls wait on helper threads, so on one worker thread
+# they still overlap rather than queue behind each other's disk waits.
+file_many_tasks! = || {
+	results =
+		Task.scope!(|scope| {
+			var $handles = []
+			var $i = 0
+			while $i < 20 {
+				i : U64
+				i = $i
+				$i = $i + 1
+				handle = scope.spawn!(|| {
+					path = temp_path!("task-${i.to_str()}")
+					File.write_utf8!(path, "task ${i.to_str()}")?
+					text = File.read_utf8!(path)?
+					File.delete!(path)?
+					Ok(text)
+				})?
+				$handles = List.append($handles, handle)
+			}
+			var $texts = []
+			for handle in $handles {
+				$texts = List.append($texts, handle.join!()?)
+			}
+			Ok($texts)
+		})?
+	expect_eq((List.len(results), List.first(results), List.last(results)), (20, Ok("task 0"), Ok("task 19")))
+}
+
+env_var! = || {
+	path = Env.var!("PATH")?
+	expect_eq(
+		(Str.is_empty(path), Env.var!("ROC_NET_TEST_SURELY_UNSET"), Env.var!(""), Env.var!("A=B")),
+		(False, Err(VarNotFound("ROC_NET_TEST_SURELY_UNSET")), Err(VarNotFound("")), Err(VarNotFound("A=B"))),
+	)
+}
+
+## A result as text, for comparing results whose errors can't be compared
+## with `==` (like `IOErr`).
+shown = |result|
+	match result {
+		Ok(_) => "Ok"
+		Err(err) => "Err(${Str.inspect(err)})"
+	}

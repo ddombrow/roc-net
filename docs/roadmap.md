@@ -335,7 +335,7 @@ besides the chat:
   it, for "a helper task as long as this block runs" (a proxy's writer, a
   heartbeat). `scope!` still only cancels on its own when the body fails.
 
-## 0.5.0: Files, terminal input, and Select on Noise (plan)
+## 0.5.0: Files, terminal input, and Select on Noise (in progress)
 
 Driven by the chat example, justified without it (see the table above):
 
@@ -344,12 +344,14 @@ Driven by the chat example, justified without it (see the table above):
   libp2p (yamux over Noise), servers that wait on a Noise connection, timers
   and channels at once. Today that takes a task per direction.
 - Environment variables (`Env.var!`): configuration and secrets for any
-  server or CLI tool, beside `File`.
-
+  server or CLI tool, beside `File`. Done.
 - `File`: read and write whole files, append, create with owner-only
   permissions (for keys), and rename for atomic replacement; errors like
   `IOErr`. Blocking file I/O runs off the task workers, as `Stdin` and DNS
-  lookups do (`sched::blocking`), so it can't stall them.
+  lookups do (`sched::blocking`), so it can't stall them. Done:
+  `write_new!` (create only if absent, with a mode) and `write_atomic!`
+  (temporary file, flushed, renamed). Not yet: directories (listing,
+  creating), file metadata, and streaming reads of large files.
 - stdin in `Select`: an arm for the next line from stdin (or stdin as a
   stream), so a program can wait for the terminal and the network in one
   loop.
