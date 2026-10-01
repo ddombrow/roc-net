@@ -223,6 +223,9 @@ Host := [].{
 
 	group_new! : {} => Try(TaskGroup, [TaskLimitReached])
 	group_add! : TaskGroup, TaskHandle => {}
+	## Cancel the group's unfinished tasks, leaving them in the group (so
+	## `group_close!` still waits for them).
+	group_cancel! : TaskGroup => {}
 
 	## Wait for every task in the group to finish, cancelling the unfinished
 	## ones first if `cancel` is True. The wait itself can't be cancelled.

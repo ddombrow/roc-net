@@ -27,6 +27,52 @@
 ## They fail with `TooShort` if the bytes they need run past the end.
 Bytes := [].{
 
+	## The bytes as lowercase hexadecimal, two digits each: `[0x0a, 0xff]` is
+	## `"0aff"`.
+	to_hex : List(U8) -> Str
+	to_hex = |bytes| {
+		digits = Str.to_utf8("0123456789abcdef")
+		Str.from_utf8_lossy(List.join(List.map(bytes, |b| [List.get(digits, (b // 16).to_u64()) ?? 48, List.get(digits, (b % 16).to_u64()) ?? 48])))
+	}
+
+	## Bytes from hexadecimal, two digits each, upper- or lowercase.
+	## `InvalidHex` gives the index of the first character that isn't a hex
+	## digit (or the length, for an odd number of digits).
+	from_hex : Str -> Try(List(U8), [InvalidHex({ index : U64 })])
+	from_hex = |text| {
+		chars = Str.to_utf8(text)
+		digit = |c|
+			if c >= 48 and c <= 57 {
+				Ok(c - 48)
+			} else if c >= 97 and c <= 102 {
+				Ok(c - 87)
+			} else if c >= 65 and c <= 70 {
+				Ok(c - 55)
+			} else {
+				Err({})
+			}
+		if List.len(chars) % 2 != 0 {
+			return Err(InvalidHex({ index: List.len(chars) }))
+		}
+		var $out = List.with_capacity(List.len(chars) // 2)
+		var $i = 0
+		while $i < List.len(chars) {
+			high =
+				match digit(List.get(chars, $i) ?? 0) {
+					Ok(d) => d
+					Err(_) => return Err(InvalidHex({ index: $i }))
+				}
+			low =
+				match digit(List.get(chars, $i + 1) ?? 0) {
+					Ok(d) => d
+					Err(_) => return Err(InvalidHex({ index: $i + 1 }))
+				}
+			$out = List.append($out, high * 16 + low)
+			$i = $i + 2
+		}
+		Ok($out)
+	}
+
 	## Encode as 2 big-endian bytes.
 	u16_be : U16 -> List(U8)
 	u16_be = |n| [(n // 256).to_u8_wrap(), (n % 256).to_u8_wrap()]

@@ -301,6 +301,19 @@ pub extern "C" fn roc_group_add(group: *mut u64, handle: *mut u64) {
     });
 }
 
+/// Hosted function: Host.group_cancel!
+#[no_mangle]
+pub extern "C" fn roc_group_cancel(group: *mut u64) {
+    with_obj(group, |obj| {
+        if let Some(TaskObj::Group(tasks)) = obj {
+            let tasks = tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            for task in tasks.iter().filter(|task| !task.is_finished()) {
+                task.cancel();
+            }
+        }
+    })
+}
+
 /// Hosted function: Host.group_close!
 #[no_mangle]
 pub extern "C" fn roc_group_close(group: *mut u64, cancel: bool) {

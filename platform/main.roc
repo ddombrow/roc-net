@@ -67,6 +67,7 @@ platform ""
 		"roc_task_yield": Host.task_yield!,
 		"roc_group_new": Host.group_new!,
 		"roc_group_add": Host.group_add!,
+		"roc_group_cancel": Host.group_cancel!,
 		"roc_group_close": Host.group_close!,
 		"roc_channel_close": Host.channel_close!,
 		"roc_select_wait": Host.select_wait!,

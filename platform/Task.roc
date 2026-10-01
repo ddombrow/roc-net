@@ -63,6 +63,25 @@ Task := [].{
 			Host.group_add!(group, task)
 			Ok(Handle.(task))
 		}
+
+		## Cancel the scope's tasks that are still running (see "Cancelling"
+		## above), without leaving the scope: `scope!` still waits for them to
+		## finish when its body returns. For helper tasks that should last only
+		## as long as the body, such as a connection's writer while the body
+		## reads:
+		##
+		## ```roc
+		## Task.scope!(|scope| {
+		##     _ = scope.spawn!(|| write_loop!(stream, outbox))?
+		##     result = read_loop!(stream)
+		##     # Otherwise the scope would wait for the writer, which may be
+		##     # waiting for a message that never comes.
+		##     scope.cancel_all!()
+		##     result
+		## })
+		## ```
+		cancel_all! : Scope => {}
+		cancel_all! = |Scope.(group)| Host.group_cancel!(group)
 	}
 
 	## Run `task!` concurrently, returning a handle for its result.
@@ -94,7 +113,8 @@ Task := [].{
 	## })
 	## ```
 	##
-	## Only `body!`'s result decides whether the others are cancelled. A task
+	## Only `body!`'s result decides whether the others are cancelled (or
+	## `scope.cancel_all!()`, which the body can call itself). A task
 	## in the scope that fails just ends: the rest keep running, and the
 	## scope still waits for them. Its error goes wherever it would for any
 	## task: to whoever joins its handle, or, if every handle is released

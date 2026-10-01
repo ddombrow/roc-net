@@ -123,7 +123,8 @@ Noise := [].{
 
 	## One direction's encryption after the handshake (specification §5.1):
 	## a key and a message counter, used as the nonce. Messages must be
-	## decrypted in the order they were encrypted.
+	## decrypted in the order they were encrypted, unless the transport
+	## carries each message's nonce: then `with_nonce` sets it first.
 	CipherState :: { cipher : Cipher, key : List(U8), nonce : U64 }.{
 
 		## `plaintext` encrypted (with a 16-byte tag), and the state for the
@@ -147,6 +148,19 @@ Noise := [].{
 				plaintext = open!(c.cipher, c.key, c.nonce, associated_data, ciphertext)?
 				Ok((plaintext, CipherState.({ ..c, nonce: c.nonce + 1 })))
 			}
+
+		## The nonce the next `encrypt!` or `decrypt!` will use.
+		nonce : CipherState -> U64
+		nonce = |CipherState.(c)| c.nonce
+
+		## The state with its nonce set to `n` (the specification's
+		## `SetNonce`), for transports that can lose or reorder messages
+		## (§11.4): send each message's nonce with it, and set it before
+		## decrypting. Never encrypt twice with the same nonce, and keep
+		## track of the nonces already accepted (a replay window) yourself:
+		## this doesn't.
+		with_nonce : CipherState, U64 -> CipherState
+		with_nonce = |CipherState.(c), n| CipherState.({ ..c, nonce: n })
 
 		## The key, cipher and next nonce, for moving the state into the
 		## host (`Noise.Stream`).
