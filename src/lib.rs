@@ -3,7 +3,7 @@
 //! This host provides memory management and I/O effects for Roc programs.
 
 use std::ffi::c_void;
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 use std::mem::ManuallyDrop;
 
 mod channels;
@@ -23,6 +23,7 @@ mod noise;
 mod random;
 mod resolve;
 mod sched;
+mod stdin;
 mod select;
 
 use crate::roc_platform_abi::{
@@ -142,20 +143,23 @@ pub extern "C" fn roc_stderr_line(message: RocStr) -> HostStderrLineResult {
 /// Hosted function: Host.stdin_line!
 #[no_mangle]
 pub extern "C" fn roc_stdin_line() -> HostStdinLineResult {
-    // On a helper thread, so waiting for input doesn't stall the other
-    // tasks on this worker.
-    let read = sched::blocking(None, || {
-        let mut line = String::new();
-        io::stdin().lock().read_line(&mut line).map(|_| line)
-    })
-    .and_then(|line| line.expect("no deadline"));
+    // From the shared reader (src/stdin.rs), so waiting for input doesn't
+    // stall the other tasks on this worker. The end of input is "".
+    let read = match stdin::next_line() {
+        stdin::Line::Text(line) => Ok(line),
+        stdin::Line::End => Ok(String::new()),
+        stdin::Line::TooLong => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("line too long (over {} bytes); skipped", stdin::MAX_LINE),
+        )),
+        stdin::Line::Failed(err) => Err(err),
+    };
 
     match read {
         Ok(line) => {
-            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
             HostStdinLineResult {
                 payload: HostStdinLineResultPayload {
-                    ok: ManuallyDrop::new(RocStr::from_str(trimmed, roc_host())),
+                    ok: ManuallyDrop::new(RocStr::from_str(&line, roc_host())),
                 },
                 tag: HostStdinLineResultTag::Ok,
             }
@@ -169,22 +173,31 @@ pub extern "C" fn roc_stdin_line() -> HostStdinLineResult {
 
 /// Hosted function: Host.stdin_read_line!
 #[no_mangle]
-pub extern "C" fn roc_stdin_read_line() -> roc_platform_abi::EndOrFailedOrLine {
-    use roc_platform_abi::{EndOrFailedOrLine as Out, EndOrFailedOrLinePayload as P, EndOrFailedOrLineTag as T};
-    // On a helper thread, as `stdin_line!`; `None` at the end of input.
-    let read = sched::blocking(None, || {
-        let mut line = String::new();
-        io::stdin().lock().read_line(&mut line).map(|n| (n > 0).then_some(line))
-    })
-    .and_then(|line| line.expect("no deadline"));
-    match read {
-        Ok(Some(line)) => {
-            let text = line.strip_suffix('\n').unwrap_or(&line);
-            let text = text.strip_suffix('\r').unwrap_or(text);
-            Out { payload: P { line: ManuallyDrop::new(RocStr::from_str(text, roc_host())) }, tag: T::Line }
-        }
-        Ok(None) => Out { payload: P { end: [] }, tag: T::End },
-        Err(err) => Out { payload: P { failed: err_str(err) }, tag: T::Failed },
+pub extern "C" fn roc_stdin_read_line() -> roc_platform_abi::EndOrFailedOrLineOrTooLong {
+    use roc_platform_abi::{
+        EndOrFailedOrLineOrTooLong as Out, EndOrFailedOrLineOrTooLongPayload as P, EndOrFailedOrLineOrTooLongTag as T,
+    };
+    match stdin::next_line() {
+        stdin::Line::Text(line) => Out { payload: P { line: ManuallyDrop::new(RocStr::from_str(&line, roc_host())) }, tag: T::Line },
+        stdin::Line::End => Out { payload: P { end: [] }, tag: T::End },
+        stdin::Line::TooLong => Out { payload: P { too_long: [] }, tag: T::TooLong },
+        stdin::Line::Failed(err) => Out { payload: P { failed: err_str(err) }, tag: T::Failed },
+    }
+}
+
+/// Hosted function: Host.stdin_try_line!
+#[no_mangle]
+pub extern "C" fn roc_stdin_try_line() -> roc_platform_abi::EndOrFailedOrLineOrNotReadyOrTooLong {
+    use roc_platform_abi::{
+        EndOrFailedOrLineOrNotReadyOrTooLong as Out, EndOrFailedOrLineOrNotReadyOrTooLongPayload as P,
+        EndOrFailedOrLineOrNotReadyOrTooLongTag as T,
+    };
+    match stdin::try_line() {
+        None => Out { payload: P { not_ready: [] }, tag: T::NotReady },
+        Some(stdin::Line::Text(line)) => Out { payload: P { line: ManuallyDrop::new(RocStr::from_str(&line, roc_host())) }, tag: T::Line },
+        Some(stdin::Line::End) => Out { payload: P { end: [] }, tag: T::End },
+        Some(stdin::Line::TooLong) => Out { payload: P { too_long: [] }, tag: T::TooLong },
+        Some(stdin::Line::Failed(err)) => Out { payload: P { failed: err_str(err) }, tag: T::Failed },
     }
 }
 

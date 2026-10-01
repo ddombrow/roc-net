@@ -10,7 +10,6 @@ use std::io::{self, Write};
 use std::mem::ManuallyDrop;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::net::{FromNetErr, NetErr};
 use crate::roc_host;
@@ -69,24 +68,22 @@ pub extern "C" fn roc_file_write(path: RocStr, bytes: RocListWith<u8, false>, ho
     let data = bytes.as_slice().to_vec();
     unsafe { bytes.decref(roc_host()) };
     unit_result(off_thread(move || match how {
+        2 => write_new(&path, &data, mode),
         3 => write_atomic(&path, &data, mode),
         _ => {
             let mut options = OpenOptions::new();
             options.write(true).mode(mode);
             match how {
                 0 => options.create(true).truncate(true),
-                1 => options.create(true).append(true),
-                _ => options.create_new(true),
+                _ => options.create(true).append(true),
             };
             options.open(&path)?.write_all(&data)
         }
     }))
 }
 
-/// Write `data` to a new temporary file beside `path`, flush it to disk,
-/// rename it over `path`, then flush the directory so the rename lasts too.
-fn write_atomic(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
+/// The directory `path` is in, and its file name.
+fn split(path: &Path) -> io::Result<(&Path, &std::ffi::OsStr)> {
     let name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?;
@@ -94,30 +91,90 @@ fn write_atomic(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
         _ => Path::new("."),
     };
-    // Unique within this process by the counter, and between processes by
-    // the process id; `create_new` refuses anything already there.
-    let temp = dir.join(format!(
-        ".{}.{}-{}.tmp",
-        name.to_string_lossy(),
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = (|| {
-        let mut file = OpenOptions::new().write(true).create_new(true).mode(mode).open(&temp)?;
-        file.write_all(data)?;
-        file.sync_all()?;
-        fs::rename(&temp, path)
-    })();
-    if written.is_err() {
+    Ok((dir, name))
+}
+
+/// Write `data` to a new temporary file beside `path` with permissions
+/// `mode`, flushed to disk, and return its path. The name has a random part,
+/// so one left behind by a program that stopped partway (perhaps with the
+/// same process id, as a container's first process always has) can't get in
+/// the way; a collision anyway just tries another name.
+fn write_temp(path: &Path, data: &[u8], mode: u32) -> io::Result<PathBuf> {
+    let (dir, name) = split(path)?;
+    let mut attempt = 0;
+    loop {
+        let mut random = [0u8; 8];
+        aws_lc_rs::rand::fill(&mut random).map_err(|_| io::Error::other("the secure random generator failed"))?;
+        let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
+        let temp = dir.join(format!(".{}.{suffix}.tmp", name.to_string_lossy()));
+        let mut file = match OpenOptions::new().write(true).create_new(true).mode(mode).open(&temp) {
+            Ok(file) => file,
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists && attempt < 8 => {
+                attempt += 1;
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        let written = file.write_all(data).and_then(|()| file.sync_all());
+        if let Err(err) = written {
+            let _ = fs::remove_file(&temp);
+            return Err(err);
+        }
+        return Ok(temp);
+    }
+}
+
+/// Flush `path`'s directory, so a new name in it lasts too. Not every file
+/// system can; the file is in place either way.
+fn sync_dir(path: &Path) {
+    if let Ok((dir, _)) = split(path) {
+        if let Ok(dir) = fs::File::open(dir) {
+            let _ = dir.sync_all();
+        }
+    }
+}
+
+/// Replace `path` with `data`: a temporary file, flushed, renamed over it.
+fn write_atomic(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
+    let temp = write_temp(path, data, mode)?;
+    if let Err(err) = fs::rename(&temp, path) {
         let _ = fs::remove_file(&temp);
+        return Err(err);
     }
-    written?;
-    // Not every file system can flush a directory; the file is in place
-    // either way.
-    if let Ok(dir) = fs::File::open(dir) {
-        let _ = dir.sync_all();
-    }
+    sync_dir(path);
     Ok(())
+}
+
+/// Create `path` with `data` only if nothing is there: a temporary file,
+/// flushed, then hard-linked to `path` (which fails with `AlreadyExists` if
+/// something is), so `path` never appears empty or cut short.
+///
+/// On a file system without hard links (FAT, exFAT, some network shares),
+/// it creates `path` directly instead, removing it again if writing fails;
+/// there, a crash partway can leave it incomplete.
+fn write_new(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
+    let temp = write_temp(path, data, mode)?;
+    let linked = fs::hard_link(&temp, path);
+    let _ = fs::remove_file(&temp);
+    match linked {
+        Ok(()) => {}
+        Err(err) if no_hard_links(&err) => {
+            let mut file = OpenOptions::new().write(true).create_new(true).mode(mode).open(path)?;
+            if let Err(err) = file.write_all(data).and_then(|()| file.sync_all()) {
+                let _ = fs::remove_file(path);
+                return Err(err);
+            }
+        }
+        Err(err) => return Err(err),
+    }
+    sync_dir(path);
+    Ok(())
+}
+
+/// Whether `link` failed because the file system has no hard links.
+fn no_hard_links(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::Unsupported
+        || matches!(err.raw_os_error(), Some(code) if code == libc::EPERM || code == libc::ENOTSUP || code == libc::EOPNOTSUPP || code == libc::ENOSYS)
 }
 
 /// Hosted function: Host.file_rename!

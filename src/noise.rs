@@ -11,19 +11,28 @@
 //! worker), and their own cipher state, so one task can read while another
 //! writes. The std mutexes around the cipher states are only held to
 //! encrypt or decrypt, never across a socket wait.
+//!
+//! Ciphertext read from the socket is kept until it makes a whole message,
+//! so a read can stop partway through one (a timeout, or `Select` finding
+//! only part of it arrived) and the next carries on from there.
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::sync::{Mutex, MutexGuard};
+use std::time::Instant;
 
 use aws_lc_rs::aead;
 
-use crate::sched::Lock;
-use crate::sockets::Conn;
+use crate::sched::{Lock, LockGuard, TaskWaker, Waiters};
+use crate::sockets::{with_scratch, Conn};
 
 /// The most a transport message holds: the frame limit less the tag.
 const MAX_PLAINTEXT: usize = 65535 - 16;
+
+/// Most ciphertext to ask the socket for at once: a whole message and its
+/// length (with more, the rest waits for the next read).
+const READ_CHUNK: usize = 65535 + 2;
 
 /// The connection underneath.
 pub enum Wire {
@@ -32,10 +41,46 @@ pub enum Wire {
 }
 
 impl Wire {
-    fn read_some(&self, buf: &mut [u8]) -> io::Result<usize> {
+    /// Read what has arrived, waiting for something until `deadline` (or the
+    /// read timeout, whichever is first), into `got`.
+    fn read_by(&self, deadline: Option<Instant>, got: &mut Vec<u8>) -> io::Result<usize> {
+        fn read<S>(c: &Conn<S>, deadline: Option<Instant>, got: &mut Vec<u8>) -> io::Result<usize>
+        where
+            S: std::os::fd::AsRawFd,
+            for<'a> &'a S: Read,
+        {
+            let deadline = crate::sockets::earliest(c.read_deadline(), deadline);
+            c.retry(false, deadline, |s| {
+                with_scratch(READ_CHUNK, |buf| {
+                    let n = (&mut &*s).read(buf)?;
+                    got.extend_from_slice(&buf[..n]);
+                    Ok(n)
+                })
+            })
+        }
         match self {
-            Wire::Tcp(c) => c.read_with(|s| (&mut &*s).read(buf)),
-            Wire::Unix(c) => c.read_with(|s| (&mut &*s).read(buf)),
+            Wire::Tcp(c) => read(c, deadline, got),
+            Wire::Unix(c) => read(c, deadline, got),
+        }
+    }
+
+    /// Read what has arrived into `got` without waiting: `None` if nothing has.
+    fn read_now(&self, got: &mut Vec<u8>) -> io::Result<Option<usize>> {
+        loop {
+            let read: io::Result<usize> = with_scratch(READ_CHUNK, |buf| {
+                let n = match self {
+                    Wire::Tcp(c) => (&mut &c.io).read(buf),
+                    Wire::Unix(c) => (&mut &c.io).read(buf),
+                }?;
+                got.extend_from_slice(&buf[..n]);
+                Ok(n)
+            });
+            match read {
+                Ok(n) => return Ok(Some(n)),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(err) => return Err(err),
+            }
         }
     }
 
@@ -134,6 +179,78 @@ struct Received {
     /// Plaintext from the last message that a read hasn't taken yet.
     plain: Vec<u8>,
     taken: usize,
+    /// Ciphertext from the socket not yet decrypted: part of a message, or
+    /// whole ones (with the start of the next) read along with the last.
+    ciphertext: Vec<u8>,
+    /// The socket has reached its end.
+    ended: bool,
+    /// A message failed to authenticate: every later read fails the same
+    /// way. Carrying on would skip the bad message (its nonce is used up),
+    /// so the next one would decrypt and the loss would go unnoticed.
+    failed: bool,
+}
+
+fn not_authentic() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "Noise: a message failed to authenticate")
+}
+
+impl Received {
+    /// Up to `max` bytes of the plaintext left over, if there is any.
+    fn take(&mut self, max: usize) -> Option<Vec<u8>> {
+        if self.taken >= self.plain.len() {
+            return None;
+        }
+        let start = self.taken;
+        let end = (start + max).min(self.plain.len());
+        self.taken = end;
+        Some(self.plain[start..end].to_vec())
+    }
+
+    /// The length of the whole message at the front of `ciphertext`, if one
+    /// has arrived.
+    fn whole_message(&self) -> Option<usize> {
+        let header: [u8; 2] = self.ciphertext.get(..2)?.try_into().ok()?;
+        let len = u16::from_be_bytes(header) as usize;
+        (self.ciphertext.len() >= 2 + len).then_some(len)
+    }
+
+    /// Whether a read would return without waiting: plaintext, a message to
+    /// decrypt, or the end.
+    fn readable(&self) -> bool {
+        self.taken < self.plain.len() || self.whole_message().is_some() || self.ended || self.failed
+    }
+
+    /// What a read returns without waiting: plaintext, decrypting messages
+    /// that have arrived as needed (skipping empty ones, which can't look
+    /// like the end); empty at the end of the stream; `None` if it must wait
+    /// for more ciphertext.
+    fn next(&mut self, max: usize) -> io::Result<Option<Vec<u8>>> {
+        if self.failed {
+            return Err(not_authentic());
+        }
+        loop {
+            if let Some(bytes) = self.take(max) {
+                return Ok(Some(bytes));
+            }
+            let Some(len) = self.whole_message() else {
+                if !self.ended {
+                    return Ok(None);
+                }
+                if self.ciphertext.is_empty() {
+                    return Ok(Some(Vec::new()));
+                }
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Noise: the stream ended partway through a message"));
+            };
+            let mut message: Vec<u8> = self.ciphertext.drain(..2 + len).skip(2).collect();
+            let nonce = self.cipher.next_nonce()?;
+            let Ok(plain) = self.cipher.key.open_in_place(nonce, aead::Aad::empty(), &mut message) else {
+                self.failed = true;
+                return Err(not_authentic());
+            };
+            self.plain = plain.to_vec();
+            self.taken = 0;
+        }
+    }
 }
 
 pub struct NoiseStream {
@@ -142,6 +259,56 @@ pub struct NoiseStream {
     write_lock: Lock,
     send: Mutex<CipherState>,
     receive: Mutex<Received>,
+    /// `Select`s waiting on this stream for something the socket won't show:
+    /// another reader releasing the read lock, perhaps leaving plaintext or
+    /// whole messages behind. Woken at lock releases (see [`Reading`]).
+    watchers: Mutex<Waiters>,
+}
+
+/// The held read lock; releasing it wakes the stream's `Select` watchers.
+///
+/// If the holder only found the socket empty with nothing buffered
+/// ([`Reading::idle`]), it wakes just the watchers that started waiting during the hold. Those tried to poll
+/// while it was held, so they never looked at the socket themselves, and
+/// data may have arrived (its edge event going to nobody) before they
+/// started waiting. The earlier watchers saw the socket empty themselves,
+/// and wait on it. (Waking those too made two `Select`s on one idle stream
+/// wake each other in a loop.)
+struct Reading<'a> {
+    guard: Option<LockGuard<'a>>,
+    watchers: &'a Mutex<Waiters>,
+    /// The first watcher id given out during the hold.
+    first: u64,
+    idle: bool,
+}
+
+impl Reading<'_> {
+    /// Nothing for the earlier watchers came of this hold: the socket would
+    /// block and nothing whole is buffered.
+    fn idle(&mut self) {
+        self.idle = true;
+    }
+}
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        // Release first: a watcher woken before it would find it still held.
+        drop(self.guard.take());
+        let mut watchers = lock(self.watchers);
+        if self.idle {
+            watchers.wake_from(self.first);
+        } else {
+            watchers.wake_all();
+        }
+    }
+}
+
+/// Whether a `Select` must wait for a Noise stream (see [`NoiseStream::watch`]).
+pub enum Watch {
+    /// A poll would find something now.
+    Ready,
+    /// Registered under this id (remove with [`NoiseStream::unwatch`]).
+    Waiting(u64),
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -162,70 +329,114 @@ impl NoiseStream {
                 cipher: CipherState::new(cipher, receive.0, receive.1).ok_or_else(bad)?,
                 plain: Vec::new(),
                 taken: 0,
+                ciphertext: Vec::new(),
+                ended: false,
+                failed: false,
             }),
+            watchers: Mutex::new(Waiters::new()),
         })
+    }
+
+    // The first watcher id is read before the lock is taken: a watcher
+    // arriving in between is woken too, which is harmless; one arriving
+    // once the lock is held mustn't be missed.
+
+    fn lock_read(&self) -> Reading<'_> {
+        let first = lock(&self.watchers).next_id();
+        Reading { guard: Some(self.read_lock.lock()), watchers: &self.watchers, first, idle: false }
+    }
+
+    fn try_lock_read(&self) -> Option<Reading<'_>> {
+        let first = lock(&self.watchers).next_id();
+        self.read_lock
+            .try_lock()
+            .map(|guard| Reading { guard: Some(guard), watchers: &self.watchers, first, idle: false })
+    }
+
+    /// Read more ciphertext, waiting until `deadline` at the latest (as well
+    /// as the read timeout). Holding the read lock.
+    fn receive_more(&self, deadline: Option<Instant>) -> io::Result<()> {
+        let mut got = Vec::new();
+        let n = self.wire.read_by(deadline, &mut got)?;
+        let mut received = lock(&self.receive);
+        received.ciphertext.extend_from_slice(&got);
+        received.ended |= n == 0;
+        Ok(())
     }
 
     pub fn wire(&self) -> &Wire {
         &self.wire
     }
 
-    /// Read exactly `buf.len()` bytes; `Ok(false)` if the stream ended before
-    /// the first, `UnexpectedEof` if it ended partway.
-    fn read_exact_or_end(&self, buf: &mut [u8]) -> io::Result<bool> {
-        let mut filled = 0;
-        while filled < buf.len() {
-            let n = self.wire.read_some(&mut buf[filled..])?;
-            if n == 0 {
-                if filled == 0 {
-                    return Ok(false);
-                }
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Noise: the stream ended partway through a message"));
-            }
-            filled += n;
-        }
-        Ok(true)
-    }
-
     /// Up to `max` bytes of plaintext, reading and decrypting the next
     /// message if none is left over; empty once the stream has ended.
-    /// (Empty messages are skipped, so they can't look like the end.)
     ///
     /// A clean end at a message boundary can't be told from one an attacker
     /// forced by cutting the connection: Noise has no closing message, so a
     /// protocol that needs to know it got everything must say so itself.
     pub fn read(&self, max: usize) -> io::Result<Vec<u8>> {
-        let _r = self.read_lock.lock();
+        let _r = self.lock_read();
         loop {
-            {
-                let mut received = lock(&self.receive);
-                if received.taken < received.plain.len() {
-                    let start = received.taken;
-                    let end = (start + max).min(received.plain.len());
-                    received.taken = end;
-                    return Ok(received.plain[start..end].to_vec());
-                }
+            if let Some(bytes) = lock(&self.receive).next(max)? {
+                return Ok(bytes);
             }
-            let mut header = [0u8; 2];
-            if !self.read_exact_or_end(&mut header)? {
-                return Ok(Vec::new());
-            }
-            let len = u16::from_be_bytes(header) as usize;
-            let mut message = vec![0u8; len];
-            if !self.read_exact_or_end(&mut message)? && len > 0 {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Noise: the stream ended partway through a message"));
-            }
-            let mut received = lock(&self.receive);
-            let nonce = received.cipher.next_nonce()?;
-            let plain = received
-                .cipher
-                .key
-                .open_in_place(nonce, aead::Aad::empty(), &mut message)
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Noise: a message failed to authenticate"))?
-                .to_vec();
-            received.plain = plain;
-            received.taken = 0;
+            self.receive_more(None)?;
         }
+    }
+
+    /// `read`, without waiting, for `Select`: `None` if it would have to
+    /// (nothing whole has arrived, or another task is reading).
+    pub fn try_read(&self, max: usize) -> io::Result<Option<Vec<u8>>> {
+        let Some(mut reading) = self.try_lock_read() else { return Ok(None) };
+        loop {
+            if let Some(bytes) = lock(&self.receive).next(max)? {
+                return Ok(Some(bytes));
+            }
+            let mut got = Vec::new();
+            let Some(n) = self.wire.read_now(&mut got)? else {
+                reading.idle();
+                return Ok(None);
+            };
+            let mut received = lock(&self.receive);
+            received.ciphertext.extend_from_slice(&got);
+            received.ended |= n == 0;
+        }
+    }
+
+    /// Wait until a `try_read` may find something (plaintext, the end, or an
+    /// error), until `by` at the latest as well as the read timeout, for a
+    /// copy. Returns at once if it already would.
+    pub fn fill_by(&self, by: Option<Instant>) -> io::Result<()> {
+        let _r = self.lock_read();
+        loop {
+            if lock(&self.receive).readable() {
+                return Ok(());
+            }
+            self.receive_more(by)?;
+        }
+    }
+
+    /// For a `Select` whose poll of this stream found nothing: register
+    /// `waker` for read lock releases, then check (after registering, so a
+    /// release in between isn't missed) whether a poll would now find
+    /// something the socket won't announce: something buffered, or data on
+    /// the socket that this `Select`'s poll didn't get to read (another task
+    /// held the lock then) and whose event may have gone to nobody.
+    pub fn watch(&self, waker: &TaskWaker) -> Watch {
+        let id = lock(&self.watchers).add_waker(waker.clone());
+        // Held: its release wakes this watcher, which arrived during the hold.
+        if self.read_lock.is_locked() {
+            return Watch::Waiting(id);
+        }
+        if lock(&self.receive).readable() || crate::sockets::readable_now(self.wire.io_parts().0) {
+            self.unwatch(id);
+            return Watch::Ready;
+        }
+        Watch::Waiting(id)
+    }
+
+    pub fn unwatch(&self, id: u64) {
+        lock(&self.watchers).remove(id);
     }
 
     /// Encrypt and send all of `data`, as one message or (past 65,519 bytes)

@@ -601,9 +601,7 @@ fn read_now(socket: &Socket, max: u64) -> NetResult<Option<RocListWith<u8, false
                 break None;
             }
         },
-        Socket::Noise(_) => {
-            return Err(NetErr::Io(io::Error::new(io::ErrorKind::Unsupported, "Select doesn't support Noise streams yet")))
-        }
+        Socket::Noise(s) => s.try_read(max)?.map(|bytes| roc_bytes(&bytes)),
         _ => return Err(wrong_kind("read")),
     })
 }

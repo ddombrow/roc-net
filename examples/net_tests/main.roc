@@ -175,8 +175,15 @@ main! = |_args| {
 		check!("noise: a flipped byte in transit fails to authenticate", noise_tampered!),
 		check!("noise: over a unix socket", noise_unix!),
 		check!("bytes: hex both ways, and its errors", bytes_hex!),
+		check!("random: bytes! gives up to 16 MiB, and refuses more", random_bytes_limit!),
 		check!("noise: CipherState.with_nonce decrypts out of order", noise_with_nonce!),
 		check!("scope: cancel_all! stops a helper the body no longer needs", scope_cancel_all!),
+		check!("noise: Select waits for a whole message, kept across waits", noise_select_partial!),
+		check!("noise: one task selects on a Noise reader and a channel", noise_select_with_channel!),
+		check!("noise: Pipe.copy_both! between a Noise and a plain stream", noise_pipe!),
+		check!("noise: after a message fails to authenticate, reads keep failing", noise_stays_failed!),
+		check!("noise: two Select readers share a stream; every byte arrives", noise_shared_readers!),
+		check!("tls: two Select readers share a stream; every byte arrives", tls_shared_readers!),
 		check!("file: write, read, append, replace, delete", file_round_trip!),
 		check!("file: write_new! refuses an existing file", file_write_new!),
 		check!("file: write_atomic! replaces, and creates", file_write_atomic!),
@@ -656,8 +663,8 @@ bytes_offsets! = || {
 }
 
 random_bytes! = || {
-	a = Random.bytes!(16)
-	b = Random.bytes!(16)
+	a = Random.bytes!(16)?
+	b = Random.bytes!(16)?
 	expect_eq(List.len(a), 16)?
 	# Equal by chance with probability 2^-128.
 	if a == b Err(Unexpected("two random draws were equal")) else Ok({})
@@ -3270,7 +3277,7 @@ crypto_misc! = || {
 	# Secret keys have no `==` (on purpose), so match the error.
 	short =
 		# From random bytes, so the compiler can't settle it in advance.
-		match C.X25519.secret_key_from_bytes(Random.bytes!(3)) {
+		match C.X25519.secret_key_from_bytes(Random.bytes!(3)?) {
 			Err(WrongLength(lengths)) => Err(WrongLength(lengths))
 			Ok(_) => Ok({})
 		}
@@ -3463,7 +3470,7 @@ noise_unix! = || {
 }
 
 bytes_hex! = || {
-	random = Random.bytes!(32)
+	random = Random.bytes!(32)?
 	odd = Bytes.from_hex("abc")
 	bad = Bytes.from_hex("0g")
 	expect_eq(
@@ -3526,7 +3533,7 @@ scope_cancel_all! = || {
 temp_path! = |label| {
 	dir = Env.var!("TMPDIR") ?? "/tmp"
 	base = if Str.ends_with(dir, "/") dir else "${dir}/"
-	"${base}roc-net-test-${label}-${Bytes.to_hex(Random.bytes!(8))}"
+	"${base}roc-net-test-${label}-${Bytes.to_hex(Bytes.u64_be(Random.u64!()))}"
 }
 
 file_round_trip! = || {
@@ -3647,3 +3654,232 @@ shown = |result|
 		Ok(_) => "Ok"
 		Err(err) => "Err(${Str.inspect(err)})"
 	}
+
+## An NN initiator over a plain TCP stream through the sans-I/O layer, so a
+## test controls exactly when each byte of a transport message goes out.
+## Returns the sending cipher state.
+raw_nn_initiator! = |tcp| {
+	first = Noise.start!(Noise.config(NN, Initiator))?
+	(m1, second) = first.write_message!([])?
+	tcp.write!(List.concat(Bytes.u16_be(List.len(m1).to_u16_wrap()), m1))?
+	(header, reader) = Framing.reader(tcp).read_exactly!(2)?
+	len = Bytes.u16_be_at(header, 0)?
+	(m2, _) = reader.read_exactly!(len.to_u64())?
+	(_, done) = second.read_message!(m2)?
+	Ok(done.finish()?.send)
+}
+
+## An NN responder's `Noise.Stream`, from the next connection on `listener`.
+noise_accept! = |listener| {
+	(streams_tx, streams) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		tcp = listener.accept!()?
+		tcp.set_read_timeout!(Millis(5000))?
+		done = Noise.handshake!(tcp, Noise.config(NN, Responder), [])?
+		streams_tx.send!(done.stream)?
+		Ok({})
+	})?
+	Ok(streams)
+}
+
+noise_select_partial! = || {
+	(listener, address) = listen_anywhere!()?
+	streams = noise_accept!(listener)?
+	tcp = Tcp.connect!(address)?
+	send = raw_nn_initiator!(tcp)?
+	server = streams.receive_timeout!(Time.seconds(5))?
+	(sealed, _) = send.encrypt!([], Str.to_utf8("whole"))?
+	frame = List.concat(Bytes.u16_be(List.len(sealed).to_u16_wrap()), sealed)
+	wait! = ||
+		match Select.new({}).on_read(server, 100, |result| Read(result)).on_timeout(Time.millis(100), || Nothing).wait!()? {
+			Nothing => Ok("nothing")
+			Read(Ok(bytes)) => Ok(Str.from_utf8_lossy(bytes))
+			Read(Err(err)) => Ok(Str.inspect(err))
+		}
+	before = wait!()?
+	tcp.write!(List.take_first(frame, 5))?
+	partway = wait!()?
+	tcp.write!(List.drop_first(frame, 5))?
+	after = wait!()?
+	expect_eq((before, partway, after), ("nothing", "nothing", "whole"))
+}
+
+# The relay's shape: one task, a Select over the connection's lines and an
+# outbox, instead of a task per direction.
+noise_select_with_channel! = || {
+	(listener, address) = listen_anywhere!()?
+	streams = noise_accept!(listener)?
+	(outbox, inbox) = Channel.new!(4)?
+	_ = Task.spawn!(|| {
+		server = streams.receive_timeout!(Time.seconds(5))?
+		var $reader = Framing.reader(server)
+		while True {
+			next =
+				Select.new({})
+					.on_line($reader, |result| Line(result))
+					.on_receive(inbox, |result| Pushed(result))
+					.wait!()?
+			match next {
+				Line(Ok((line, rest))) => {
+					server.write_str!("echo: ${line}\n")?
+					$reader = rest
+				}
+				Line(Err(EndOfStream)) => break
+				Line(Err(err)) => return Err(LineFailed(Str.inspect(err)))
+				Pushed(Ok(text)) => server.write_str!("push: ${text}\n")?
+				Pushed(Err(ChannelClosed)) => break
+			}
+		}
+		Ok({})
+	})?
+	tcp = Tcp.connect!(address)?
+	tcp.set_read_timeout!(Millis(5000))?
+	client = Noise.handshake!(tcp, Noise.config(NN, Initiator), [])?.stream
+	client.write_str!("one\n")?
+	(first, r1) = Framing.reader(client).read_line!()?
+	outbox.send!("from the channel")?
+	(second, r2) = r1.read_line!()?
+	# Two lines in one message: the second waits in the reader's buffer, and
+	# the next Select must find it there.
+	client.write_str!("two\nthree\n")?
+	(third, r3) = r2.read_line!()?
+	(fourth, _) = r3.read_line!()?
+	# Used until here, so the server's loop doesn't see the outbox close (an
+	# end closes after its last use).
+	outbox.close!()
+	expect_eq([first, second, third, fourth], ["echo: one", "push: from the channel", "echo: two", "echo: three"])
+}
+
+noise_pipe! = || {
+	(backend_listener, backend_address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		backend = backend_listener.accept!()?
+		(request, _) = Framing.reader(backend).read_to_end!()?
+		backend.write!(List.concat(Str.to_utf8("back: "), request))?
+		backend.shutdown!(Write)?
+		Ok({})
+	})?
+	(listener, address) = listen_anywhere!()?
+	streams = noise_accept!(listener)?
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		client_side = streams.receive_timeout!(Time.seconds(5))?
+		backend = Tcp.connect!(backend_address)?
+		report_tx.send!(Pipe.copy_both!(client_side, backend))?
+		Ok({})
+	})?
+	tcp = Tcp.connect!(address)?
+	tcp.set_read_timeout!(Millis(5000))?
+	client = Noise.handshake!(tcp, Noise.config(NN, Initiator), [])?.stream
+	client.write_str!("through the pipe")?
+	client.shutdown!(Write)?
+	(reply, _) = Framing.reader(client).read_to_end!()?
+	copied = report.receive_timeout!(Time.seconds(5))?
+	counts =
+		match copied {
+			Ok({ a_to_b, b_to_a }) => Ok((a_to_b, b_to_a))
+			Err(err) => Err(Str.inspect(err))
+		}
+	expect_eq((Str.from_utf8_lossy(reply), counts), ("back: through the pipe", Ok((16, 22))))
+}
+
+# A tampered message, then a good one: the good one mustn't be accepted, or
+# the tampered one would go missing unnoticed.
+noise_stays_failed! = || {
+	(listener, address) = listen_anywhere!()?
+	streams = noise_accept!(listener)?
+	tcp = Tcp.connect!(address)?
+	send = raw_nn_initiator!(tcp)?
+	server = streams.receive_timeout!(Time.seconds(5))?
+	(bad, after_bad) = send.encrypt!([], Str.to_utf8("tampered"))?
+	(good, _) = after_bad.encrypt!([], Str.to_utf8("good"))?
+	flipped = List.set(bad, 0, U8.bitwise_xor(List.first(bad) ?? 0, 1))?
+	frame = |sealed| List.concat(Bytes.u16_be(List.len(sealed).to_u16_wrap()), sealed)
+	tcp.write!(List.concat(frame(flipped), frame(good)))?
+	first = shown(server.read!(100))
+	second = shown(server.read!(100))
+	authentic = |text| !Str.contains(text, "authenticate")
+	expect_eq((authentic(first), authentic(second)), (False, False))
+}
+
+## Two tasks read `stream` with Selects until it ends, while `send!` sends
+## `count` one-byte writes in bursts. Every byte must arrive, and no reader
+## may sit out a long wait with data still to come (a lost wake-up).
+shared_readers! = |stream, count, send!| {
+	(totals_tx, totals) = Channel.new!(2)?
+	reader! = || {
+		var $got = 0
+		while True {
+			next =
+				Select.new({})
+					.on_read(stream, 1, |result| Read(result))
+					.on_timeout(Time.seconds(5), || Stalled)
+					.wait!()?
+			match next {
+				Read(Ok([])) => break
+				Read(Ok(bytes)) => {
+					$got = $got + List.len(bytes)
+				}
+				Read(Err(err)) => return Err(ReadFailed(Str.inspect(err)))
+				Stalled => return Err(Stalled)
+			}
+		}
+		totals_tx.send!($got)?
+		Ok({})
+	}
+	first = Task.spawn!(reader!)?
+	second = Task.spawn!(reader!)?
+	send!()?
+	first_result = shown(first.join!())
+	second_result = shown(second.join!())
+	a = totals.receive_timeout!(Time.seconds(5)) ?? 0
+	b = totals.receive_timeout!(Time.seconds(5)) ?? 0
+	expect_eq((first_result, second_result, a + b), ("Ok", "Ok", count))
+}
+
+## `count` one-byte writes in bursts of 50, a millisecond apart, then the end.
+send_in_bursts! = |stream, count| {
+	var $sent = 0
+	while $sent < count {
+		stream.write!([1])?
+		$sent = $sent + 1
+		if $sent % 50 == 0 {
+			Time.sleep!(Time.millis(1))?
+		}
+	}
+	stream.shutdown!(Write)
+}
+
+noise_shared_readers! = || {
+	(listener, address) = listen_anywhere!()?
+	streams = noise_accept!(listener)?
+	tcp = Tcp.connect!(address)?
+	client = Noise.handshake!(tcp, Noise.config(NN, Initiator), [])?.stream
+	server = streams.receive_timeout!(Time.seconds(5))?
+	shared_readers!(server, 2000, || send_in_bursts!(client, 2000))
+}
+
+tls_shared_readers! = || {
+	(listener, address) = tls_listen_anywhere!()?
+	(streams_tx, streams) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		# Connecting waits for the handshake, so this side must do its part.
+		stream.handshake!()?
+		streams_tx.send!(stream)?
+		Ok({})
+	})?
+	client = Tls.connect_with!(address, trusting_test_ca)?
+	server = streams.receive_timeout!(Time.seconds(5))?
+	shared_readers!(server, 2000, || send_in_bursts!(client, 2000))
+}
+
+random_bytes_limit! = || {
+	most = Random.bytes!(16777216)?
+	refused =
+		match Random.bytes!(16777217) {
+			Err(TooManyBytes(limits)) => Ok(limits)
+			_ => Err({})
+		}
+	expect_eq((List.len(most), refused), (16777216, Ok({ requested: 16777217, max: 16777216 })))
+}

@@ -6,9 +6,12 @@ import IOErr
 Host := [].{
 	stderr_line! : Str => Try({}, [StderrErr(Str)])
 	stdin_line! : {} => Try(Str, [StdinErr(Str)])
+	## The next line from stdin if one has been read, without waiting (and
+	## asking for one if not), for `Select`.
+	stdin_try_line! : {} => [Line(Str), End, Failed(Str), NotReady, TooLong]
 	## The next line from stdin without its line ending, or `End` once there
 	## are no more.
-	stdin_read_line! : {} => [Line(Str), End, Failed(Str)]
+	stdin_read_line! : {} => [Line(Str), End, Failed(Str), TooLong]
 	stdout_line! : Str => Try({}, [StdoutErr(Str)])
 
 	## A host-owned socket of any kind (TCP or Unix listener or stream, UDP
@@ -173,7 +176,8 @@ Host := [].{
 	constant_time_eq! : List(U8), List(U8) => Bool
 
 	## `count` bytes from the OS's secure random source.
-	random_bytes! : U64 => List(U8)
+	## `OutOfMemory` if the bytes can't be allocated.
+	random_bytes! : U64 => [Bytes(List(U8)), OutOfMemory]
 
 	## One end of a channel (sender or receiver), closed when Roc releases it.
 	ChannelEnd :: Box(U64)
@@ -190,7 +194,7 @@ Host := [].{
 	channel_close! : ChannelEnd => {}
 
 	## Something a task can wait on, for `Select`.
-	WaitSource : [Readable(Socket), Writable(Socket), Receivable(ChannelEnd), Sendable(ChannelEnd), Joinable(TaskHandle)]
+	WaitSource : [Readable(Socket), Writable(Socket), Receivable(ChannelEnd), Sendable(ChannelEnd), Joinable(TaskHandle), StdinLine]
 
 	## Wait until any source may be ready, or `timeout_ns` passes (U64.highest:
 	## no limit). A wake-up can be spurious: callers poll their sources again.

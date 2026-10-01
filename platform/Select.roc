@@ -3,7 +3,7 @@ import Time
 
 ## Wait for whichever of several things happens first: data on a stream, a
 ## connection on a listener, a value on a channel, room in a channel, a task
-## finishing, or a timeout.
+## finishing, a line on stdin, or a timeout.
 ##
 ## Build a `Select` from arms, each saying what to wait for and how to turn
 ## what happened into a value of your own type, then `wait!`:
@@ -36,8 +36,8 @@ import Time
 ##   with nothing arriving (and a TLS stream, its handshake deadline), as a
 ##   blocking read would. To wait longer, raise or remove the read timeout
 ##   (`set_read_timeout!`, or a listener's `with_idle_timeout`).
-## - Arms work with any stream type: `Tcp`, `Unix` and `Tls` streams and
-##   listeners, `Framing` readers over them, and `Channel` ends.
+## - Arms work with any stream type: `Tcp`, `Unix`, `Tls` and `Noise`
+##   streams, listeners, `Framing` readers over them, and `Channel` ends.
 Select := [].{
 
 	## An arm: how to check it without waiting, what to wait on, and for a
@@ -142,6 +142,33 @@ Select := [].{
 					NotReady
 				}
 			Arms.({ arms: List.append(arms, { poll!: poll!, source: Joinable(handle.task_handle()), on_stream_timeout: NoDeadline }), timeout })
+		}
+
+		## The next line from standard input, as `Stdin.read_line!` returns it:
+		## `Ok(Line(text))`, `Ok(End)` once input has ended, `Err(LineTooLong)`
+		## for a line over 1 MiB (skipped), or `Err(StdinErr(message))`. For a program that waits for the terminal
+		## and the network in one loop:
+		##
+		## ```roc
+		## next = Select.new({})
+		##     .on_stdin_line(|result| Typed(result))
+		##     .on_frame(reader, |result| Received(result))
+		##     .wait!()?
+		## ```
+		##
+		## A line is read from stdin only when asked for, and one read while
+		## another arm wins stays queued for the next read, by any means
+		## (this arm, `Stdin.line!` or `Stdin.read_line!`).
+		on_stdin_line = |Arms.({ arms, timeout }), to_out| {
+			poll! = |{}|
+				match Host.stdin_try_line!({}) {
+					NotReady => NotReady
+					Line(text) => Got(to_out(Ok(Line(text))))
+					End => Got(to_out(Ok(End)))
+					TooLong => Got(to_out(Err(LineTooLong)))
+					Failed(message) => Got(to_out(Err(StdinErr(message))))
+				}
+			Arms.({ arms: List.append(arms, { poll!: poll!, source: StdinLine, on_stream_timeout: NoDeadline }), timeout })
 		}
 
 		## Nothing else happening within `duration` of `wait!` starting. With

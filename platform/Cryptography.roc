@@ -61,7 +61,7 @@ Cryptography := [].{
 
 		## A new secret key, from the OS's secure random source.
 		generate! : {} => SecretKey
-		generate! = |{}| SecretKey.(Host.random_bytes!(32))
+		generate! = |{}| SecretKey.(random_key!({}))
 
 		## A secret key from its 32 bytes (as `to_bytes` gave them).
 		secret_key_from_bytes : List(U8) -> Try(SecretKey, [WrongLength({ expected : U64, actual : U64 })])
@@ -112,7 +112,7 @@ Cryptography := [].{
 
 		## A new key, from the OS's secure random source.
 		generate! : {} => Key
-		generate! = |{}| Key.(Host.random_bytes!(32))
+		generate! = |{}| Key.(random_key!({}))
 
 		key_from_bytes : List(U8) -> Try(Key, [WrongLength({ expected : U64, actual : U64 })])
 		key_from_bytes = |bytes| check_length(bytes, 32).map_ok(|valid| Key.(valid))
@@ -156,7 +156,7 @@ Cryptography := [].{
 		}
 
 		generate! : {} => Key
-		generate! = |{}| Key.(Host.random_bytes!(32))
+		generate! = |{}| Key.(random_key!({}))
 
 		key_from_bytes : List(U8) -> Try(Key, [WrongLength({ expected : U64, actual : U64 })])
 		key_from_bytes = |bytes| check_length(bytes, 32).map_ok(|valid| Key.(valid))
@@ -200,7 +200,7 @@ Cryptography := [].{
 
 		## A new secret key, from the OS's secure random source.
 		generate! : {} => SecretKey
-		generate! = |{}| SecretKey.(Host.random_bytes!(32))
+		generate! = |{}| SecretKey.(random_key!({}))
 
 		secret_key_from_bytes : List(U8) -> Try(SecretKey, [WrongLength({ expected : U64, actual : U64 })])
 		secret_key_from_bytes = |bytes| check_length(bytes, 32).map_ok(|valid| SecretKey.(valid))
@@ -279,6 +279,15 @@ Cryptography := [].{
 	## other secrets, where `==`'s early exit could leak them.
 	constant_time_eq! : List(U8), List(U8) => Bool
 	constant_time_eq! = |a, b| Host.constant_time_eq!(a, b)
+
+	## 32 random bytes for a new key. Too few to run out of memory over, so
+	## that ends the program rather than every `generate!` returning a `Try`.
+	random_key! : {} => List(U8)
+	random_key! = |{}|
+		match Host.random_bytes!(32) {
+			Bytes(bytes) => bytes
+			OutOfMemory => crash "Cryptography: out of memory generating a key"
+		}
 
 	check_length : List(U8), U64 -> Try(List(U8), [WrongLength({ expected : U64, actual : U64 })])
 	check_length = |bytes, expected|

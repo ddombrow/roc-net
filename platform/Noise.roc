@@ -399,7 +399,9 @@ Noise := [].{
 
 		## Read up to `max` bytes of plaintext; an empty list once the other
 		## side has closed the connection. Fails with `NoiseErr(Other(...))` if
-		## a message doesn't authenticate (tampered with, or out of order).
+		## a message doesn't authenticate (tampered with, or out of order),
+		## and every read after that fails the same way: the stream can't be
+		## trusted past a bad message, so close it.
 		read! : Stream, U64 => Try(List(U8), [NoiseErr(IOErr)])
 		read! = |Stream.(stream), max| noise_err(Host.socket_read!(stream, max))
 
@@ -457,6 +459,20 @@ Noise := [].{
 
 		peer_addr! : Stream => Try(Str, [NoiseErr(IOErr)])
 		peer_addr! = |Stream.(stream)| noise_err(Host.socket_peer_addr!(stream))
+
+		## For `Select`: plaintext that has arrived, without waiting
+		## (`Ok(NotReady)` if no whole message has yet).
+		try_read! : Stream, U64 => Try([Data(List(U8)), NotReady], [NoiseErr(IOErr)])
+		try_read! = |Stream.(stream), max|
+			match Host.socket_try_read!(stream, max) {
+				Data(bytes) => Ok(Data(bytes))
+				NotReady => Ok(NotReady)
+				Failed(err) => Err(NoiseErr(err))
+			}
+
+		## The host socket, for `Select` and `Pipe`.
+		socket : Stream -> Host.Socket
+		socket = |Stream.(stream)| stream
 
 		## What a read reports when the read timeout passes (for `Framing`).
 		timeout_error : Stream -> [NoiseErr(IOErr)]

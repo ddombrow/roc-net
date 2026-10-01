@@ -6,8 +6,7 @@ import IOErr
 ##
 ## These, and code of your own, work with any kind of stream: `Tcp.Stream`,
 ## `Tls.Stream`, `Unix.Stream` and `Noise.Stream` have the same methods, so a
-## function that only calls those methods takes any of them. (`copy_both!`
-## and `copy_to!` don't support `Noise.Stream` yet.)
+## function that only calls those methods takes any of them.
 ##
 ## Without an annotation, Roc works out what a function needs by itself. To
 ## write the annotation, list the methods it calls in a `where` clause, with
@@ -61,7 +60,7 @@ Pipe := [].{
 	## copied = Pipe.copy_both!(client, backend)?
 	## ```
 	##
-	## Works with any two streams (`Tcp`, `Tls`, `Unix`), of the same kind
+	## Works with any two streams (`Tcp`, `Tls`, `Unix`, `Noise`), of the same kind
 	## or not. The bytes are copied by the platform, never becoming Roc
 	## lists; on Linux, between two plain (`Tcp` or `Unix`) streams, they
 	## don't pass through the program's memory at all (`splice`). An idle

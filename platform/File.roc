@@ -16,6 +16,18 @@ import IOErr
 ## `AlreadyExists` (from `write_new!`), or `Other(...)` with the operating
 ## system's message (for a directory where a file was expected, say).
 ##
+## `write_new!` and `write_atomic!` write a temporary file beside the one
+## asked for (named like `.NAME.1f2e3d4c5b6a7980.tmp`) and flush it to disk
+## first, so the real one only ever appears complete. A program stopped
+## partway through can leave a temporary file behind; it's never read, and
+## is safe to delete. (From `write_new!` of a secret key, that's a copy of
+## the key, with the same owner-only permissions.)
+##
+## `write_new!` puts the file in place with a hard link. On a file system
+## without them (FAT, exFAT, some network shares), it creates the file
+## directly instead: still only if absent, but a crash partway can leave it
+## incomplete there.
+##
 ## ## Permissions
 ##
 ## `write_new!` and `write_atomic!` take the new file's permissions as a Unix
@@ -50,7 +62,7 @@ File := [].{
 	## file cut short. For files that must always be complete, such as
 	## configuration or saved state, use `write_atomic!`.
 	write_bytes! : Str, List(U8) => Try({}, [FileErr(IOErr)])
-	write_bytes! = |path, bytes| write!(path, bytes, 0, 0o666)
+	write_bytes! = |path, bytes| write!(path, bytes, Replace, 0o666)
 
 	## `write_bytes!` with text.
 	write_utf8! : Str, Str => Try({}, [FileErr(IOErr)])
@@ -60,7 +72,7 @@ File := [].{
 	## Appends from separate calls, even from other processes, don't
 	## interleave within a call's bytes on local file systems.
 	append_bytes! : Str, List(U8) => Try({}, [FileErr(IOErr)])
-	append_bytes! = |path, bytes| write!(path, bytes, 1, 0o666)
+	append_bytes! = |path, bytes| write!(path, bytes, Append, 0o666)
 
 	## `append_bytes!` with text.
 	append_utf8! : Str, Str => Try({}, [FileErr(IOErr)])
@@ -69,13 +81,16 @@ File := [].{
 	## Create the file with `bytes` and permissions `mode` (see
 	## "Permissions" above), failing with `FileErr(AlreadyExists)` if it
 	## exists. Checking and creating are one step, so two programs can't
-	## both create it. For a secret key, use `0o600`:
+	## both create it, and the file appears complete, already on disk: a
+	## program reading it at the same moment, or after a crash, finds it
+	## either missing or whole, never empty or cut short. For a secret key,
+	## use `0o600`:
 	##
 	## ```roc
 	## File.write_new!("identity.key", key_bytes, 0o600)?
 	## ```
 	write_new! : Str, List(U8), U32 => Try({}, [FileErr(IOErr)])
-	write_new! = |path, bytes, mode| write!(path, bytes, 2, mode)
+	write_new! = |path, bytes, mode| write!(path, bytes, New, mode)
 
 	## Replace the file with `bytes` all at once, with permissions `mode`:
 	## anyone reading it sees either the old contents or the new, never part
@@ -85,7 +100,7 @@ File := [].{
 	## disk, and renames it over `path`. The directory must be writable, and
 	## the file's previous permissions are replaced by `mode`.
 	write_atomic! : Str, List(U8), U32 => Try({}, [FileErr(IOErr)])
-	write_atomic! = |path, bytes, mode| write!(path, bytes, 3, mode)
+	write_atomic! = |path, bytes, mode| write!(path, bytes, Atomic, mode)
 
 	## Rename (move) `from` to `to`, replacing `to` if it exists, in one step.
 	## Both must be on the same file system.
@@ -119,10 +134,21 @@ File := [].{
 			Err(err) => Err(FileErr(err))
 		}
 
-	write! : Str, List(U8), U8, U32 => Try({}, [FileErr(IOErr)])
-	write! = |path, bytes, how, mode|
-		match Host.file_write!(path, bytes, how, mode) {
+	## What the `write_` and `append_` functions call: `how` says which, and
+	## `mode` is for a file it creates. Roc can't hide it, so it takes a tag
+	## rather than a code; prefer the named functions.
+	write! : Str, List(U8), [Replace, Append, New, Atomic], U32 => Try({}, [FileErr(IOErr)])
+	write! = |path, bytes, how, mode| {
+		code =
+			match how {
+				Replace => 0
+				Append => 1
+				New => 2
+				Atomic => 3
+			}
+		match Host.file_write!(path, bytes, code, mode) {
 			Ok({}) => Ok({})
 			Err(err) => Err(FileErr(err))
 		}
+	}
 }

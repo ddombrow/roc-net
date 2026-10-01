@@ -4,19 +4,67 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
-## 0.5.0 (unreleased)
+## 0.5.0
+
+Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,
+x86-64) and static Linux (musl: arm64, x86-64).
+
+Breaking:
+
+- **`Random.bytes!` returns a `Try`**, failing with `TooManyBytes` past
+  16 MiB (before allocating anything) and with `OutOfMemory`, instead of
+  stopping the program when a huge count (from untrusted input, say) can't
+  be allocated: `key = Random.bytes!(32)?`. The fixed-size functions
+  (`u64!`, `between!`, ...) are unchanged.
 
 Added:
 
 - **`File`**: read, write, append, rename and delete whole files, and check
   whether one exists. `write_new!` creates a file only if it doesn't exist,
   with the permissions given (`0o600` for a secret key); `write_atomic!`
-  replaces one through a temporary file, flushed and renamed, so readers
-  never see it half written. Calls run on helper threads, like DNS lookups,
+  replaces one. Both write a temporary file and flush it to disk first
+  (`write_new!` then hard-links it into place, `write_atomic!` renames it),
+  so the file only ever appears complete, even after a crash. On file
+  systems without hard links (FAT, exFAT), `write_new!` creates the file
+  directly instead. Calls run on helper threads, like DNS lookups,
   so they never stall other tasks. Errors are `FileErr(IOErr)`.
 - **`Env.var!`**: read an environment variable.
 - **`IOErr.AlreadyExists`**, from `File.write_new!`. Code that matches every
   `IOErr` tag without a `_` case needs the new one.
+- **A 1 MiB limit on stdin lines.** `Stdin.read_line!` and
+  `Select.on_stdin_line` fail with a new `LineTooLong` error for a longer
+  line, and skip the rest of it, so untrusted input can't use up memory
+  (`Stdin.line!` fails with `StdinErr`). Code that matches every error of
+  `read_line!` needs the new tag.
+- **`Select` on `Noise.Stream`**, and `Pipe.copy_both!` / `copy_to!` with
+  it: a Noise connection can share one loop with channels, timers and other
+  streams, instead of needing a task per direction.
+- **`Select`'s `on_stdin_line`**: wait for a line typed, alongside the
+  network, in one loop.
+- **`examples/noise_chat`** keeps its identity key in a file (owner-only),
+  remembers each peer's key, and warns if a name comes back with a different
+  one. It now runs in one `Select` loop, and its fingerprints are 128 bits
+  (they were 64).
+
+Fixed:
+
+- Two `Select`s waiting on one idle TLS stream woke each other in a loop,
+  using most of a CPU core between them (since `Select` arrived). A lock
+  release that only found the socket empty now wakes just the waiters that
+  arrived while the lock was held (they never got to look at the socket),
+  and a waiter that finds the lock free checks the socket itself before
+  sleeping. The same applies to `Noise.Stream`. A new check
+  (`tests/select_idle`) times it, and two new tests share a stream between
+  two Select readers.
+- After a message failed to authenticate, a `Noise.Stream` carried on: the
+  next message decrypted, and the bad one went missing unnoticed. Every read
+  after a bad message now fails.
+- A `Noise.Stream` read that timed out partway through a message lost the
+  part it had read, so the next read misread the stream. Partial messages
+  are now kept.
+- A line typed while the task reading stdin was cancelled was lost. All
+  stdin reads (`Stdin.line!`, `read_line!`, the `Select` arm) now take lines
+  from one queue, in order.
 
 ## 0.4.1
 

@@ -47,6 +47,7 @@ platform ""
 		"roc_stderr_line": Host.stderr_line!,
 		"roc_stdin_line": Host.stdin_line!,
 		"roc_stdin_read_line": Host.stdin_read_line!,
+		"roc_stdin_try_line": Host.stdin_try_line!,
 		"roc_stdout_line": Host.stdout_line!,
 		"roc_aead_open": Host.aead_open!,
 		"roc_aead_seal": Host.aead_seal!,

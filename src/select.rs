@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use crate::roc_host;
 use crate::roc_platform_abi::{
-    decref_list_of_joinable_or_readable_or_receivable_or_sendable_or_writable as decref_sources,
+    decref_list_of_joinable_or_readable_or_receivable_or_sendable_or_stdin_line_or_writable as decref_sources,
     CancelledOrReadyOrSourceTimedOutOrTimedOut as Outcome,
     CancelledOrReadyOrSourceTimedOutOrTimedOutPayload as OutcomePayload,
-    CancelledOrReadyOrSourceTimedOutOrTimedOutTag as OutcomeTag, JoinableOrReadableOrReceivableOrSendableOrWritable as Source,
-    JoinableOrReadableOrReceivableOrSendableOrWritableTag as SourceTag, RocList,
+    CancelledOrReadyOrSourceTimedOutOrTimedOutTag as OutcomeTag, JoinableOrReadableOrReceivableOrSendableOrStdinLineOrWritable as Source,
+    JoinableOrReadableOrReceivableOrSendableOrStdinLineOrWritableTag as SourceTag, RocList,
 };
 use crate::sched::{self, Woke};
 use crate::sockets::Socket;
@@ -43,7 +43,9 @@ fn outcome(tag: OutcomeTag) -> Outcome {
 enum Watching {
     Channel(*mut u64, u64),
     Tls(*mut u64, u64),
+    Noise(*mut u64, u64),
     Task(*mut u64, u64),
+    Stdin(u64),
 }
 
 fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
@@ -65,6 +67,18 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
     // ends the wait before it starts.
     let mut ready = false;
     for (index, source) in sources.iter().enumerate() {
+        if source.tag == SourceTag::StdinLine {
+            match crate::stdin::watch(&waker) {
+                crate::stdin::Watch::Ready => {
+                    ready = true;
+                    break;
+                }
+                crate::stdin::Watch::Waiting(id) => {
+                    watching.push(Watching::Stdin(id));
+                    continue;
+                }
+            }
+        }
         if source.tag == SourceTag::Joinable {
             let handle = unsafe { *source.borrow_payload_joinable_unchecked() };
             match crate::tasks::watch(handle, &waker) {
@@ -85,7 +99,7 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
                 SourceTag::Writable => (*source.borrow_payload_writable_unchecked(), true, true),
                 SourceTag::Receivable => (*source.borrow_payload_receivable_unchecked(), false, false),
                 SourceTag::Sendable => (*source.borrow_payload_sendable_unchecked(), false, true),
-                SourceTag::Joinable => unreachable!("handled above"),
+                SourceTag::Joinable | SourceTag::StdinLine => unreachable!("handled above"),
             }
         };
         if is_socket {
@@ -112,6 +126,16 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
                         watching.push(Watching::Tls(handle, id));
                         also_writable = wants_write;
                     }
+                }
+            }
+            // Likewise Noise: another reader may leave whole messages behind.
+            if let (Socket::Noise(noise), false) = (socket, writable) {
+                match noise.watch(&waker) {
+                    crate::noise::Watch::Ready => {
+                        ready = true;
+                        break;
+                    }
+                    crate::noise::Watch::Waiting(id) => watching.push(Watching::Noise(handle, id)),
                 }
             }
             let (fd, reg) = socket.io_parts();
@@ -157,6 +181,12 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
         match watch {
             Watching::Channel(handle, id) => crate::channels::unwatch(handle, id),
             Watching::Task(handle, id) => crate::tasks::unwatch(handle, id),
+            Watching::Stdin(id) => crate::stdin::unwatch(id),
+            Watching::Noise(handle, id) => {
+                if let Some(Socket::Noise(noise)) = unsafe { crate::sockets::get(handle) } {
+                    noise.unwatch(id);
+                }
+            }
             Watching::Tls(handle, id) => {
                 if let Some(Socket::Tls(tls)) = unsafe { crate::sockets::get(handle) } {
                     tls.unwatch(id);
