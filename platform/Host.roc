@@ -6,9 +6,12 @@ import IOErr
 Host := [].{
 	stderr_line! : Str => Try({}, [StderrErr(Str)])
 	stdin_line! : {} => Try(Str, [StdinErr(Str)])
+	## The next line from stdin if one has been read, without waiting (and
+	## asking for one if not), for `Select`.
+	stdin_try_line! : {} => [Line(Str), End, Failed(Str), NotReady, TooLong]
 	## The next line from stdin without its line ending, or `End` once there
 	## are no more.
-	stdin_read_line! : {} => [Line(Str), End, Failed(Str)]
+	stdin_read_line! : {} => [Line(Str), End, Failed(Str), TooLong]
 	stdout_line! : Str => Try({}, [StdoutErr(Str)])
 
 	## A host-owned socket of any kind (TCP or Unix listener or stream, UDP
@@ -136,6 +139,17 @@ Host := [].{
 	## after `timeout_ms` (0 means no limit).
 	dns_resolve! : Str, U64 => Try(List(Str), IOErr)
 
+	## `File`, on helper threads. `file_write!`'s `how`: 0 create or replace,
+	## 1 append (creating), 2 create only if absent, 3 replace atomically
+	## (temporary file, flushed, renamed). `mode` is for files it creates.
+	file_read! : Str => Try(List(U8), IOErr)
+	file_write! : Str, List(U8), U8, U32 => Try({}, IOErr)
+	file_rename! : Str, Str => Try({}, IOErr)
+	file_delete! : Str => Try({}, IOErr)
+	file_exists! : Str => Try(Bool, IOErr)
+	## `Env`.
+	env_var! : Str => [Found(Str), Missing, NotUtf8]
+
 	## `Cryptography`, from AWS-LC. Hosted functions are always effectful,
 	## so these are too, though they only compute. Lengths are checked in Roc
 	## (by the key and nonce types) and again here.
@@ -162,7 +176,8 @@ Host := [].{
 	constant_time_eq! : List(U8), List(U8) => Bool
 
 	## `count` bytes from the OS's secure random source.
-	random_bytes! : U64 => List(U8)
+	## `OutOfMemory` if the bytes can't be allocated.
+	random_bytes! : U64 => [Bytes(List(U8)), OutOfMemory]
 
 	## One end of a channel (sender or receiver), closed when Roc releases it.
 	ChannelEnd :: Box(U64)
@@ -179,7 +194,7 @@ Host := [].{
 	channel_close! : ChannelEnd => {}
 
 	## Something a task can wait on, for `Select`.
-	WaitSource : [Readable(Socket), Writable(Socket), Receivable(ChannelEnd), Sendable(ChannelEnd), Joinable(TaskHandle)]
+	WaitSource : [Readable(Socket), Writable(Socket), Receivable(ChannelEnd), Sendable(ChannelEnd), Joinable(TaskHandle), StdinLine]
 
 	## Wait until any source may be ready, or `timeout_ns` passes (U64.highest:
 	## no limit). A wake-up can be spurious: callers poll their sources again.

@@ -72,23 +72,45 @@ pub struct TlsStream {
     /// `Select`s waiting on this stream for progress that doesn't show on
     /// the socket: a lock being released (another reader may have left
     /// plaintext, a writer may have made room to send a reply, a handshake
-    /// may have finished). Woken, all of them, each time the read, write or
-    /// handshake lock is released.
+    /// may have finished). Woken at lock releases (see [`Held`]).
     watchers: Mutex<Waiters>,
 }
 
-/// A held read or write lock that, once released, wakes the stream's
-/// `Select` watchers.
+/// A held read, write or handshake lock that, once released, wakes the
+/// stream's `Select` watchers.
+///
+/// If the holder only found the socket unready with nothing new buffered
+/// ([`Held::idle`]), it wakes just the watchers that started waiting during the hold. Those tried to poll
+/// while it was held, so they never looked at the socket themselves, and
+/// data may have arrived (its edge event going to nobody) before they
+/// started waiting. The earlier watchers saw the socket empty themselves,
+/// and wait on it. (Waking those too made two `Select`s on one idle stream
+/// wake each other in a loop.)
 struct Held<'a> {
     guard: Option<LockGuard<'a>>,
     watchers: &'a Mutex<Waiters>,
+    /// The first watcher id given out during the hold.
+    first: u64,
+    idle: bool,
+}
+
+impl Held<'_> {
+    /// Nothing for the earlier watchers came of this hold.
+    fn idle(&mut self) {
+        self.idle = true;
+    }
 }
 
 impl Drop for Held<'_> {
     fn drop(&mut self) {
         // Release first: a watcher woken before it would find it still held.
         drop(self.guard.take());
-        lock(self.watchers).wake_all();
+        let mut watchers = lock(self.watchers);
+        if self.idle {
+            watchers.wake_from(self.first);
+        } else {
+            watchers.wake_all();
+        }
     }
 }
 
@@ -154,32 +176,45 @@ impl TlsStream {
         }
     }
 
-    fn held<'a>(&'a self, guard: LockGuard<'a>) -> Held<'a> {
-        Held { guard: Some(guard), watchers: &self.watchers }
+    /// The first watcher id of a hold, read before the lock is taken: a
+    /// watcher arriving in between is woken too, which is harmless; one
+    /// arriving once the lock is held mustn't be missed.
+    fn first_id(&self) -> u64 {
+        lock(&self.watchers).next_id()
+    }
+
+    fn held<'a>(&'a self, first: u64, guard: LockGuard<'a>) -> Held<'a> {
+        Held { guard: Some(guard), watchers: &self.watchers, first, idle: false }
     }
 
     fn lock_read(&self) -> Held<'_> {
-        self.held(self.read_lock.lock())
+        let first = self.first_id();
+        self.held(first, self.read_lock.lock())
     }
 
     fn lock_write(&self) -> Held<'_> {
-        self.held(self.write_lock.lock())
+        let first = self.first_id();
+        self.held(first, self.write_lock.lock())
     }
 
     fn try_lock_read(&self) -> Option<Held<'_>> {
-        self.read_lock.try_lock().map(|guard| self.held(guard))
+        let first = self.first_id();
+        self.read_lock.try_lock().map(|guard| self.held(first, guard))
     }
 
     fn try_lock_write(&self) -> Option<Held<'_>> {
-        self.write_lock.try_lock().map(|guard| self.held(guard))
+        let first = self.first_id();
+        self.write_lock.try_lock().map(|guard| self.held(first, guard))
     }
 
     fn lock_handshake(&self) -> Held<'_> {
-        self.held(self.handshake_lock.lock())
+        let first = self.first_id();
+        self.held(first, self.handshake_lock.lock())
     }
 
     fn try_lock_handshake(&self) -> Option<Held<'_>> {
-        self.handshake_lock.try_lock().map(|guard| self.held(guard))
+        let first = self.first_id();
+        self.handshake_lock.try_lock().map(|guard| self.held(first, guard))
     }
 
     /// For a `Select` whose poll of this stream found nothing: register
@@ -189,6 +224,12 @@ impl TlsStream {
     /// the end of the session.
     pub fn watch(&self, waker: &TaskWaker) -> Watch {
         let id = lock(&self.watchers).add_waker(waker.clone());
+        // Held: its release wakes this watcher, which arrived during the hold.
+        let handshaken = self.handshaken.load(Ordering::Acquire);
+        let busy = || if handshaken { self.read_lock.is_locked() } else { self.handshake_lock.is_locked() };
+        if busy() {
+            return Watch::Waiting { id, wants_write: false };
+        }
         // Never wait for `inner`: the handshake holds it across socket waits,
         // and blocking this thread on it could stop that very handshake from
         // resuming. Held means a handshake (or a moment's processing) is under
@@ -203,9 +244,14 @@ impl TlsStream {
                 .conn
                 .process_new_packets()
                 .map_or(true, |state| state.plaintext_bytes_to_read() > 0 || state.peer_has_closed());
-        // While another task holds the read lock, a poll couldn't take the
-        // data anyway: wait for the release, which wakes this watcher.
-        if buffered && self.handshaken.load(Ordering::Acquire) && !self.read_lock.is_locked() {
+        // Something buffered, or ciphertext on the socket that this
+        // Select's poll didn't get to read (another task held a lock then),
+        // whose event may have gone to nobody. Checked again for a lock
+        // taken since the check above: while one is held a poll couldn't
+        // make progress, so reporting ready would only make this Select poll
+        // again, and the holder's release wakes this watcher anyway.
+        let ready = buffered || crate::sockets::readable_now(std::os::fd::AsRawFd::as_raw_fd(&self.tcp.io));
+        if ready && !busy() {
             drop(inner);
             self.unwatch(id);
             return Watch::Ready;
@@ -305,7 +351,7 @@ impl TlsStream {
         if !self.handshaken.load(Ordering::Acquire) {
             return Ok(None);
         }
-        let Some(_r) = self.try_lock_read() else {
+        let Some(mut reading) = self.try_lock_read() else {
             return Ok(None);
         };
         let mut inner = lock(&self.inner);
@@ -322,6 +368,8 @@ impl TlsStream {
                 Err(err) => return Err(err),
             }
             if inner.pending.is_empty() {
+                // No plaintext, and no ciphertext left to give rustls.
+                reading.idle();
                 return Ok(None);
             }
             // Feed rustls what it can take; keep the rest for later.
@@ -393,16 +441,20 @@ impl TlsStream {
         if !self.handshaken.load(Ordering::Acquire) {
             return self.handshake_now();
         }
-        let Some(_r) = self.try_lock_read() else { return Ok(false) };
+        let Some(mut reading) = self.try_lock_read() else { return Ok(false) };
         let wants_write = lock(&self.inner).conn.wants_write();
         if wants_write {
             // Records to send in reply to what was read (an alert, a key
             // update): write what the socket takes now; rustls keeps the rest.
-            let Some(_w) = self.try_lock_write() else { return Ok(false) };
+            let Some(mut writing) = self.try_lock_write() else { return Ok(false) };
             let mut inner = lock(&self.inner);
             return match inner.conn.write_tls(&mut &self.tcp.io) {
                 Ok(_) => Ok(true),
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => Ok(false),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    reading.idle();
+                    writing.idle();
+                    Ok(false)
+                }
                 Err(err) => Err(err),
             };
         }
@@ -429,7 +481,10 @@ impl TlsStream {
                 Ok(true)
             }
             Ok(_) => Ok(true),
-            Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => Ok(false),
+            Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => {
+                reading.idle();
+                Ok(false)
+            }
             Err(err) => Err(err),
         }
     }
@@ -440,7 +495,7 @@ impl TlsStream {
     /// `Select` waiting on the stream bounds the wait itself with its own
     /// timeout.
     fn handshake_now(&self) -> io::Result<bool> {
-        let Some(_h) = self.try_lock_handshake() else { return Ok(false) };
+        let Some(mut held) = self.try_lock_handshake() else { return Ok(false) };
         let mut inner = lock(&self.inner);
         if self.handshaken.load(Ordering::Acquire) {
             return Ok(true);
@@ -461,7 +516,12 @@ impl TlsStream {
                         progress = true;
                         continue;
                     }
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(progress),
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                        if !progress {
+                            held.idle();
+                        }
+                        return Ok(progress);
+                    }
                     Err(err) => return Err(err),
                 }
             }
@@ -477,7 +537,12 @@ impl TlsStream {
                         return Err(tls_error(err));
                     }
                 }
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(progress),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    if !progress {
+                        held.idle();
+                    }
+                    return Ok(progress);
+                }
                 Err(err) => return Err(err),
             }
         }

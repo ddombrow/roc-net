@@ -9,7 +9,8 @@ Stdin := [].{
 	## an empty string, as it does for an empty line: to tell them apart, use
 	## `read_line!`.
 	##
-	## Returns `Err(StdinErr(message))` if the host cannot read from stdin.
+	## Returns `Err(StdinErr(message))` if the host cannot read from stdin,
+	## or for a line over 1 MiB (see `read_line!`).
 	line! : {} => Try(Str, [StdinErr(Str)])
 	line! = |{}|
 		match Host.stdin_line!({}) {
@@ -20,7 +21,9 @@ Stdin := [].{
 	## Read the next line from standard input, without its line ending
 	## (`\n` or `\r\n`): `Line(text)`, or `End` once the input has ended (at
 	## Ctrl-D in a terminal, or the end of a file or pipe). An empty line is
-	## `Line("")`. Waits without holding up other tasks.
+	## `Line("")`. Waits without holding up other tasks. After `End`, every
+	## later read is `End` too. For a line or something else, whichever comes
+	## first, see `Select.on_stdin_line`.
 	##
 	## ```roc
 	## while True {
@@ -30,11 +33,17 @@ Stdin := [].{
 	##     }
 	## }
 	## ```
-	read_line! : {} => Try([Line(Str), End], [StdinErr(Str)])
+	##
+	## A line over 1 MiB (1,048,576 bytes, without its line ending) fails
+	## with `LineTooLong`, so input from an untrusted source can't use up the
+	## program's memory; the rest of that line is skipped, and the next read
+	## gets the line after it.
+	read_line! : {} => Try([Line(Str), End], [StdinErr(Str), LineTooLong])
 	read_line! = |{}|
 		match Host.stdin_read_line!({}) {
 			Line(text) => Ok(Line(text))
 			End => Ok(End)
+			TooLong => Err(LineTooLong)
 			Failed(err) => Err(StdinErr(err))
 		}
 }

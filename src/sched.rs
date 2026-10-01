@@ -1324,6 +1324,21 @@ impl Waiters {
             waker.wake();
         }
     }
+
+    /// The id the next waiter added will get. Ids only go up.
+    pub fn next_id(&self) -> u64 {
+        self.next + 1
+    }
+
+    /// Wake the waiters added since [`next_id`](Waiters::next_id) returned
+    /// `first`, leaving the earlier ones waiting.
+    pub fn wake_from(&mut self, first: u64) {
+        // In id order, so the ones to wake are at the back.
+        let keep = self.list.iter().take_while(|(id, _)| *id < first).count();
+        for (_, waker) in self.list.drain(keep..) {
+            waker.wake();
+        }
+    }
 }
 
 /// A mutual-exclusion lock that can be held across waits: a task waiting for

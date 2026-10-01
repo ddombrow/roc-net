@@ -168,6 +168,7 @@ fn stop_reading(socket: &Socket) {
         Socket::TcpStream(s) => s.io.shutdown(Shutdown::Read),
         Socket::UnixStream(s) => s.io.shutdown(Shutdown::Read),
         Socket::Tls(s) => s.shutdown(Shutdown::Read),
+        Socket::Noise(s) => s.wire().shutdown(Shutdown::Read),
         _ => Ok(()),
     };
 }
@@ -183,6 +184,7 @@ fn wait_readable(socket: &Socket, by: Option<Instant>) -> io::Result<()> {
         // Waits for ciphertext (or does the handshake), and returns at once
         // if there's plaintext already.
         Socket::Tls(s) => s.fill_by(by),
+        Socket::Noise(s) => s.fill_by(by),
         _ => Err(not_a_stream()),
     }
 }
@@ -210,6 +212,10 @@ fn read_now(socket: &Socket, buf: &mut [u8]) -> io::Result<Option<usize>> {
                 return Ok(None);
             }
         },
+        Socket::Noise(s) => Ok(s.try_read(buf.len())?.map(|bytes| {
+            buf[..bytes.len()].copy_from_slice(&bytes);
+            bytes.len()
+        })),
         _ => Err(not_a_stream()),
     }
 }
@@ -219,6 +225,7 @@ fn write_all(socket: &Socket, data: &[u8]) -> io::Result<()> {
         Socket::TcpStream(s) => s.write_all(data),
         Socket::UnixStream(s) => s.write_all_with(data, |s, data| io::Write::write(&mut &*s, data)),
         Socket::Tls(s) => s.write_all(data),
+        Socket::Noise(s) => s.write_all(data),
         _ => Err(not_a_stream()),
     }
 }
@@ -229,6 +236,7 @@ fn shutdown_write(socket: &Socket) {
         Socket::TcpStream(s) => s.io.shutdown(Shutdown::Write),
         Socket::UnixStream(s) => s.io.shutdown(Shutdown::Write),
         Socket::Tls(s) => s.shutdown(Shutdown::Write),
+        Socket::Noise(s) => s.wire().shutdown(Shutdown::Write),
         _ => Ok(()),
     };
 }

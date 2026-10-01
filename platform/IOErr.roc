@@ -5,6 +5,8 @@
 IOErr := [
 	AddrInUse,
 	AddrNotAvailable,
+	## A file that was to be created already exists (`File.write_new!`).
+	AlreadyExists,
 	BrokenPipe,
 	## The task was cancelled (`Task.Handle.cancel!`, or its scope ended)
 	## while waiting.

@@ -64,6 +64,7 @@ macro_rules! io_err {
             NetErr::Io(err) => match err.kind() {
                 K::AddrInUse => unit($tag::AddrInUse),
                 K::AddrNotAvailable => unit($tag::AddrNotAvailable),
+                K::AlreadyExists => unit($tag::AlreadyExists),
                 K::BrokenPipe => unit($tag::BrokenPipe),
                 K::ConnectionAborted => unit($tag::ConnectionAborted),
                 K::ConnectionRefused => unit($tag::ConnectionRefused),
@@ -88,7 +89,7 @@ macro_rules! io_err {
 /// emits identical copies (`IOErr`, `HostIOErr`) and which result gets which
 /// can change when it's regenerated, so results name neither: the payload's
 /// field type picks the implementation.
-trait FromNetErr {
+pub(crate) trait FromNetErr {
     fn from_net_err(err: NetErr) -> Self;
 }
 
@@ -600,9 +601,7 @@ fn read_now(socket: &Socket, max: u64) -> NetResult<Option<RocListWith<u8, false
                 break None;
             }
         },
-        Socket::Noise(_) => {
-            return Err(NetErr::Io(io::Error::new(io::ErrorKind::Unsupported, "Select doesn't support Noise streams yet")))
-        }
+        Socket::Noise(s) => s.try_read(max)?.map(|bytes| roc_bytes(&bytes)),
         _ => return Err(wrong_kind("read")),
     })
 }
