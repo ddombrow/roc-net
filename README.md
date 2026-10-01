@@ -105,7 +105,8 @@ Recipes put `.tools/` on `PATH`. To use that `roc` in your own shell, run
 Full reference: run `just docs` and open `target/docs/index.html`. In brief:
 
 - `Stdout.line!`, `Stderr.line!`, `Stdin.line!`: line-based standard I/O;
-  `Stdin.read_line!` tells an empty line (`Line("")`) from the end of input
+  `Stdin.read_line!` tells an empty line (`Line("")`) from the end of input;
+  `Select`'s `on_stdin_line` waits for a line alongside anything else
   (`End`)
 - `Log.info!(message, fields)` (and `debug!`, `warn!`, `error!`): structured
   log lines on stderr, with a wall-clock timestamp, the level and the task,
@@ -194,8 +195,15 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   sans-I/O `Handshake` and `CipherState`, for protocols that carry
   handshake messages their own way (`CipherState.with_nonce` for transports
   that lose or reorder messages).
-- `Random`: `u8!()` ... `u64!()`, `bytes!(n)`, `between!(low, high)`,
-  cryptographically secure
+- `File`: whole files. `read_bytes!`, `read_utf8!`, `write_bytes!`,
+  `write_utf8!`, `append_bytes!`, `append_utf8!`, `rename!`, `delete!`,
+  `exists!`; `write_new!(path, bytes, 0o600)` creates a file only if it's
+  absent (for a secret key), and `write_atomic!` replaces one so readers see
+  the old contents or the new, never part. Calls run on helper threads, so
+  a slow disk doesn't stall other tasks. Errors are `FileErr(IOErr)`.
+- `Env.var!(name)`: an environment variable, or `VarNotFound(name)`
+- `Random`: `u8!()` ... `u64!()`, `between!(low, high)`, and `bytes!(n)`
+  (up to 16 MiB, returning a `Try`), cryptographically secure
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
   `Duration`s (`Time.millis(500)`, `.to_micros()`, ...); `utc_now!` for the
   wall clock (`Utc`: `.to_rfc3339()`, `.to_millis_since_epoch()`, ...)
@@ -223,8 +231,9 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
       .wait!()?
   ```
   Arms: `on_read`, `on_accept`, `on_line`, `on_frame` (Framing readers),
-  `on_receive`, `on_send`, `on_timeout`. Only the winning arm consumes
-  anything, and ready arms take turns.
+  `on_receive`, `on_send`, `on_join` (a task finishing), `on_stdin_line`,
+  `on_timeout`, over any kind of stream (`Tcp`, `Tls`, `Unix`, `Noise`).
+  Only the winning arm consumes anything, and ready arms take turns.
 - `Channel.new!(capacity)`: a bounded queue between tasks, returning
   `(sender, receiver)`: `send!`, `try_send!`, `close!`; `receive!`,
   `try_receive!`, `receive_timeout!`. Closes when an end is released.
@@ -266,7 +275,7 @@ just run tcp_proxy 127.0.0.1:9000 127.0.0.1:8080     # proxy in front of the ech
 just run tls_proxy 127.0.0.1:9080 127.0.0.1:9443 \
     examples/net_tests/certs/server.pem examples/net_tests/certs/server-key.pem \
     127.0.0.1:8080 localhost=127.0.0.1:8081           # terminate TLS, route by SNI name
-just run noise_chat listen 127.0.0.1:7000 ada         # an encrypted 1:1 chat over Noise; then, elsewhere:
+just run noise_chat listen 127.0.0.1:7000 ada         # an encrypted 1:1 chat over Noise, remembering keys; then, elsewhere:
 just run noise_chat connect 127.0.0.1:7000 grace
 
 just run udp_echo_server 127.0.0.1:8081

@@ -175,6 +175,16 @@ impl Conn<TcpStream> {
     }
 }
 
+/// Whether `fd` has something to read right now (data, the end, or an
+/// error), without consuming anything: a level-triggered check, for a
+/// `Select` that couldn't see for itself what an edge-triggered event may
+/// already have announced (to nobody).
+pub fn readable_now(fd: std::os::fd::RawFd) -> bool {
+    let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    let n = unsafe { libc::poll(&mut pfd, 1, 0) };
+    n > 0 && pfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+}
+
 /// The sooner of two deadlines (`None` being never).
 pub fn earliest(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
     match (a, b) {

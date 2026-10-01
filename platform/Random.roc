@@ -5,16 +5,36 @@ import Host
 ## platform's TLS uses, seeded by the operating system), suitable for IDs,
 ## nonces, keys, and anything an attacker must not be able to predict.
 ##
-## If the generator fails, the program stops with an error message.
+## If the generator fails, the program stops with an error message: nothing
+## random could be trusted after that.
 Random := [].{
 
-	## `count` random bytes.
-	bytes! : U64 => List(U8)
-	bytes! = |count| Host.random_bytes!(count)
+	## `count` random bytes, at most 16 MiB (16,777,216). Asking for more
+	## fails with `TooManyBytes` before anything is allocated, and with
+	## `OutOfMemory` if the bytes can't be allocated. Keys, nonces and IDs
+	## need far less, so check a count that comes from untrusted input.
+	##
+	## ```roc
+	## key = Random.bytes!(32)?
+	## ```
+	bytes! : U64 => Try(List(U8), [TooManyBytes({ requested : U64, max : U64 }), OutOfMemory])
+	bytes! = |count| {
+		if count > max_bytes {
+			return Err(TooManyBytes({ requested: count, max: max_bytes }))
+		}
+		match Host.random_bytes!(count) {
+			Bytes(bytes) => Ok(bytes)
+			OutOfMemory => Err(OutOfMemory)
+		}
+	}
+
+	## The most `bytes!` gives at once: 16 MiB.
+	max_bytes : U64
+	max_bytes = 16 * 1024 * 1024
 
 	u8! : () => U8
 	u8! = || {
-		match bytes!(1) {
+		match few!(1) {
 			[a] => a
 			_ => 0
 		}
@@ -28,7 +48,7 @@ Random := [].{
 
 	u64! : () => U64
 	u64! = || {
-		match Bytes.take_u64_be(bytes!(8)) {
+		match Bytes.take_u64_be(few!(8)) {
 			Ok((n, _)) => n
 			Err(TooShort) => 0
 		}
@@ -57,4 +77,13 @@ Random := [].{
 		}
 		low + $n % range
 	}
+
+	## A handful of bytes, for the fixed-size functions above: far under the
+	## limit, and too few for running out of memory to be the likely end.
+	few! : U64 => List(U8)
+	few! = |count|
+		match bytes!(count) {
+			Ok(bytes) => bytes
+			Err(err) => crash "Random: couldn't get ${count.to_str()} random bytes: ${Str.inspect(err)}"
+		}
 }

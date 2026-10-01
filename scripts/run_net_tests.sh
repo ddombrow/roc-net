@@ -54,3 +54,48 @@ if [ -x "$noise_bin" ]; then
 else
     echo "SKIPPED: the Noise test vectors ($noise_bin, from tests/noise, wasn't built)"
 fi
+# The stdin checks (tests/stdin), fed input with a pause in it.
+stdin_bin="$(dirname "$bin")/stdin"
+if [ -x "$stdin_bin" ]; then
+    echo "== stdin"
+    marker=$(mktemp -u "${TMPDIR:-/tmp}/roc-net-stdin.XXXXXX")
+    # The rest only once the program says (by creating $marker) it has seen
+    # no line arrive; at most 30 seconds, so a failed check can't hang this.
+    {
+        printf 'first\n'
+        tries=0
+        while [ ! -e "$marker" ] && [ $tries -lt 600 ]; do sleep 0.05; tries=$((tries + 1)); done
+        # A line of exactly 1 MiB (accepted), then one a byte longer (refused).
+        head -c 1048576 /dev/zero | tr '\0' x; printf '\n'
+        head -c 1048577 /dev/zero | tr '\0' x; printf '\n'
+        printf 'second\nthird\n'
+    } | STDIN_TEST_MARKER="$marker" "$stdin_bin"
+    code=$?
+    rm -f "$marker"
+    [ $code = 0 ] || exit 1
+else
+    echo "SKIPPED: the stdin checks ($stdin_bin, from tests/stdin, wasn't built)"
+fi
+# Two Selects on one idle stream (tests/select_idle) must sleep, not wake
+# each other in a loop: about 4 seconds of waiting, well under half a second
+# of CPU.
+idle_bin="$(dirname "$bin")/select_idle"
+if [ -x "$idle_bin" ]; then
+    echo "== select_idle"
+    if [ -x /usr/bin/time ]; then
+        times=$( { /usr/bin/time -p "$idle_bin" >/dev/null; } 2>&1 ) || { echo "$times"; echo "FAILED: select_idle"; exit 1; }
+        cpu=$(echo "$times" | awk '$1 == "user" || $1 == "sys" { total += $2 } END { print total + 0 }')
+        if awk -v cpu="$cpu" 'BEGIN { exit !(cpu < 0.5) }'; then
+            echo "Idle Selects used ${cpu}s of CPU over 4s"
+        else
+            echo "$times"
+            echo "FAILED: idle Selects used ${cpu}s of CPU over 4s (they're waking each other)"
+            exit 1
+        fi
+    else
+        "$idle_bin" || exit 1
+        echo "SKIPPED: select_idle's CPU check (no /usr/bin/time here)"
+    fi
+else
+    echo "SKIPPED: the idle Select check ($idle_bin, from tests/select_idle, wasn't built)"
+fi

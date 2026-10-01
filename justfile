@@ -138,19 +138,31 @@ licenses:
 
 # Run the network tests (see scripts/run_net_tests.sh), every example's
 # `expect`s, then the smoke test
-test: (build-example "net_tests") build-log-tests build-noise-tests smoke
+test: (build-example "net_tests") build-log-tests build-noise-tests build-stdin-tests build-select-idle-tests smoke
     #!/usr/bin/env bash
     set -uo pipefail
     scripts/run_net_tests.sh {{bin_dir}}/net_tests || exit 1
     for f in $(grep -lE '^expect' examples/*/*.roc | xargs -n1 dirname | sort -u); do roc test "$f/main.roc" || exit 1; done
 
-linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline tests/log tests/noise"
+linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline tests/log tests/noise tests/stdin tests/select_idle"
 
 # Build the Noise test vectors' program (tests/noise) next to net_tests, where
 # scripts/run_net_tests.sh finds it
 build-noise-tests: build
     @mkdir -p {{bin_dir}}
     roc build tests/noise/main.roc --output={{bin_dir}}/noise
+
+# Build the stdin checks' program (tests/stdin) next to net_tests, where
+# scripts/run_net_tests.sh finds it
+build-stdin-tests: build
+    @mkdir -p {{bin_dir}}
+    roc build tests/stdin/main.roc --output={{bin_dir}}/stdin
+
+# Build the idle Select check's program (tests/select_idle) next to net_tests, where
+# scripts/run_net_tests.sh finds it
+build-select-idle-tests: build
+    @mkdir -p {{bin_dir}}
+    roc build tests/select_idle/main.roc --output={{bin_dir}}/select_idle
 
 # Build the `Log` test program (tests/log) next to net_tests, where
 # scripts/run_net_tests.sh finds it
@@ -202,8 +214,14 @@ linux-test: (build-linux "arm64musl") (build-linux "arm64glibc") (build-linux "x
         # reading from the terminal would stop it (SIGTTIN) instead of timing out.
         out=$(ROC_TARGET=$1 ROC_IMAGE=$2 ROC_PLATFORM=$(platform_of "$1") timeout 600 {{compose}} run --rm -T net-tests </dev/null 2>&1)
         code=$?
-        echo "$out" | tail -1
-        [ $code = 0 ] || { status=1; echo "FAILED (exit $code; 124 means it timed out)"; }
+        if [ $code = 0 ]; then
+            echo "$out" | tail -1
+        else
+            # Enough to see which check failed, and how.
+            echo "$out" | tail -30
+            status=1
+            echo "FAILED (exit $code; 124 means it timed out)"
+        fi
         {{compose}} down -t 1 >/dev/null 2>&1
     }
     resolver() {

@@ -40,13 +40,14 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Channel, Cryptography, Dns, Noise, Framing, IOErr, Log, Random, Pipe, Select, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
+	exposes [Bytes, Channel, Cryptography, Dns, Env, File, Noise, Framing, IOErr, Log, Random, Pipe, Select, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
 	packages { roc: "nightly-2026-09-29-7f11a82" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
 		"roc_stderr_line": Host.stderr_line!,
 		"roc_stdin_line": Host.stdin_line!,
 		"roc_stdin_read_line": Host.stdin_read_line!,
+		"roc_stdin_try_line": Host.stdin_try_line!,
 		"roc_stdout_line": Host.stdout_line!,
 		"roc_aead_open": Host.aead_open!,
 		"roc_aead_seal": Host.aead_seal!,
@@ -76,6 +77,12 @@ platform ""
 		"roc_channel_receive": Host.channel_receive!,
 		"roc_channel_send": Host.channel_send!,
 		"roc_dns_resolve": Host.dns_resolve!,
+		"roc_env_var": Host.env_var!,
+		"roc_file_delete": Host.file_delete!,
+		"roc_file_exists": Host.file_exists!,
+		"roc_file_read": Host.file_read!,
+		"roc_file_rename": Host.file_rename!,
+		"roc_file_write": Host.file_write!,
 		"roc_random_bytes": Host.random_bytes!,
 		"roc_time_now_ns": Host.time_now_ns!,
 		"roc_time_sleep_ns": Host.time_sleep_ns!,
@@ -136,6 +143,8 @@ import Task
 import Bytes
 import Channel
 import Dns
+import Env
+import File
 import Pipe
 import Cryptography
 import Noise
