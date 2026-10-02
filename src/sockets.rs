@@ -32,8 +32,14 @@ pub enum Socket {
 /// none). Operations that would block suspend the task instead (see
 /// `sched.rs`), until the socket is ready or the timeout passes.
 pub struct Conn<T> {
-    pub io: T,
+    /// Before `io`, since fields drop in order: the event-queue registration
+    /// must be removed while the descriptor is still open. Removal goes by
+    /// descriptor number, so once it's closed, the number may already belong
+    /// to a new socket on another thread, and removing "it" would remove
+    /// that socket's registration instead, leaving its tasks waiting for
+    /// events that never come (until their timeouts).
     reg: IoReg,
+    pub io: T,
     read_ms: AtomicU64,
     write_ms: AtomicU64,
 }

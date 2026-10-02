@@ -99,3 +99,12 @@ if [ -x "$idle_bin" ]; then
 else
     echo "SKIPPED: the idle Select check ($idle_bin, from tests/select_idle, wasn't built)"
 fi
+# Sockets closing while others open, reusing descriptor numbers: no
+# connection may lose its wake-ups (tests/fd_reuse).
+reuse_bin="$(dirname "$bin")/fd_reuse"
+if [ -x "$reuse_bin" ]; then
+    echo "== fd_reuse"
+    "$reuse_bin" 5 || exit 1
+else
+    echo "SKIPPED: the descriptor reuse check ($reuse_bin, from tests/fd_reuse, wasn't built)"
+fi

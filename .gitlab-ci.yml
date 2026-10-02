@@ -30,7 +30,7 @@ variables:
   LINUX_PROGRAMS: >-
     examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server
     examples/line_server examples/chat_server tests/e2e tests/resolve_deadline
-    tests/log tests/noise tests/stdin tests/select_idle
+    tests/log tests/noise tests/stdin tests/select_idle tests/fd_reuse
   # Keep Cargo's downloads inside the project directory so `cache` can save them.
   CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
 
