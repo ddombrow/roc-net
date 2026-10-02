@@ -4,7 +4,10 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
-## 0.5.1 (unreleased)
+## 0.5.1
+
+Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,
+x86-64) and static Linux (musl: arm64, x86-64).
 
 Fixed:
 
