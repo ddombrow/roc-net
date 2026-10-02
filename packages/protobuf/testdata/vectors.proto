@@ -1,0 +1,35 @@
+// The messages the test vectors in Protobuf.roc were encoded from, with
+// protoc (see testdata/make_vectors.sh).
+syntax = "proto3";
+
+message Scalars {
+  int32 i32 = 1;
+  int64 i64 = 2;
+  uint32 u32 = 3;
+  uint64 u64 = 4;
+  sint32 s32 = 5;
+  sint64 s64 = 6;
+  bool flag = 7;
+  fixed32 f32 = 8;
+  fixed64 f64 = 9;
+  sfixed32 sf32 = 10;
+  sfixed64 sf64 = 11;
+  float fl = 12;
+  double db = 13;
+  string text = 14;
+  bytes data = 15;
+}
+
+message Inner { int32 a = 1; string b = 2; }
+
+message Collections {
+  repeated int32 packed = 1;
+  repeated uint64 unpacked = 2 [packed = false];
+  repeated string names = 3;
+  Inner inner = 4;
+  repeated Inner inners = 5;
+  repeated sint64 zigzags = 6;
+  repeated double doubles = 7;
+}
+
+message Big { uint32 field_536870911 = 536870911; }

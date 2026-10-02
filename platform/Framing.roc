@@ -112,6 +112,77 @@ Framing := [].{
 			Err(EndOfStream)
 		}
 
+		## Read one message of a framing of your own, with `parse`: a pure
+		## function of the bytes buffered so far, answering
+		##
+		## - `Parsed(value, used)` when they start with a whole message: its
+		##   value, and how many bytes it took (the rest stay buffered for the
+		##   next read);
+		## - `NeedMore` when they're only the start of one;
+		## - `Malformed(err)` when they can't be the start of one.
+		##
+		## For protocols whose messages aren't lines or 4-byte-length frames
+		## (varint lengths, a protocol's own headers and bodies), written in a
+		## package or an app. A `Select` waits for one with `on_parsed`.
+		##
+		## ```roc
+		## # A one-byte length, then that many bytes.
+		## parse = |buffered|
+		##     match buffered {
+		##         [len, .. as rest] if List.len(rest) >= len.to_u64() =>
+		##             Parsed(List.take_first(rest, len.to_u64()), 1 + len.to_u64())
+		##         _ => NeedMore
+		##     }
+		## (message, next) = reader.read_parsed!(parse)?
+		## ```
+		##
+		## Fails with `Malformed(err)` as `parse` said, `TooLong` if a message is
+		## longer than the reader's maximum length (or that much is buffered
+		## without a whole one), and
+		## like the other reads otherwise (`EndOfStream`, `UnexpectedEof`,
+		## `MessageTimedOut`, `Idle`).
+		read_parsed! = |Reader.(r), parse| {
+			started = Time.now!()
+			{ stream, buffered, max_len, message_timeout_ns } = r
+			var $buffered = buffered
+			while True {
+				match parse($buffered) {
+					Parsed(value, used) => {
+						# The message found, not just what was buffered before it:
+						# one read can bring a whole oversized message.
+						if used > max_len {
+							return Err(TooLong)
+						}
+						return Ok((value, Reader.({ stream, buffered: List.drop_first($buffered, used), max_len, message_timeout_ns })))
+					}
+					Malformed(err) => return Err(Malformed(err))
+					NeedMore => {
+						if List.len($buffered) > max_len {
+							return Err(TooLong)
+						}
+						before = List.len($buffered)
+						$buffered =
+							match stream.read_append!($buffered, 4096) {
+								Ok(grown) => grown
+								Err(err) =>
+									return if before == 0 and timed_out(err) {
+										Err(Idle(Reader.({ stream, buffered: [], max_len, message_timeout_ns })))
+									} else {
+										Err(err)
+									}
+							}
+						if List.len($buffered) == before {
+							return if before == 0 Err(EndOfStream) else Err(UnexpectedEof)
+						}
+						if out_of_time!(message_timeout_ns, started) {
+							return Err(MessageTimedOut)
+						}
+					}
+				}
+			}
+			Err(EndOfStream)
+		}
+
 		## Read exactly `count` bytes, or fail with `UnexpectedEof` (or
 		## `EndOfStream` if the stream ended before any of them). Fails with
 		## `TooLong` if `count` is more than the reader's maximum length.
@@ -194,6 +265,18 @@ Framing := [].{
 
 		## For `Select.on_frame`: `read_frame!`, like `try_read_line!`.
 		try_read_frame! = |reader| try_read_with!(reader, frame_complete, |r| r.read_frame!())
+
+		## For `Select.on_parsed`: `read_parsed!`, like `try_read_line!`.
+		try_read_parsed! = |reader, parse|
+			try_read_with!(
+				reader,
+				|buffered|
+					match parse(buffered) {
+						NeedMore => False
+						_ => True
+					},
+				|r| r.read_parsed!(parse),
+			)
 
 		## Copy the next bytes of the stream to `to`: until it ends
 		## (`UntilEnd`) or exactly `n` of them (`Exactly(n)`), starting with

@@ -136,6 +136,25 @@ release version: test-bundle
 licenses:
     python3 scripts/rust_notices.py
 
+# Release one package (packages/NAME) as its own bundle, versioned on its
+# own: just release-package protobuf 0.1.0. See scripts/release_package.sh.
+release-package name version:
+    scripts/release_package.sh {{name}} {{version}}
+
+# The resp package's checks against a real Valkey too (in docker).
+interop-valkey:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cid=$(docker run -d --rm -p 127.0.0.1::6379 valkey/valkey:8)
+    trap 'docker stop "$cid" >/dev/null' EXIT
+    port=$(docker port "$cid" 6379 | head -1 | sed 's/.*://')
+    for _ in $(seq 1 50); do nc -z 127.0.0.1 "$port" 2>/dev/null && break; sleep 0.2; done
+    VALKEY_ADDRESS="127.0.0.1:$port" roc packages/resp/tests/main.roc
+
+# Bundle a package and check the bundle, without uploading anything.
+bundle-package name version:
+    DRY_RUN=1 scripts/release_package.sh {{name}} {{version}}
+
 # Run the network tests (see scripts/run_net_tests.sh), every example's
 # `expect`s, then the smoke test
 test: (build-example "net_tests") build-log-tests build-noise-tests build-stdin-tests build-select-idle-tests build-fd-reuse-tests build-signal-tests smoke
@@ -143,6 +162,10 @@ test: (build-example "net_tests") build-log-tests build-noise-tests build-stdin-
     set -uo pipefail
     scripts/run_net_tests.sh {{bin_dir}}/net_tests || exit 1
     for f in $(grep -lE '^expect' examples/*/*.roc | xargs -n1 dirname | sort -u); do roc test "$f/main.roc" || exit 1; done
+    # Each package's own tests (packages/NAME/*.roc's `expect`s).
+    for pkg in packages/*/main.roc; do echo "== $(dirname "$pkg")"; roc test "$pkg" || exit 1; done
+    # Packages' tests that need the platform (packages/NAME/tests/main.roc).
+    for app in packages/*/tests/main.roc; do echo "== $app"; roc "$app" || exit 1; done
 
 linux_programs := "examples/net_tests examples/tcp_echo_concurrent examples/udp_echo_server examples/line_server examples/chat_server tests/e2e tests/resolve_deadline tests/log tests/noise tests/stdin tests/select_idle tests/fd_reuse tests/signals"
 
