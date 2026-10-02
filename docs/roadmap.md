@@ -361,10 +361,32 @@ Driven by the chat example, justified without it (see the table above):
   fingerprints and a `known_peers` file, all in the example. Done, in one
   `Select` loop.
 
+## 0.6.0: Sockets and operations (ready to release)
+
+From reviewing roc-net as a general networking library (2026-10-02); each
+is for servers and clients in general, a proxy among them:
+
+- UDP receives say when a datagram was cut short (`truncated`), so a parser
+  never takes part of a packet for the whole.
+- Socket options: TCP keepalive, buffer sizes, a listener's backlog and
+  `SO_REUSEPORT`, a connection's local address or interface, UDP address
+  reuse, and Unix peer credentials.
+- Signals in `Select` (SIGINT, SIGTERM, SIGHUP, SIGUSR1/2), the piece
+  graceful shutdown was missing.
+- Examples, not platform code: retries with backoff, a connection pool,
+  and draining a server on SIGTERM.
+- Found along the way: `Listener.close!`, since draining needs to stop
+  taking connections while the listener is still referenced.
+- Mutual TLS (client certificates, verifying them, and checking a peer
+  certificate's names), moved up from "later".
+
 ## Later
 
-- 0.6: libp2p over TCP (peer IDs, libp2p-noise, multistream-select, yamux on
+- 0.7: libp2p over TCP (peer IDs, libp2p-noise, multistream-select, yamux on
   Select + scopes, identify, ping), interop with rust-libp2p.
-- 0.7: sans-I/O UDP foundation with QUIC (quinn-proto); libp2p over QUIC.
-- Then DTLS (rtc-dtls with aws-lc vs dimpl), mDNS/STUN/NAT traversal,
-  WebSocket, mTLS/ALPN, graceful shutdown, a deterministic network simulator.
+- 0.8: sans-I/O UDP foundation with QUIC (quinn-proto); libp2p over QUIC.
+- Then DTLS (rtc-dtls with aws-lc vs dimpl), mDNS/STUN/NAT traversal (and
+  UDP multicast interface, hop limit and packet info for them), WebSocket,
+  libp2p's TLS (self-signed certificates, checked its own way), TLS
+  listener options (backlog, port reuse), a deterministic network
+  simulator.

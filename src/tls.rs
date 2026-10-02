@@ -560,6 +560,33 @@ impl TlsStream {
         })
     }
 
+    /// The other side's certificate chain (DER, its own certificate first),
+    /// once the handshake is done; empty if it presented none (a client a
+    /// server didn't ask, or let in without one).
+    pub fn peer_certificates(&self) -> io::Result<Vec<Vec<u8>>> {
+        self.handshake()?;
+        let inner = lock(&self.inner);
+        let certs = match &inner.conn {
+            Connection::Client(conn) => conn.peer_certificates(),
+            Connection::Server(conn) => conn.peer_certificates(),
+        };
+        Ok(certs.unwrap_or_default().iter().map(|cert| cert.as_ref().to_vec()).collect())
+    }
+
+    /// Whether the other side's own certificate is for `name` (a DNS name,
+    /// wildcards as browsers match them, or an IP address), as a client
+    /// checks a server's: for a server deciding what a client may do. False
+    /// if it presented none.
+    pub fn peer_certificate_valid_for(&self, name: &str) -> io::Result<bool> {
+        let certs = self.peer_certificates()?;
+        let Some(leaf) = certs.first() else { return Ok(false) };
+        let name = ServerName::try_from(name.to_string())
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, format!("{name:?} is not a DNS name or IP address: {err}")))?;
+        let der = CertificateDer::from(leaf.as_slice());
+        let cert = webpki::EndEntityCert::try_from(&der).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, format!("the peer's certificate: {err}")))?;
+        Ok(cert.verify_is_valid_for_subject_name(&name).is_ok())
+    }
+
     /// The application protocol agreed with ALPN, once the handshake is done.
     pub fn alpn_protocol(&self) -> io::Result<Option<Vec<u8>>> {
         self.handshake()?;
@@ -674,17 +701,53 @@ fn alpn_ids(protocols: &[String]) -> Vec<Vec<u8>> {
     protocols.iter().map(|protocol| protocol.as_bytes().to_vec()).collect()
 }
 
+/// The CA certificate(s) in `ca_file`.
+fn load_roots(ca_file: &str) -> io::Result<RootCertStore> {
+    let mut roots = RootCertStore::empty();
+    for cert in load_certs(ca_file)? {
+        roots.add(cert).map_err(|err| file_error(ca_file, err))?;
+    }
+    Ok(roots)
+}
+
+fn load_key(key_file: &str) -> io::Result<PrivateKeyDer<'static>> {
+    let pem = fs::read(key_file).map_err(|err| file_error(key_file, err))?;
+    PrivateKeyDer::from_pem_slice(&pem).map_err(|err| file_error(key_file, err))
+}
+
+/// A client's own certificate chain and key, for servers that ask for one
+/// (mutual TLS).
+pub struct ClientCert<'a> {
+    pub cert_file: &'a str,
+    pub key_file: &'a str,
+}
+
 /// A client configuration: Mozilla's root certificates, or only the CA
-/// certificate(s) in `ca_file` if one is given, offering `alpn`.
-fn client_config(ca_file: &str, alpn: &[String]) -> io::Result<Arc<ClientConfig>> {
-    let base = if ca_file.is_empty() {
-        default_client_config()
-    } else {
-        let mut roots = RootCertStore::empty();
-        for cert in load_certs(ca_file)? {
-            roots.add(cert).map_err(|err| file_error(ca_file, err))?;
+/// certificate(s) in `ca_file` if one is given, offering `alpn`, and
+/// presenting `cert` if there is one.
+fn client_config(ca_file: &str, alpn: &[String], cert: Option<&ClientCert>) -> io::Result<Arc<ClientConfig>> {
+    let base = match (ca_file.is_empty(), cert) {
+        (true, None) => default_client_config(),
+        _ => {
+            let roots = if ca_file.is_empty() {
+                RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() }
+            } else {
+                load_roots(ca_file)?
+            };
+            let builder = ClientConfig::builder().with_root_certificates(roots);
+            Arc::new(match cert {
+                None => builder.with_no_client_auth(),
+                Some(cert) => builder
+                    .with_client_auth_cert(load_certs(cert.cert_file)?, load_key(cert.key_file)?)
+                    .map_err(|err| match err {
+                        rustls::Error::InconsistentKeys(_) => io::Error::other(format!(
+                            "{}: the private key in {} doesn't match this certificate",
+                            cert.cert_file, cert.key_file
+                        )),
+                        err => file_error(cert.key_file, err),
+                    })?,
+            })
         }
-        Arc::new(ClientConfig::builder().with_root_certificates(roots).with_no_client_auth())
     };
     if alpn.is_empty() {
         return Ok(base);
@@ -753,8 +816,7 @@ fn check_cert_name(name: &str) -> io::Result<()> {
 
 fn load_certified_key(files: &CertFiles, provider: &CryptoProvider) -> io::Result<CertifiedKey> {
     let certs = load_certs(&files.cert_file)?;
-    let pem = fs::read(&files.key_file).map_err(|err| file_error(&files.key_file, err))?;
-    let key = PrivateKeyDer::from_pem_slice(&pem).map_err(|err| file_error(&files.key_file, err))?;
+    let key = load_key(&files.key_file)?;
     CertifiedKey::from_der(certs, key, provider).map_err(|err| match err {
         rustls::Error::InconsistentKeys(_) => io::Error::other(format!(
             "{}: the private key in {} doesn't match this certificate",
@@ -764,9 +826,18 @@ fn load_certified_key(files: &CertFiles, provider: &CryptoProvider) -> io::Resul
     })
 }
 
-/// A server configuration presenting `certs` (see [`CertsByName`]) and
-/// accepting the application protocols `alpn`.
-pub fn server_config(certs: &[CertFiles], alpn: &[String]) -> io::Result<Arc<ServerConfig>> {
+/// Whether a server asks clients for certificates (mutual TLS): verified
+/// against the CA certificate(s) in `ca_file`, and if not `required`,
+/// clients without one are let in too.
+pub struct ClientAuth<'a> {
+    pub ca_file: &'a str,
+    pub required: bool,
+}
+
+/// A server configuration presenting `certs` (see [`CertsByName`]),
+/// accepting the application protocols `alpn`, and checking clients'
+/// certificates as `client_auth` says.
+pub fn server_config(certs: &[CertFiles], alpn: &[String], client_auth: Option<&ClientAuth>) -> io::Result<Arc<ServerConfig>> {
     let provider = rustls::crypto::aws_lc_rs::default_provider();
     let mut resolver = CertsByName::default();
     for files in certs {
@@ -778,11 +849,19 @@ pub fn server_config(certs: &[CertFiles], alpn: &[String]) -> io::Result<Arc<Ser
             resolver.by_name.insert(normalize_name(&files.name), key);
         }
     }
-    let mut config = ServerConfig::builder_with_provider(Arc::new(provider))
+    let provider = Arc::new(provider);
+    let builder = ServerConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
-        .map_err(tls_error)?
-        .with_no_client_auth()
-        .with_cert_resolver(Arc::new(resolver));
+        .map_err(tls_error)?;
+    let builder = match client_auth {
+        None => builder.with_no_client_auth(),
+        Some(auth) => {
+            let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(Arc::new(load_roots(auth.ca_file)?), provider);
+            let verifier = if auth.required { verifier } else { verifier.allow_unauthenticated() };
+            builder.with_client_cert_verifier(verifier.build().map_err(|err| file_error(auth.ca_file, err))?)
+        }
+    };
+    let mut config = builder.with_cert_resolver(Arc::new(resolver));
     config.alpn_protocols = alpn_ids(alpn);
     Ok(Arc::new(config))
 }
@@ -806,11 +885,12 @@ pub fn client(
     server_name: &str,
     ca_file: &str,
     alpn: &[String],
+    cert: Option<&ClientCert>,
     deadline: Option<Instant>,
 ) -> io::Result<TlsStream> {
     let name = ServerName::try_from(server_name.to_string())
         .map_err(|err| io::Error::other(format!("{server_name:?} is not a valid server name: {err}")))?;
-    let conn = ClientConnection::new(client_config(ca_file, alpn)?, name).map_err(tls_error)?;
+    let conn = ClientConnection::new(client_config(ca_file, alpn, cert)?, name).map_err(tls_error)?;
     let stream = TlsStream::new(tcp, Connection::Client(conn), deadline);
     stream.handshake()?;
     Ok(stream)

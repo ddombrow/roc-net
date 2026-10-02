@@ -5,7 +5,7 @@ use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -42,6 +42,12 @@ pub struct Conn<T> {
     pub io: T,
     read_ms: AtomicU64,
     write_ms: AtomicU64,
+    /// [`close_now`](Conn::close_now) has closed it: for a listener,
+    /// accepting fails. Only set once the close has happened.
+    closed: AtomicBool,
+    /// Held while closing, so [`closed_settled`](Conn::closed_settled) can
+    /// wait for a close under way to finish.
+    closing: std::sync::Mutex<()>,
 }
 
 impl<T: AsRawFd> Conn<T> {
@@ -52,7 +58,54 @@ impl<T: AsRawFd> Conn<T> {
             reg: IoReg::default(),
             read_ms: AtomicU64::new(0),
             write_ms: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
+            closing: std::sync::Mutex::new(()),
         }
+    }
+
+    /// Close the socket now, though Roc may still hold its handle: for a
+    /// listener, stop taking connections (new ones are refused) and end the
+    /// waits of tasks accepting on it. The descriptor is pointed at a fresh,
+    /// unconnected socket (`dup2` closes the old one in the same step), so
+    /// its number stays this socket's until the handle is dropped, and can't
+    /// be reused under its registration (see `reg`).
+    pub fn close_now(&self) -> io::Result<()> {
+        let _closing = self.closing.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.closed.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let fd = self.io.as_raw_fd();
+        let placeholder = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+        if placeholder < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let rc = unsafe { libc::dup2(placeholder, fd) };
+        let err = io::Error::last_os_error();
+        unsafe {
+            libc::close(placeholder);
+            // dup2 clears close-on-exec, and the placeholder is blocking.
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK);
+        }
+        if rc < 0 {
+            return Err(err);
+        }
+        // Closed for accepting first, then for waiting: a task woken by the
+        // second already finds the first.
+        self.closed.store(true, Ordering::SeqCst);
+        self.reg.close(fd);
+        Ok(())
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    /// Whether it's closed, once any close under way has finished: for an
+    /// operation that just failed, to tell whether the close is why.
+    pub fn closed_settled(&self) -> bool {
+        drop(self.closing.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+        self.is_closed()
     }
 
     pub fn set_read_timeout_ms(&self, ms: u64) {
@@ -83,7 +136,12 @@ impl<T: AsRawFd> Conn<T> {
         loop {
             match op(&self.io) {
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    crate::sched::wait_io(self.io.as_raw_fd(), &self.reg, writable, deadline)?
+                    crate::sched::wait_io(self.io.as_raw_fd(), &self.reg, writable, deadline)?;
+                    // Closed under us (`close_now`): waits now return at once, so
+                    // stop rather than retry for ever.
+                    if self.is_closed() {
+                        return Err(io::Error::new(io::ErrorKind::NotConnected, "the socket is closed"));
+                    }
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
                 result => {

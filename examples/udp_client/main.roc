@@ -28,7 +28,7 @@ main! = |args| {
 	socket.send!(Str.to_utf8(message))?
 
 	match socket.recv!(65536) {
-		Ok(reply) => Stdout.line!("Received: ${Str.from_utf8_lossy(reply)}")
+		Ok(reply) => Stdout.line!("Received: ${Str.from_utf8_lossy(reply.bytes)}")
 		Err(UdpErr(TimedOut)) => {
 			Stdout.line!("No reply from ${address} within 2 seconds.")?
 			Err(Exit(1))

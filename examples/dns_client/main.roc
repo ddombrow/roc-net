@@ -87,7 +87,8 @@ ask_udp! = |socket, query, id| {
 ## to an earlier attempt, or junk) is ignored.
 wait_for_reply! = |socket, id| {
 	while True {
-		datagram = socket.recv!(65535)?
+		# 65535 bytes holds any UDP datagram, so none is cut short.
+		datagram = socket.recv!(65535)?.bytes
 		match Dns.decode_response(datagram) {
 			Ok(reply) if reply.id == id => return Ok(reply)
 			_ => {}
