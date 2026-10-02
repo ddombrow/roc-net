@@ -4,6 +4,24 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.5.1
+
+Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,
+x86-64) and static Linux (musl: arm64, x86-64).
+
+Fixed:
+
+- **A socket could stop getting wake-ups**, so a task waiting on it sat
+  until its timeout with data waiting (or for ever, without one). Closing a
+  socket closed its descriptor and only then removed its event-queue
+  registration, by descriptor number. In between, another thread could open
+  a socket and get the same number, and its registration was the one
+  removed. It needed sockets opening and closing at once on different
+  threads, so it was rare, and more likely the busier a server got; it has
+  been there since the scheduler arrived. A new stress check
+  (`tests/fd_reuse`), which lost 7 to 24 wake-ups in 10 seconds before the
+  fix, loses none after it.
+
 ## 0.5.0
 
 Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,
