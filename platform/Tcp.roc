@@ -39,6 +39,14 @@ Tcp := [].{
 		## After listening on port 0, this tells you which port the OS chose.
 		local_addr! : Listener => Try(Str, [TcpErr(IOErr)])
 		local_addr! = |Listener.(listener)| tcp_err(Host.socket_local_addr!(listener))
+
+		## Stop listening now: new connections are refused, and `accept!` (or a
+		## `Select`'s `on_accept` arm), including one already waiting, fails
+		## with `TcpErr(NotConnected)`. Connections already accepted carry on.
+		## For a server shutting down, which shouldn't take connections it won't
+		## serve; otherwise a listener closes once nothing refers to it.
+		close! : Listener => Try({}, [TcpErr(IOErr)])
+		close! = |Listener.(listener)| tcp_err(Host.listener_close!(listener))
 	}
 
 	## A connected TCP stream.
@@ -160,6 +168,39 @@ Tcp := [].{
 		## The other end's address.
 		peer_addr! : Stream => Try(Str, [TcpErr(IOErr)])
 		peer_addr! = |Stream.(stream)| tcp_err(Host.socket_peer_addr!(stream))
+
+		## TCP keepalive: after `idle_secs` with nothing received, probe the
+		## peer every `interval_secs`, and end the connection (reads then fail)
+		## after `probes` unanswered probes. Finds peers that vanished without
+		## closing (a crashed machine, a dropped network), and keeps NAT and
+		## firewall state alive on quiet connections. Off by default.
+		##
+		## ```roc
+		## stream.set_keepalive!(On({ idle_secs: 60, interval_secs: 10, probes: 6 }))?
+		## ```
+		set_keepalive! : Stream, [Off, On({ idle_secs : U64, interval_secs : U64, probes : U32 })] => Try({}, [TcpErr(IOErr)])
+		set_keepalive! = |Stream.(handle), setting|
+			match setting {
+				Off => tcp_err(Host.socket_set_keepalive!(handle, False, 0, 0, 0))
+				On({ idle_secs, interval_secs, probes }) => tcp_err(Host.socket_set_keepalive!(handle, True, idle_secs, interval_secs, probes))
+			}
+
+		## Ask for a receive buffer of `bytes`: how much the operating system
+		## holds for this socket before the sender has to wait (or, for UDP,
+		## before datagrams are dropped). It may adjust the size (Linux doubles
+		## it, for its own bookkeeping); `recv_buffer_size!` says what it chose.
+		set_recv_buffer_size! : Stream, U64 => Try({}, [TcpErr(IOErr)])
+		set_recv_buffer_size! = |Stream.(handle), bytes| tcp_err(Host.socket_set_buffer_size!(handle, 0, bytes))
+
+		## Ask for a send buffer of `bytes` (see `set_recv_buffer_size!`).
+		set_send_buffer_size! : Stream, U64 => Try({}, [TcpErr(IOErr)])
+		set_send_buffer_size! = |Stream.(handle), bytes| tcp_err(Host.socket_set_buffer_size!(handle, 1, bytes))
+
+		recv_buffer_size! : Stream => Try(U64, [TcpErr(IOErr)])
+		recv_buffer_size! = |Stream.(handle)| tcp_err(Host.socket_buffer_size!(handle, 0))
+
+		send_buffer_size! : Stream => Try(U64, [TcpErr(IOErr)])
+		send_buffer_size! = |Stream.(handle)| tcp_err(Host.socket_buffer_size!(handle, 1))
 	}
 
 	## Timeouts for the streams a listener accepts, so a client that goes
@@ -174,7 +215,7 @@ Tcp := [].{
 	##
 	## Each accepted stream starts with these; its `set_read_timeout!` and
 	## `set_write_timeout!` change them for that stream.
-	ListenConfig :: { idle_ms : U64, write_ms : U64 }.{
+	ListenConfig :: { idle_ms : U64, write_ms : U64, backlog : U32, reuse_port : Bool }.{
 
 		## How long a read on an accepted stream waits for data before failing
 		## with `TimedOut`: a client that stays silent this long is dropped.
@@ -188,11 +229,27 @@ Tcp := [].{
 		## with `TimedOut`.
 		with_write_timeout : ListenConfig, [NoTimeout, Millis(U64)] -> ListenConfig
 		with_write_timeout = |ListenConfig.(config), timeout| ListenConfig.({ ..config, write_ms: timeout_ms(timeout) })
+
+		## How many connections may wait to be accepted before more are
+		## refused (or, on Linux, left to retry): raise it for a server that
+		## gets bursts of connections. The system caps it (Linux:
+		## `net.core.somaxconn`, 4096 by default).
+		with_backlog : ListenConfig, U32 -> ListenConfig
+		with_backlog = |ListenConfig.(config), backlog| ListenConfig.({ ..config, backlog })
+
+		## Let several listeners bind the same address and port
+		## (`SO_REUSEPORT`), each listening with this set. On Linux, new
+		## connections are spread between them: one listener per worker
+		## process, or a new process starting to listen before the old one
+		## stops, for restarts without refusing connections.
+		with_reuse_port : ListenConfig, Bool -> ListenConfig
+		with_reuse_port = |ListenConfig.(config), reuse_port| ListenConfig.({ ..config, reuse_port })
 	}
 
-	## Idle and write timeouts of 60 seconds.
+	## Idle and write timeouts of 60 seconds, a backlog of 1024, and no port
+	## reuse.
 	listen_config : ListenConfig
-	listen_config = ListenConfig.({ idle_ms: 60000, write_ms: 60000 })
+	listen_config = ListenConfig.({ idle_ms: 60000, write_ms: 60000, backlog: 1024, reuse_port: False })
 
 	## Listen on `address`, such as `"127.0.0.1:8080"`, with `listen_config`:
 	## accepted streams time out after 60 seconds without data, or 60 seconds
@@ -204,7 +261,7 @@ Tcp := [].{
 	## Listen on `address` with the given timeouts for accepted streams.
 	listen_with! : Str, ListenConfig => Try(Listener, [TcpErr(IOErr)])
 	listen_with! = |address, ListenConfig.(config)|
-		match Host.tcp_listen!(address, config.idle_ms, config.write_ms) {
+		match Host.tcp_listen!(address, config.idle_ms, config.write_ms, config.backlog, config.reuse_port) {
 			Ok(listener) => Ok(Listener.(listener))
 			Err(err) => Err(TcpErr(err))
 		}
@@ -222,8 +279,41 @@ Tcp := [].{
 	## the time left, so an unreachable first address can't use up the whole
 	## timeout. An IP address, such as `"127.0.0.1:8080"`, skips the lookup.
 	connect_timeout! : Str, [Millis(U64)] => Try(Stream, [TcpErr(IOErr)])
-	connect_timeout! = |address, Millis(ms)|
-		match Host.tcp_connect!(address, ms) {
+	connect_timeout! = |address, timeout| connect_with!(address, connect_config.with_timeout(timeout))
+
+	## How `connect_with!` connects. Start from `connect_config` and adjust.
+	ConnectConfig :: { timeout_ms : U64, local_address : Str, interface_name : Str }.{
+
+		## Give up with `TimedOut` after `timeout` (see `connect_timeout!`).
+		with_timeout : ConnectConfig, [Millis(U64)] -> ConnectConfig
+		with_timeout = |ConnectConfig.(config), Millis(ms)| ConnectConfig.({ ..config, timeout_ms: ms })
+
+		## Connect from `address`, such as `"10.0.0.2:0"` (port 0: any): on a
+		## machine with several addresses, the one the peer sees, and the
+		## network the connection leaves by.
+		with_local_address : ConnectConfig, Str -> ConnectConfig
+		with_local_address = |ConnectConfig.(config), local_address| ConnectConfig.({ ..config, local_address })
+
+		## Send the connection out through the network interface named
+		## `name`, such as `"eth1"`, whatever the routing table says (Linux:
+		## `SO_BINDTODEVICE`; macOS: `IP_BOUND_IF`). An unknown name fails
+		## with `NotFound`.
+		with_interface : ConnectConfig, Str -> ConnectConfig
+		with_interface = |ConnectConfig.(config), name| ConnectConfig.({ ..config, interface_name: name })
+	}
+
+	## A 30-second timeout, from any local address and interface.
+	connect_config : ConnectConfig
+	connect_config = ConnectConfig.({ timeout_ms: 30000, local_address: "", interface_name: "" })
+
+	## Connect to `address` with the options in `config`:
+	##
+	## ```roc
+	## stream = Tcp.connect_with!("10.0.1.5:8080", Tcp.connect_config.with_interface("eth1"))?
+	## ```
+	connect_with! : Str, ConnectConfig => Try(Stream, [TcpErr(IOErr)])
+	connect_with! = |address, ConnectConfig.(config)|
+		match Host.tcp_connect!(address, config.timeout_ms, config.local_address, config.interface_name) {
 			Ok(stream) => Ok(Stream.(stream))
 			Err(err) => Err(TcpErr(err))
 		}

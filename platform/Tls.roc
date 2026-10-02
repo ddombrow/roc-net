@@ -54,6 +54,14 @@ Tls := [].{
 		## The address this listener is bound to.
 		local_addr! : Listener => Try(Str, [TlsErr(IOErr)])
 		local_addr! = |Listener.(listener)| tls_err(Host.socket_local_addr!(listener))
+
+		## Stop listening now: new connections are refused, and `accept!` (or a
+		## `Select`'s `on_accept` arm), including one already waiting, fails
+		## with `TlsErr(NotConnected)`. Connections already accepted carry on.
+		## For a server shutting down, which shouldn't take connections it won't
+		## serve; otherwise a listener closes once nothing refers to it.
+		close! : Listener => Try({}, [TlsErr(IOErr)])
+		close! = |Listener.(listener)| tls_err(Host.listener_close!(listener))
 	}
 
 	## An encrypted stream.
@@ -96,6 +104,34 @@ Tls := [].{
 		## `handshake!`.
 		alpn_protocol! : Stream => Try(Str, [TlsErr(IOErr)])
 		alpn_protocol! = |Stream.(stream)| tls_err(Host.tls_alpn_protocol!(stream))
+
+		## The other side's certificate chain, DER-encoded, its own
+		## certificate first: on a client stream, the server's; on a server
+		## stream, the client's (mutual TLS, see `ServerConfig.with_client_auth`),
+		## or `[]` if it presented none. Already verified by the handshake;
+		## for pinning a peer (compare `Crypto.SHA256.hash(cert)`) or logging
+		## who connected. Completes the handshake first, like `handshake!`.
+		peer_certificates! : Stream => Try(List(List(U8)), [TlsErr(IOErr)])
+		peer_certificates! = |Stream.(stream)| tls_err(Host.tls_peer_certificates!(stream))
+
+		## Whether the other side's certificate is for `name`, a DNS name
+		## (`"billing.internal"`) or an IP address, checked as a client checks
+		## a server's. For a server deciding what a client may do once its
+		## certificate has been verified:
+		##
+		## ```roc
+		## if stream.peer_certificate_valid_for!("billing.internal")? {
+		##     serve_billing!(stream)
+		## } else {
+		##     stream.write_str!("not allowed\n")
+		## }
+		## ```
+		##
+		## `False` if it presented no certificate. Fails with
+		## `TlsErr(InvalidInput)` if `name` is neither a DNS name nor an IP
+		## address.
+		peer_certificate_valid_for! : Stream, Str => Try(Bool, [TlsErr(IOErr)])
+		peer_certificate_valid_for! = |Stream.(stream), name| tls_err(Host.tls_peer_certificate_valid_for!(stream, name))
 
 		## Read up to `max` decrypted bytes. Returns an empty list once the
 		## peer has ended the session properly; fails with `UnexpectedEof` if
@@ -222,6 +258,39 @@ Tls := [].{
 		set_nodelay! : Stream, Bool => Try({}, [TlsErr(IOErr)])
 		set_nodelay! = |Stream.(stream), enabled| tls_err(Host.tcp_set_nodelay!(stream, enabled))
 
+		## TCP keepalive (see `Tcp.Stream.set_keepalive!`): after `idle_secs` with nothing received, probe the
+		## peer every `interval_secs`, and end the connection (reads then fail)
+		## after `probes` unanswered probes. Finds peers that vanished without
+		## closing (a crashed machine, a dropped network), and keeps NAT and
+		## firewall state alive on quiet connections. Off by default.
+		##
+		## ```roc
+		## stream.set_keepalive!(On({ idle_secs: 60, interval_secs: 10, probes: 6 }))?
+		## ```
+		set_keepalive! : Stream, [Off, On({ idle_secs : U64, interval_secs : U64, probes : U32 })] => Try({}, [TlsErr(IOErr)])
+		set_keepalive! = |Stream.(handle), setting|
+			match setting {
+				Off => tls_err(Host.socket_set_keepalive!(handle, False, 0, 0, 0))
+				On({ idle_secs, interval_secs, probes }) => tls_err(Host.socket_set_keepalive!(handle, True, idle_secs, interval_secs, probes))
+			}
+
+		## Ask for a receive buffer of `bytes`: how much the operating system
+		## holds for this socket before the sender has to wait (or, for UDP,
+		## before datagrams are dropped). It may adjust the size (Linux doubles
+		## it, for its own bookkeeping); `recv_buffer_size!` says what it chose.
+		set_recv_buffer_size! : Stream, U64 => Try({}, [TlsErr(IOErr)])
+		set_recv_buffer_size! = |Stream.(handle), bytes| tls_err(Host.socket_set_buffer_size!(handle, 0, bytes))
+
+		## Ask for a send buffer of `bytes` (see `set_recv_buffer_size!`).
+		set_send_buffer_size! : Stream, U64 => Try({}, [TlsErr(IOErr)])
+		set_send_buffer_size! = |Stream.(handle), bytes| tls_err(Host.socket_set_buffer_size!(handle, 1, bytes))
+
+		recv_buffer_size! : Stream => Try(U64, [TlsErr(IOErr)])
+		recv_buffer_size! = |Stream.(handle)| tls_err(Host.socket_buffer_size!(handle, 0))
+
+		send_buffer_size! : Stream => Try(U64, [TlsErr(IOErr)])
+		send_buffer_size! = |Stream.(handle)| tls_err(Host.socket_buffer_size!(handle, 1))
+
 		local_addr! : Stream => Try(Str, [TlsErr(IOErr)])
 		local_addr! = |Stream.(stream)| tls_err(Host.socket_local_addr!(stream))
 
@@ -235,7 +304,7 @@ Tls := [].{
 	## config = Tls.client_config.with_ca_file("certs/dev-ca.pem")
 	## stream = Tls.connect_with!("127.0.0.1:8443", config.with_server_name("localhost"))?
 	## ```
-	ClientConfig :: { ca_file : Str, server_name : Str, alpn : List(Str), timeout_ms : U64 }.{
+	ClientConfig :: { ca_file : Str, server_name : Str, alpn : List(Str), timeout_ms : U64, cert_file : Str, key_file : Str }.{
 
 		## Trust only the CA certificate(s) in this PEM file instead of
 		## Mozilla's roots: for servers with certificates from your own CA.
@@ -262,12 +331,18 @@ Tls := [].{
 		## alive still times out.
 		with_timeout : ClientConfig, [Millis(U64)] -> ClientConfig
 		with_timeout = |ClientConfig.(config), Millis(ms)| ClientConfig.({ ..config, timeout_ms: ms })
+
+		## Present this certificate chain and private key (PEM files) to
+		## servers that ask for one: mutual TLS, where the server checks who
+		## the client is (see `ServerConfig.with_client_auth`).
+		with_client_cert : ClientConfig, { cert_file : Str, key_file : Str } -> ClientConfig
+		with_client_cert = |ClientConfig.(config), files| ClientConfig.({ ..config, cert_file: files.cert_file, key_file: files.key_file })
 	}
 
 	## Mozilla's root certificates, the address's host as the server name, no
-	## ALPN, and a 30-second timeout.
+	## ALPN, no client certificate, and a 30-second timeout.
 	client_config : ClientConfig
-	client_config = ClientConfig.({ ca_file: "", server_name: "", alpn: [], timeout_ms: 30000 })
+	client_config = ClientConfig.({ ca_file: "", server_name: "", alpn: [], timeout_ms: 30000, cert_file: "", key_file: "" })
 
 	## Connect to `address`, such as `"example.com:443"`, with `client_config`.
 	connect! : Str => Try(Stream, [TlsErr(IOErr)])
@@ -276,7 +351,7 @@ Tls := [].{
 	## Connect to `address` using `config`.
 	connect_with! : Str, ClientConfig => Try(Stream, [TlsErr(IOErr)])
 	connect_with! = |address, ClientConfig.(config)|
-		match Host.tls_connect!(address, config.server_name, config.ca_file, config.alpn, config.timeout_ms) {
+		match Host.tls_connect!(address, config.server_name, config.ca_file, config.alpn, config.timeout_ms, config.cert_file, config.key_file) {
 			Ok(stream) => Ok(Stream.(stream))
 			Err(err) => Err(TlsErr(err))
 		}
@@ -299,7 +374,21 @@ Tls := [].{
 	## 		.with_cert_for("api.example.com", { cert_file: "api.pem", key_file: "api-key.pem" })
 	## 		.with_cert_for("*.example.com", { cert_file: "wild.pem", key_file: "wild-key.pem" })
 	## ```
-	ServerConfig :: { certs : List(Host.TlsCert), alpn : List(Str), handshake_timeout_ms : U64, idle_ms : U64, write_ms : U64 }.{
+	ServerConfig :: { certs : List(Host.TlsCert), alpn : List(Str), handshake_timeout_ms : U64, idle_ms : U64, write_ms : U64, client_ca_file : Str, client_auth : U8 }.{
+
+		## Ask clients for a certificate, and verify it against the CA
+		## certificate(s) in the PEM file `ca_file`: mutual TLS, for services
+		## that must know who's calling. With `Required`, a client without a
+		## valid certificate fails the handshake; with `Optional`, one without
+		## any is let in too (one with an invalid certificate still fails), and
+		## the stream's `peer_certificates!` is `[]`.
+		##
+		## The handshake proves the client holds the key for a certificate your
+		## CA issued; `peer_certificate_valid_for!` then says which name it was
+		## issued for.
+		with_client_auth : ServerConfig, Str, [Required, Optional] -> ServerConfig
+		with_client_auth = |ServerConfig.(config), ca_file, mode|
+			ServerConfig.({ ..config, client_ca_file: ca_file, client_auth: if mode == Required 2 else 1 })
 
 		## Present this certificate chain and private key to clients that ask
 		## for `name` (SNI), such as `"api.example.com"`. A name starting with
@@ -369,12 +458,14 @@ Tls := [].{
 			handshake_timeout_ms: 10000,
 			idle_ms: 60000,
 			write_ms: 60000,
+			client_ca_file: "",
+			client_auth: 0,
 		})
 
 	## Listen for TLS connections on `address`.
 	listen! : Str, ServerConfig => Try(Listener, [TlsErr(IOErr)])
 	listen! = |address, ServerConfig.(config)|
-		match Host.tls_listen!(address, config.certs, config.alpn, config.handshake_timeout_ms, config.idle_ms, config.write_ms) {
+		match Host.tls_listen!(address, config.certs, config.alpn, config.handshake_timeout_ms, config.idle_ms, config.write_ms, config.client_ca_file, config.client_auth) {
 			Ok(listener) => Ok(Listener.(listener))
 			Err(err) => Err(TlsErr(err))
 		}
@@ -388,7 +479,7 @@ Tls := [].{
 	## raw bytes in the middle of the TLS session would break it.
 	wrap_client! : Tcp.Stream, ClientConfig => Try(Stream, [TlsErr(IOErr)])
 	wrap_client! = |stream, ClientConfig.(config)|
-		match Host.tls_wrap_client!(Tcp.to_socket(stream), config.server_name, config.ca_file, config.alpn, config.timeout_ms) {
+		match Host.tls_wrap_client!(Tcp.to_socket(stream), config.server_name, config.ca_file, config.alpn, config.timeout_ms, config.cert_file, config.key_file) {
 			Ok(tls) => Ok(Stream.(tls))
 			Err(err) => Err(TlsErr(err))
 		}
@@ -397,7 +488,7 @@ Tls := [].{
 	## The handshake timeout counts from this call.
 	wrap_server! : Tcp.Stream, ServerConfig => Try(Stream, [TlsErr(IOErr)])
 	wrap_server! = |stream, ServerConfig.(config)|
-		match Host.tls_wrap_server!(Tcp.to_socket(stream), config.certs, config.alpn, config.handshake_timeout_ms) {
+		match Host.tls_wrap_server!(Tcp.to_socket(stream), config.certs, config.alpn, config.handshake_timeout_ms, config.client_ca_file, config.client_auth) {
 			Ok(tls) => Ok(Stream.(tls))
 			Err(err) => Err(TlsErr(err))
 		}

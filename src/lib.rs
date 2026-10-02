@@ -6,6 +6,7 @@ use std::ffi::c_void;
 use std::io::{self, Write};
 use std::mem::ManuallyDrop;
 
+mod alloc;
 mod channels;
 mod copy;
 mod crypto;
@@ -15,6 +16,7 @@ mod log;
 mod resource;
 mod roc_platform_abi;
 mod sockets;
+mod sockopts;
 mod tasks;
 mod time;
 mod tls;
@@ -23,11 +25,12 @@ mod noise;
 mod random;
 mod resolve;
 mod sched;
+mod signals;
 mod stdin;
 mod select;
 
 use crate::roc_platform_abi::{
-    make_roc_host, roc_main, DefaultAllocators, DefaultHandlers, HostStderrLineResult,
+    make_roc_host, roc_main, DefaultHandlers, HostStderrLineResult,
     HostStderrLineResultPayload, HostStderrLineResultTag, HostStdinLineResult,
     HostStdinLineResultPayload, HostStdinLineResultTag, HostStdoutLineResult,
     HostStdoutLineResultPayload, HostStdoutLineResultTag, RocHost, RocList, RocStr,
@@ -223,7 +226,7 @@ pub extern "C" fn roc_stdout_line(message: RocStr) -> HostStdoutLineResult {
 
 #[no_mangle]
 pub extern "C" fn roc_alloc(length: usize, alignment: usize) -> *mut c_void {
-    DefaultAllocators::roc_alloc(roc_host_ptr(), length, alignment)
+    alloc::alloc(roc_host_ptr(), length, alignment)
 }
 
 #[no_mangle]
@@ -236,7 +239,8 @@ pub extern "C" fn roc_dealloc(ptr: *mut c_void, alignment: usize) {
 /// to the socket heap, which closes them; everything else is ordinary memory.
 extern "C" fn host_dealloc(roc_host: *mut RocHost, ptr: *mut c_void, alignment: usize) {
     if !sockets::release(ptr) && !channels::release(ptr) && !tasks::release(ptr) {
-        DefaultAllocators::roc_dealloc(roc_host, ptr, alignment);
+        let _ = roc_host;
+        alloc::dealloc(ptr, alignment);
     }
 }
 
@@ -246,7 +250,7 @@ pub extern "C" fn roc_realloc(
     new_length: usize,
     alignment: usize,
 ) -> *mut c_void {
-    DefaultAllocators::roc_realloc(roc_host_ptr(), ptr, new_length, alignment)
+    alloc::realloc(roc_host_ptr(), ptr, new_length, alignment)
 }
 
 #[no_mangle]
@@ -323,7 +327,9 @@ fn run(args: &[String]) -> i32 {
 
     // Leaked so it stays valid for tasks that are still running when `main!` returns.
     let roc_host: &'static mut RocHost = Box::leak(Box::new(RocHost {
+        roc_alloc: alloc::alloc,
         roc_dealloc: host_dealloc,
+        roc_realloc: alloc::realloc,
         ..make_roc_host(core::ptr::null_mut())
     }));
     set_roc_host(roc_host);

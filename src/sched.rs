@@ -967,6 +967,9 @@ const KEY_MASK: usize = (1 << KEY_BITS) - 1;
 struct IoState {
     token: usize,
     fd: RawFd,
+    /// [`IoReg::close`] has run: waits refuse to start (under `waiters`'
+    /// lock, so none can slip in after the last wake-up).
+    closed: AtomicBool,
     /// The worker whose event queue watches this socket, plus one; 0: none.
     owner: AtomicUsize,
     waiters: Mutex<Vec<IoWaiter>>,
@@ -992,10 +995,28 @@ impl IoReg {
             let entry = table.vacant_entry();
             let generation = IO_GENERATION.fetch_add(1, Ordering::Relaxed) as usize;
             let token = entry.key() | (generation << KEY_BITS);
-            let state = Arc::new(IoState { token, fd, owner: AtomicUsize::new(0), waiters: Mutex::new(Vec::new()) });
+            let state = Arc::new(IoState { token, fd, closed: AtomicBool::new(false), owner: AtomicUsize::new(0), waiters: Mutex::new(Vec::new()) });
             entry.insert(state.clone());
             state
         })
+    }
+}
+
+impl IoReg {
+    /// The socket was closed under its handle: wake every task waiting on it
+    /// (no event will come; their retry finds out why), and make later waits
+    /// return at once instead of starting. Both under the waiters' lock, so a
+    /// wait can't register just after the last wake-up and sleep for ever.
+    pub fn close(&self, fd: RawFd) {
+        let state = self.state(fd);
+        let woken: Vec<(Arc<Task>, u64)> = {
+            let mut waiters = lock(&state.waiters);
+            state.closed.store(true, Ordering::SeqCst);
+            waiters.drain(..).map(|waiter| (waiter.task, waiter.wait)).collect()
+        };
+        for (task, wait) in woken {
+            wake(&task, wait, Woke::Ready);
+        }
     }
 }
 
@@ -1026,7 +1047,11 @@ pub fn wait_io(fd: RawFd, reg: &IoReg, writable: bool, deadline: Option<Instant>
     };
     let state = reg.state(fd).clone();
     let wait = begin_wait(&task, true);
-    watch_io(worker, &state, &task, wait, writable)?;
+    if !watch_io(worker, &state, &task, wait, writable)? {
+        // Closed: return, ending the wait, for the caller's retry to see why.
+        let _ = task.wait.compare_exchange(wait, 0, Ordering::AcqRel, Ordering::Acquire);
+        return Ok(());
+    }
     let woke = wait_suspended(&task, wait, deadline);
     // Gone already if an event woke it; still there if it didn't.
     lock(&state.waiters).retain(|waiter| waiter.wait != wait);
@@ -1044,11 +1069,17 @@ pub fn wait_io(fd: RawFd, reg: &IoReg, writable: bool, deadline: Option<Instant>
 /// re-arming a socket reports readiness that's already there, so an event
 /// that another worker handled just before this waiter was added isn't
 /// lost.)
-fn watch_io(worker: &Worker, state: &Arc<IoState>, task: &Arc<Task>, wait: u64, writable: bool) -> io::Result<()> {
+///
+/// Returns `false`, registering nothing, if the socket has been closed
+/// ([`IoReg::close`]).
+fn watch_io(worker: &Worker, state: &Arc<IoState>, task: &Arc<Task>, wait: u64, writable: bool) -> io::Result<bool> {
     let fd = state.fd;
     let token = Token(state.token);
     let interest = Interest::READABLE | Interest::WRITABLE;
     let mut waiters = lock(&state.waiters);
+    if state.closed.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
     let owner = state.owner.load(Ordering::Acquire);
     let mine = worker.index() + 1;
     let other = owner.checked_sub(1).and_then(|index| workers().get(index)).and_then(OnceLock::get);
@@ -1056,11 +1087,11 @@ fn watch_io(worker: &Worker, state: &Arc<IoState>, task: &Arc<Task>, wait: u64, 
     if owner == mine {
         // Events for it are handled by this thread, which can't handle any
         // until this task suspends.
-        return Ok(());
+        return Ok(true);
     }
     if owner != 0 && waiters.len() > 1 {
         if let Some(other) = other {
-            return other.registry.reregister(&mut SourceFd(&fd), token, interest);
+            return other.registry.reregister(&mut SourceFd(&fd), token, interest).map(|()| true);
         }
     }
     if let Some(old) = other {
@@ -1075,7 +1106,7 @@ fn watch_io(worker: &Worker, state: &Arc<IoState>, task: &Arc<Task>, wait: u64, 
     match registered {
         Ok(()) => {
             state.owner.store(mine, Ordering::Release);
-            Ok(())
+            Ok(true)
         }
         Err(err) => {
             state.owner.store(0, Ordering::Release);
@@ -1112,7 +1143,11 @@ impl MultiWait {
     pub fn add_io(&mut self, fd: RawFd, reg: &IoReg, writable: bool) -> io::Result<()> {
         let worker = current_worker().expect("a task is running");
         let state = reg.state(fd).clone();
-        watch_io(worker, &state, &self.task, self.wait, writable)?;
+        if !watch_io(worker, &state, &self.task, self.wait, writable)? {
+            // Closed: an error, which a Select takes as "poll again", to find
+            // out why.
+            return Err(io::Error::new(io::ErrorKind::NotConnected, "the socket is closed"));
+        }
         self.io.push(state);
         Ok(())
     }

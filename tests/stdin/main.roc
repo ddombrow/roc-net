@@ -3,7 +3,8 @@ app [main!] { roc: "nightly-2026-09-29-7f11a82", pf: platform "../../platform/ma
 # Checks for reading stdin through `Select` and `Stdin`, run by
 # scripts/run_net_tests.sh with this input: "first", then (once this
 # program creates the file named by STDIN_TEST_MARKER) a line of exactly
-# 1 MiB, one a byte longer, "second" and "third", then the end. Waiting for the marker, not a fixed time, keeps it
+# 1 MiB, the same ending in \r\n, one a byte longer, "second" and "third",
+# then the end. Waiting for the marker, not a fixed time, keeps it
 # reliable on a slow machine.
 
 import pf.Env
@@ -29,6 +30,15 @@ main! = |_| {
 			expect_eq(got, "timed out")
 		}),
 		check!("stdin: a line of exactly 1 MiB is read", || {
+			got = Stdin.read_line!({})?
+			length =
+				match got {
+					Line(text) => Str.count_utf8_bytes(text)
+					End => 0
+				}
+			expect_eq(length, 1048576)
+		}),
+		check!("stdin: a line of exactly 1 MiB ending in \\r\\n is read", || {
 			got = Stdin.read_line!({})?
 			length =
 				match got {

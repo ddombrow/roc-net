@@ -39,7 +39,7 @@ main! = |_args| {
 		check!("udp round trip", udp_round_trip!),
 		check!("udp connected", udp_connected!),
 		check!("udp read timeout", udp_read_timeout!),
-		check!("udp truncates long datagrams", udp_truncate!),
+		check!("udp truncates long datagrams, and says so", udp_truncate!),
 		check!("udp connected to closed port", udp_refused!),
 		check!("framing: lines split across writes", framing_lines!),
 		check!("framing: length-prefixed frames", framing_frames!),
@@ -176,6 +176,21 @@ main! = |_args| {
 		check!("noise: over a unix socket", noise_unix!),
 		check!("bytes: hex both ways, and its errors", bytes_hex!),
 		check!("random: bytes! gives up to 16 MiB, and refuses more", random_bytes_limit!),
+		check!("tcp: keepalive on and off, and its checks", tcp_keepalive!),
+		check!("sockets: buffer sizes are at least what was asked (tcp, unix, udp)", socket_buffer_sizes!),
+		check!("tcp: a second listener on the port needs with_reuse_port", tcp_reuse_port!),
+		check!("udp: a second socket on the port needs with_reuse_port", udp_reuse_port!),
+		check!("tcp: connect_with! from a local address", tcp_connect_from_local!),
+		check!("tcp: connect_with! through an interface, or NotFound", tcp_connect_interface!),
+		check!("tcp: a listener with a small backlog still accepts", tcp_backlog!),
+		check!("unix: peer credentials, the same seen from both ends", unix_peer_credentials!),
+		check!("tcp: Listener.close! wakes accept! and Select, refuses new connections, keeps old ones", tcp_listener_close!),
+		check!("tcp: Listener.close! racing an accept! that's just starting never strands it", tcp_listener_close_race!),
+		check!("mtls: a required client certificate, checked by name", mtls_required!),
+		check!("mtls: a required certificate refuses a client without one", mtls_required_without_cert!),
+		check!("mtls: a required certificate refuses one from another CA", mtls_stranger_cert!),
+		check!("mtls: an optional certificate lets a client without one in", mtls_optional!),
+		check!("mtls: wrap_client! and wrap_server! with client certificates", mtls_wrapped!),
 		check!("noise: CipherState.with_nonce decrypts out of order", noise_with_nonce!),
 		check!("scope: cancel_all! stops a helper the body no longer needs", scope_cancel_all!),
 		check!("noise: Select waits for a whole message, kept across waits", noise_select_partial!),
@@ -447,7 +462,7 @@ udp_connected! = || {
 	client.connect!(server_address)?
 	expect_eq(client.peer_addr!()?, server_address)?
 	client.send!(Str.to_utf8("hello"))?
-	expect_eq(Str.from_utf8_lossy(client.recv!(1024)?), "hello")
+	expect_eq(Str.from_utf8_lossy(client.recv!(1024)?.bytes), "hello")
 }
 
 udp_read_timeout! = || {
@@ -464,7 +479,17 @@ udp_truncate! = || {
 	(sender, _) = udp_anywhere!()?
 	receiver.set_read_timeout!(Millis(2000))?
 	sender.send_to!(Str.to_utf8("0123456789"), address)?
-	expect_eq(Str.from_utf8_lossy(receiver.recv_from!(4)?.bytes), "0123")
+	cut = receiver.recv_from!(4)?
+	sender.send_to!(Str.to_utf8("0123"), address)?
+	exact = receiver.recv_from!(4)?
+	# The same through a connected socket's recv!.
+	receiver.connect!(sender.local_addr!()?)?
+	sender.send_to!(Str.to_utf8("abcdef"), address)?
+	connected = receiver.recv!(3)?
+	expect_eq(
+		((Str.from_utf8_lossy(cut.bytes), cut.truncated), (Str.from_utf8_lossy(exact.bytes), exact.truncated), (Str.from_utf8_lossy(connected.bytes), connected.truncated)),
+		(("0123", True), ("0123", False), ("abc", True)),
+	)
 }
 
 # A connected UDP socket learns from the OS that nothing is listening.
@@ -3882,4 +3907,288 @@ random_bytes_limit! = || {
 			_ => Err({})
 		}
 	expect_eq((List.len(most), refused), (16777216, Ok({ requested: 16777217, max: 16777216 })))
+}
+
+tcp_keepalive! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |_| Ok({}))?
+	stream = Tcp.connect!(address)?
+	stream.set_keepalive!(On({ idle_secs: 30, interval_secs: 5, probes: 3 }))?
+	stream.set_keepalive!(Off)?
+	zero = shown(stream.set_keepalive!(On({ idle_secs: 0, interval_secs: 5, probes: 3 })))
+	expect_eq(zero, "Err(TcpErr(InvalidInput))")
+}
+
+socket_buffer_sizes! = || {
+	(listener, address) = listen_anywhere!()?
+	serve_once!(listener, |_| Ok({}))?
+	tcp = Tcp.connect!(address)?
+	tcp.set_recv_buffer_size!(262144)?
+	tcp.set_send_buffer_size!(131072)?
+	path = "/tmp/roc-net-tests-buffers.sock"
+	unix_listener = Unix.listen!(path)?
+	_ = Task.spawn!(|| {
+		_ = unix_listener.accept!()?
+		Ok({})
+	})?
+	unix = Unix.connect!(path)?
+	unix.set_send_buffer_size!(131072)?
+	(udp, _) = udp_anywhere!()?
+	udp.set_recv_buffer_size!(262144)?
+	# The system may round up (Linux doubles it), never down below a size
+	# this modest.
+	expect_eq(
+		(tcp.recv_buffer_size!()? >= 262144, tcp.send_buffer_size!()? >= 131072, unix.send_buffer_size!()? >= 131072, udp.recv_buffer_size!()? >= 262144),
+		(True, True, True, True),
+	)
+}
+
+tcp_reuse_port! = || {
+	config = Tcp.listen_config.with_reuse_port(True)
+	first = Tcp.listen_with!("127.0.0.1:0", config)?
+	address = first.local_addr!()?
+	second = Tcp.listen_with!(address, config)
+	without = shown(Tcp.listen!(address))
+	_ = first.local_addr!()?
+	expect_eq((shown(second), without), ("Ok", "Err(TcpErr(AddrInUse))"))
+}
+
+udp_reuse_port! = || {
+	config = Udp.bind_config.with_reuse_port(True)
+	first = Udp.bind_with!("127.0.0.1:0", config)?
+	address = first.local_addr!()?
+	second = Udp.bind_with!(address, config)
+	without = shown(Udp.bind!(address))
+	_ = first.local_addr!()?
+	expect_eq((shown(second), without), ("Ok", "Err(UdpErr(AddrInUse))"))
+}
+
+tcp_connect_from_local! = || {
+	(listener, address) = listen_anywhere!()?
+	(seen_tx, seen) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		seen_tx.send!(stream.peer_addr!()?)?
+		Ok({})
+	})?
+	stream = Tcp.connect_with!(address, Tcp.connect_config.with_local_address("127.0.0.1:0"))?
+	local = stream.local_addr!()?
+	peer_seen = seen.receive_timeout!(Time.seconds(5))?
+	bad = shown(Tcp.connect_with!(address, Tcp.connect_config.with_local_address("not an address")))
+	expect_eq((Str.starts_with(local, "127.0.0.1:"), peer_seen == local, bad), (True, True, "Err(TcpErr(InvalidInput))"))
+}
+
+# The loopback interface is "lo" on Linux and "lo0" on macOS.
+tcp_connect_interface! = || {
+	(listener, address) = listen_anywhere!()?
+	_ = Task.spawn!(|| {
+		_ = listener.accept!()?
+		_ = listener.accept!()?
+		Ok({})
+	})?
+	through! = |name| Tcp.connect_with!(address, Tcp.connect_config.with_interface(name))
+	loopback =
+		match through!("lo") {
+			Ok(_) => "Ok"
+			Err(TcpErr(NotFound)) => shown(through!("lo0"))
+			Err(err) => Str.inspect(err)
+		}
+	missing = shown(through!("nosuchif0"))
+	expect_eq((loopback, missing), ("Ok", "Err(TcpErr(NotFound))"))
+}
+
+tcp_backlog! = || {
+	listener = Tcp.listen_with!("127.0.0.1:0", Tcp.listen_config.with_backlog(4))?
+	address = listener.local_addr!()?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		stream.write_str!("hi")?
+		Ok({})
+	})?
+	stream = Tcp.connect!(address)?
+	expect_eq(Str.from_utf8_lossy(stream.read!(2)?), "hi")
+}
+
+unix_peer_credentials! = || {
+	path = "/tmp/roc-net-tests-peercred.sock"
+	listener = Unix.listen!(path)?
+	(seen_tx, seen) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		seen_tx.send!(stream.peer_credentials!()?)?
+		Ok({})
+	})?
+	client = Unix.connect!(path)?
+	mine = client.peer_credentials!()?
+	theirs = seen.receive_timeout!(Time.seconds(5))?
+	# Used until here: an end closes after its last use, and macOS stops
+	# reporting a peer's process once it has disconnected.
+	client.close!()
+	has_pid =
+		match mine.pid {
+			Pid(pid) => pid > 0
+			Unknown => False
+		}
+	# One process at both ends: each sees the same user, group and process.
+	expect_eq((mine == theirs, has_pid), (True, True))
+}
+
+tcp_listener_close! = || {
+	(listener, address) = listen_anywhere!()?
+	# One connection accepted before the close, which must keep working.
+	(old_tx, old) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		old_tx.send!(stream)?
+		Ok({})
+	})?
+	client = Tcp.connect!(address)?
+	server_side = old.receive_timeout!(Time.seconds(5))?
+	# Then a task waiting in accept!, and one in a Select.
+	(waiting_tx, waiting) = Channel.new!(2)?
+	_ = Task.spawn!(|| waiting_tx.send!(shown(listener.accept!())))?
+	_ = Task.spawn!(|| {
+		got = Select.new({}).on_accept(listener, |result| shown(result)).on_timeout(Time.seconds(5), || "timed out").wait!()?
+		waiting_tx.send!(got)
+	})?
+	Time.sleep!(Time.millis(50))?
+	listener.close!()?
+	first = waiting.receive_timeout!(Time.seconds(2))?
+	second = waiting.receive_timeout!(Time.seconds(2))?
+	refused = shown(Tcp.connect_timeout!(address, Millis(1000)))
+	client.write_str!("still here")?
+	echoed = server_side.read!(10)?
+	expect_eq(
+		(first, second, refused, Str.from_utf8_lossy(echoed)),
+		("Err(TcpErr(NotConnected))", "Err(TcpErr(NotConnected))", "Err(TcpErr(ConnectionRefused))", "still here"),
+	)
+}
+
+# The close lands as the accept starts: the accepting task says it's about
+# to accept, and the close follows at once (with several workers, on
+# another thread at the same moment). It can come before, during or after
+# the accept starts waiting, and each way the accept must end promptly with
+# NotConnected.
+tcp_listener_close_race! = || {
+	var $stranded : U64
+	var $stranded = 0
+	var $wrong = []
+	var $round : U64
+	var $round = 0
+	while $round < 300 {
+		(listener, _) = listen_anywhere!()?
+		(result_tx, result) = Channel.new!(1)?
+		(starting_tx, starting) = Channel.new!(1)?
+		use_select = $round % 2 == 1
+		_ = Task.spawn!(|| {
+			starting_tx.send!({})?
+			got =
+				if use_select {
+					Select.new({}).on_accept(listener, |r| shown(r)).wait!()?
+				} else {
+					shown(listener.accept!())
+				}
+			result_tx.send!(got)
+		})?
+		_ = starting.receive_timeout!(Time.seconds(2))?
+		listener.close!()?
+		match result.receive_timeout!(Time.seconds(2)) {
+			Ok("Err(TcpErr(NotConnected))") => {}
+			Ok(other) => {
+				$wrong = List.append($wrong, other)
+			}
+			Err(_) => {
+				$stranded = $stranded + 1
+			}
+		}
+		$round = $round + 1
+	}
+	expect_eq(($stranded, List.take_first($wrong, 3)), (0, []))
+}
+
+client_cert = { cert_file: "examples/net_tests/certs/client.pem", key_file: "examples/net_tests/certs/client-key.pem" }
+stranger_cert = { cert_file: "examples/net_tests/certs/stranger.pem", key_file: "examples/net_tests/certs/stranger-key.pem" }
+
+## A TLS listener checking client certificates as `mode` says, whose one
+## connection reports, over the channel returned, how its handshake went and
+## what it saw of the client.
+mtls_server! = |mode| {
+	listener = Tls.listen!("127.0.0.1:0", test_server_cert.with_client_auth(test_ca, mode))?
+	address = listener.local_addr!()?
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		seen =
+			match stream.handshake!() {
+				Err(err) => Err(Str.inspect(err))
+				Ok({}) => {
+					certs = stream.peer_certificates!()?
+					Ok({ certs: List.len(certs), client_test: stream.peer_certificate_valid_for!("client.test")?, other_test: stream.peer_certificate_valid_for!("other.test")? })
+				}
+			}
+		_ = stream.write_str!("hello")
+		report_tx.send!(seen)
+	})?
+	Ok((address, report))
+}
+
+mtls_required! = || {
+	(address, report) = mtls_server!(Required)?
+	client = Tls.connect_with!(address, trusting_test_ca.with_server_name("localhost").with_client_cert(client_cert))?
+	server_certs = List.len(client.peer_certificates!()?)
+	server_is_localhost = client.peer_certificate_valid_for!("localhost")?
+	reply = client.read!(5)?
+	seen = report.receive_timeout!(Time.seconds(5))?
+	expect_eq(
+		(server_certs > 0, server_is_localhost, Str.from_utf8_lossy(reply), seen),
+		(True, True, "hello", Ok({ certs: 1, client_test: True, other_test: False })),
+	)
+}
+
+# The client's side may finish before the server has checked it (TLS 1.3),
+# so the refusal shows on the client's first read, if not at connect.
+mtls_refused! = |config| {
+	(address, report) = mtls_server!(Required)?
+	client_side =
+		match Tls.connect_with!(address, config) {
+			Err(_) => "refused"
+			Ok(client) =>
+				match client.read!(5) {
+					Err(_) => "refused"
+					Ok(bytes) => "got ${Str.from_utf8_lossy(bytes)}"
+				}
+		}
+	server_side =
+		match report.receive_timeout!(Time.seconds(5))? {
+			Err(_) => "refused"
+			Ok(_) => "accepted"
+		}
+	expect_eq((client_side, server_side), ("refused", "refused"))
+}
+
+mtls_required_without_cert! = || mtls_refused!(trusting_test_ca.with_server_name("localhost"))
+
+mtls_stranger_cert! = || mtls_refused!(trusting_test_ca.with_server_name("localhost").with_client_cert(stranger_cert))
+
+mtls_optional! = || {
+	(address, report) = mtls_server!(Optional)?
+	client = Tls.connect_with!(address, trusting_test_ca.with_server_name("localhost"))?
+	reply = client.read!(5)?
+	seen = report.receive_timeout!(Time.seconds(5))?
+	expect_eq((Str.from_utf8_lossy(reply), seen), ("hello", Ok({ certs: 0, client_test: False, other_test: False })))
+}
+
+mtls_wrapped! = || {
+	(listener, address) = listen_anywhere!()?
+	(report_tx, report) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		plain = listener.accept!()?
+		tls = Tls.wrap_server!(plain, test_server_cert.with_client_auth(test_ca, Required))?
+		tls.handshake!()?
+		report_tx.send!(tls.peer_certificate_valid_for!("client.test")?)
+	})?
+	plain = Tcp.connect!(address)?
+	tls = Tls.wrap_client!(plain, trusting_test_ca.with_server_name("localhost").with_client_cert(client_cert))?
+	server_name_ok = tls.peer_certificate_valid_for!("localhost")?
+	expect_eq((server_name_ok, report.receive_timeout!(Time.seconds(5))?), (True, True))
 }
