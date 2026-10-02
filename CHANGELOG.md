@@ -4,6 +4,54 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.6.0
+
+Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,
+x86-64) and static Linux (musl: arm64, x86-64).
+
+Breaking:
+
+- **UDP receives say when a datagram was cut short.** `recv_from!` returns
+  `{ bytes, from, truncated }`, and `recv!` returns `{ bytes, truncated }`
+  instead of the bytes alone. Before, a datagram longer than `max` was cut
+  with nothing to say so.
+
+Added:
+
+- **`Signal`**: catch SIGINT, SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2
+  (`Signal.catch!`), then wait for them with `Signal.next!` or a `Select`'s
+  `on_signal` arm, alongside connections and timers.
+- **`Listener.close!`** (`Tcp`, `Unix`, `Tls`): stop taking connections now;
+  `accept!`, even one already waiting or just starting to, fails with
+  `NotConnected`.
+- **Mutual TLS.** Servers: `Tls.server_config(...).with_client_auth(ca_file,
+  Required)` (or `Optional`) verifies client certificates against that CA.
+  Clients: `Tls.client_config.with_client_cert({ cert_file, key_file })`.
+  Either side: `stream.peer_certificates!()` (the other side's chain, DER)
+  and `stream.peer_certificate_valid_for!(name)`, for deciding what a
+  verified client may do.
+- **Socket options**: `set_keepalive!` on TCP and TLS streams; receive and
+  send buffer sizes on TCP, TLS, Unix and UDP sockets; a listener's backlog
+  (now 1024 by default) and `SO_REUSEPORT` (`Tcp.listen_config`); a
+  connection's local address or interface (`Tcp.connect_with!`); UDP address
+  reuse (`Udp.bind_with!`); `Unix.Stream.peer_credentials!`.
+- **Examples**: `retry_backoff` (exponential backoff with jitter),
+  `connection_pool` (a bounded, lazily filled pool that replaces broken
+  connections) and `graceful_server` (draining on SIGTERM: in-flight requests
+  finish, idle connections close, the rest are cancelled after a grace
+  period).
+
+Fixed:
+
+- **`Random.bytes!` reports running out of memory in every case.** It
+  allocated twice, and the second allocation, the Roc list itself, still
+  ended the program on failure. It now allocates the list once, in a way
+  that can fail, and fills it in place. (The host now has its own
+  allocator, laid out as the glue's was, so the two can't drift apart.)
+- **A line of exactly 1 MiB ending in `\r\n` was refused** as too long by
+  `Stdin.read_line!` and `Select.on_stdin_line`: the `\r` was counted
+  towards the limit, which is meant to exclude the line ending.
+
 ## 0.5.1
 
 Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,

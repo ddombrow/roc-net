@@ -40,6 +40,14 @@ Unix := [].{
 		## The path this listener is bound to.
 		local_addr! : Listener => Try(Str, [UnixErr(IOErr)])
 		local_addr! = |Listener.(listener)| unix_err(Host.socket_local_addr!(listener))
+
+		## Stop listening now: new connections are refused, and `accept!` (or a
+		## `Select`'s `on_accept` arm), including one already waiting, fails
+		## with `UnixErr(NotConnected)`. Connections already accepted carry on.
+		## For a server shutting down, which shouldn't take connections it won't
+		## serve; otherwise a listener closes once nothing refers to it.
+		close! : Listener => Try({}, [UnixErr(IOErr)])
+		close! = |Listener.(listener)| unix_err(Host.listener_close!(listener))
 	}
 
 	## A connected Unix domain stream.
@@ -151,6 +159,35 @@ Unix := [].{
 		## The other end's path (empty if it has none).
 		peer_addr! : Stream => Try(Str, [UnixErr(IOErr)])
 		peer_addr! = |Stream.(stream)| unix_err(Host.socket_peer_addr!(stream))
+
+		## Who is at the other end, as the operating system recorded it when
+		## they connected: their user and group ids, and their process id
+		## (`Unknown` where the system doesn't say, as macOS doesn't once the
+		## peer has disconnected). The peer can't forge these, so a local
+		## service can use them to decide what a client may do.
+		peer_credentials! : Stream => Try({ uid : U32, gid : U32, pid : [Pid(I32), Unknown] }, [UnixErr(IOErr)])
+		peer_credentials! = |Stream.(stream)|
+			match Host.unix_peer_credentials!(stream) {
+				Ok({ uid, gid, pid }) => Ok({ uid, gid, pid: if pid < 0 Unknown else Pid(pid) })
+				Err(err) => Err(UnixErr(err))
+			}
+
+		## Ask for a receive buffer of `bytes`: how much the operating system
+		## holds for this socket before the sender has to wait (or, for UDP,
+		## before datagrams are dropped). It may adjust the size (Linux doubles
+		## it, for its own bookkeeping); `recv_buffer_size!` says what it chose.
+		set_recv_buffer_size! : Stream, U64 => Try({}, [UnixErr(IOErr)])
+		set_recv_buffer_size! = |Stream.(handle), bytes| unix_err(Host.socket_set_buffer_size!(handle, 0, bytes))
+
+		## Ask for a send buffer of `bytes` (see `set_recv_buffer_size!`).
+		set_send_buffer_size! : Stream, U64 => Try({}, [UnixErr(IOErr)])
+		set_send_buffer_size! = |Stream.(handle), bytes| unix_err(Host.socket_set_buffer_size!(handle, 1, bytes))
+
+		recv_buffer_size! : Stream => Try(U64, [UnixErr(IOErr)])
+		recv_buffer_size! = |Stream.(handle)| unix_err(Host.socket_buffer_size!(handle, 0))
+
+		send_buffer_size! : Stream => Try(U64, [UnixErr(IOErr)])
+		send_buffer_size! = |Stream.(handle)| unix_err(Host.socket_buffer_size!(handle, 1))
 	}
 
 	## Timeouts for the streams a listener accepts, so a client that goes

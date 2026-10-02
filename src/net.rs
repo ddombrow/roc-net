@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::roc_host;
 use crate::roc_platform_abi::{
     decref_box_with, AcceptedOrFailedOrNotReady, AcceptedOrFailedOrNotReadyPayload, AcceptedOrFailedOrNotReadyTag,
-    DataOrFailedOrNotReady, DataOrFailedOrNotReadyPayload, DataOrFailedOrNotReadyTag, AnonStruct4f4f23a245dfe10a as RocRecvFrom, HostDnsResolveResult,
+    DataOrFailedOrNotReady, DataOrFailedOrNotReadyPayload, DataOrFailedOrNotReadyTag, AnonStruct6954d79c85a0b6fd as RocRecvFrom, AnonStruct20e6ccaadf41c1a1 as RocRecv, HostUdpRecvResult, HostUdpRecvResultPayload, HostUdpRecvResultTag, HostDnsResolveResult,
     HostDnsResolveResultPayload, HostDnsResolveResultTag, HostIOErr, HostIOErrPayload,
     HostIOErrTag, HostSocketAcceptResult, HostSocketAcceptResultPayload,
     HostSocketAcceptResultTag, HostSocketLocalAddrResult, HostSocketLocalAddrResultPayload,
@@ -188,7 +188,7 @@ fn release_handle(handle: *mut u64) {
 }
 
 /// Run `f` on the socket behind `handle`, then release the handle.
-fn with_socket<T>(handle: *mut u64, f: impl FnOnce(&Socket) -> NetResult<T>) -> NetResult<T> {
+pub(crate) fn with_socket<T>(handle: *mut u64, f: impl FnOnce(&Socket) -> NetResult<T>) -> NetResult<T> {
     let result = match unsafe { sockets::get(handle) } {
         Some(socket) => f(socket),
         None => Err(NetErr::Other("invalid socket handle".into())),
@@ -241,7 +241,7 @@ fn with_str<T>(text: RocStr, f: impl FnOnce(&str) -> T) -> T {
 /// share of the time left, so an unreachable first address (say, IPv6 on a
 /// network without it) can't use up the whole budget before the others get a
 /// turn. Without a deadline, nothing is bounded but the OS's own limits.
-fn tcp_connect(address: &str, deadline: Option<std::time::Instant>) -> NetResult<Conn<TcpStream>> {
+fn tcp_connect(address: &str, deadline: Option<std::time::Instant>, from: &ConnectFrom) -> NetResult<Conn<TcpStream>> {
     let addrs = crate::resolve::socket_addrs(address, deadline)?;
     let mut last_err = None;
     for (i, addr) in addrs.iter().enumerate() {
@@ -256,7 +256,7 @@ fn tcp_connect(address: &str, deadline: Option<std::time::Instant>) -> NetResult
                 std::time::Instant::now().checked_add(share.max(Duration::from_millis(1)))
             }
         };
-        match connect_one(*addr, attempt_deadline) {
+        match connect_one(*addr, attempt_deadline, from) {
             Ok(stream) => return Ok(stream),
             Err(err) => last_err = Some(err),
         }
@@ -270,10 +270,71 @@ fn tcp_connect(address: &str, deadline: Option<std::time::Instant>) -> NetResult
     })))
 }
 
+/// Where a connection leaves from: a local address to bind first, and an
+/// interface to bind to (either may be absent).
+pub struct ConnectFrom {
+    pub local: Option<SocketAddr>,
+    pub interface: Option<String>,
+}
+
+impl ConnectFrom {
+    pub const ANY: ConnectFrom = ConnectFrom { local: None, interface: None };
+
+    fn parse(local: &str, interface: &str) -> io::Result<ConnectFrom> {
+        let local = match local {
+            "" => None,
+            text => Some(text.parse::<SocketAddr>().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, format!("{text:?} is not a local address like \"10.0.0.2:0\""))
+            })?),
+        };
+        Ok(ConnectFrom { local, interface: (!interface.is_empty()).then(|| interface.to_string()) })
+    }
+}
+
+/// Bind `socket` to the network interface `name`.
+fn bind_interface(socket: &socket2::Socket, name: &str, ipv6: bool) -> io::Result<()> {
+    let not_found = || io::Error::new(io::ErrorKind::NotFound, format!("no network interface named {name:?}"));
+    #[cfg(target_os = "linux")]
+    {
+        let _ = ipv6;
+        socket.bind_device(Some(name.as_bytes())).map_err(|err| {
+            if err.raw_os_error() == Some(libc::ENODEV) {
+                not_found()
+            } else {
+                err
+            }
+        })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let cname = std::ffi::CString::new(name).map_err(|_| not_found())?;
+        let index = std::num::NonZeroU32::new(unsafe { libc::if_nametoindex(cname.as_ptr()) }).ok_or_else(not_found)?;
+        if ipv6 {
+            socket.bind_device_by_index_v6(Some(index))
+        } else {
+            socket.bind_device_by_index_v4(Some(index))
+        }
+    }
+}
+
 /// A non-blocking connect: start it, then wait until the socket is writable,
 /// which is when the connection is made or has failed.
-fn connect_one(addr: SocketAddr, deadline: Option<std::time::Instant>) -> io::Result<Conn<TcpStream>> {
-    let stream = Conn::new(TcpStream::from(mio::net::TcpStream::connect(addr)?));
+fn connect_one(addr: SocketAddr, deadline: Option<std::time::Instant>, from: &ConnectFrom) -> io::Result<Conn<TcpStream>> {
+    use socket2::{Domain, Protocol, Socket as RawSocket, Type};
+    let socket = RawSocket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_nonblocking(true)?;
+    if let Some(name) = &from.interface {
+        bind_interface(&socket, name, addr.is_ipv6())?;
+    }
+    if let Some(local) = from.local {
+        socket.bind(&local.into())?;
+    }
+    match socket.connect(&addr.into()) {
+        Ok(()) => {}
+        Err(err) if err.raw_os_error() == Some(libc::EINPROGRESS) || err.kind() == io::ErrorKind::WouldBlock => {}
+        Err(err) => return Err(err),
+    }
+    let stream = Conn::new(TcpStream::from(socket));
     loop {
         stream.wait_writable(deadline)?;
         if let Some(err) = stream.io.take_error()? {
@@ -288,12 +349,34 @@ fn connect_one(addr: SocketAddr, deadline: Option<std::time::Instant>) -> io::Re
     }
 }
 
-/// Bind a TCP listener, resolving `address` off the worker thread.
-fn tcp_bind(address: &str) -> NetResult<Conn<TcpListener>> {
+/// Bind a TCP listener with a queue of `backlog` connections, and
+/// SO_REUSEPORT if asked, trying each address `address` resolves to (as
+/// `TcpListener::bind` does). Like it, it sets SO_REUSEADDR, so a restarted
+/// server can listen again at once.
+fn tcp_bind(address: &str, backlog: u32, reuse_port: bool) -> NetResult<Conn<TcpListener>> {
+    use socket2::{Domain, Protocol, Socket as RawSocket, Type};
     let addrs = crate::resolve::socket_addrs(address, None)?;
-    let listener = TcpListener::bind(&addrs[..])?;
-    listener.set_nonblocking(true)?;
-    Ok(Conn::new(listener))
+    let mut last_err = None;
+    for addr in addrs {
+        let bound = (|| {
+            let socket = RawSocket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+            socket.set_reuse_address(true)?;
+            if reuse_port {
+                socket.set_reuse_port(true)?;
+            }
+            socket.bind(&addr.into())?;
+            socket.listen(backlog.min(i32::MAX as u32) as i32)?;
+            socket.set_nonblocking(true)?;
+            Ok::<_, io::Error>(TcpListener::from(socket))
+        })();
+        match bound {
+            Ok(listener) => return Ok(Conn::new(listener)),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(NetErr::Io(last_err.unwrap_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, format!("{address} did not resolve to any address"))
+    })))
 }
 
 /// Connect to a Unix socket without blocking the worker, giving up with
@@ -365,16 +448,19 @@ fn is_stale_socket(path: &str) -> bool {
 
 /// Hosted function: Host.tcp_listen!
 #[no_mangle]
-pub extern "C" fn roc_tcp_listen(address: RocStr, idle_ms: u64, write_ms: u64) -> HostSocketAcceptResult {
+pub extern "C" fn roc_tcp_listen(address: RocStr, idle_ms: u64, write_ms: u64, backlog: u32, reuse_port: bool) -> HostSocketAcceptResult {
     let timeouts = ServerTimeouts { idle_ms, write_ms };
-    handle_result(with_str(address, |address| open_socket(|| Ok(Socket::TcpListener(tcp_bind(address)?, timeouts)))))
+    handle_result(with_str(address, |address| {
+        open_socket(|| Ok(Socket::TcpListener(tcp_bind(address, backlog, reuse_port)?, timeouts)))
+    }))
 }
 
 /// Hosted function: Host.tcp_connect!
 #[no_mangle]
-pub extern "C" fn roc_tcp_connect(address: RocStr, timeout_ms: u64) -> HostSocketAcceptResult {
+pub extern "C" fn roc_tcp_connect(address: RocStr, timeout_ms: u64, local: RocStr, interface: RocStr) -> HostSocketAcceptResult {
+    let from = with_str(local, |local| with_str(interface, |interface| ConnectFrom::parse(local, interface)));
     handle_result(with_str(address, |address| {
-        open_socket(|| Ok(Socket::TcpStream(tcp_connect(address, deadline_after(timeout_ms))?)))
+        open_socket(|| Ok(Socket::TcpStream(tcp_connect(address, deadline_after(timeout_ms), &from?)?)))
     }))
 }
 
@@ -401,13 +487,31 @@ pub extern "C" fn roc_unix_connect(path: RocStr, timeout_ms: u64) -> HostSocketA
 
 /// Hosted function: Host.udp_bind!
 #[no_mangle]
-pub extern "C" fn roc_udp_bind(address: RocStr) -> HostSocketAcceptResult {
+pub extern "C" fn roc_udp_bind(address: RocStr, reuse: bool) -> HostSocketAcceptResult {
+    use socket2::{Domain, Protocol, Socket as RawSocket, Type};
     handle_result(with_str(address, |address| {
         open_socket(|| {
             let addrs = crate::resolve::socket_addrs(address, None)?;
-            let socket = UdpSocket::bind(&addrs[..])?;
-            socket.set_nonblocking(true)?;
-            Ok(Socket::Udp(Conn::new(socket)))
+            let mut last_err = None;
+            for addr in addrs {
+                let bound = (|| {
+                    let socket = RawSocket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
+                    if reuse {
+                        socket.set_reuse_address(true)?;
+                        socket.set_reuse_port(true)?;
+                    }
+                    socket.bind(&addr.into())?;
+                    socket.set_nonblocking(true)?;
+                    Ok::<_, io::Error>(UdpSocket::from(socket))
+                })();
+                match bound {
+                    Ok(socket) => return Ok(Socket::Udp(Conn::new(socket))),
+                    Err(err) => last_err = Some(err),
+                }
+            }
+            Err(NetErr::Io(last_err.unwrap_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, format!("{address} did not resolve to any address"))
+            })))
         })
     }))
 }
@@ -432,6 +536,24 @@ fn warn_out_of_fds() {
 /// Accept a connection, waiting for one to arrive. Errors that only mean
 /// "try again" are retried here rather than returned, so a server's accept
 /// loop doesn't end over them. The new socket is made non-blocking.
+/// Accepting on a listener that `close!` has closed.
+fn listener_closed() -> io::Error {
+    io::Error::new(io::ErrorKind::NotConnected, "the listener is closed")
+}
+
+/// Hosted function: Host.listener_close!
+#[no_mangle]
+pub extern "C" fn roc_listener_close(listener: *mut u64) -> HostSocketSetTimeoutResult {
+    unit_result(with_socket(listener, |listener| {
+        Ok(match listener {
+            Socket::TcpListener(l, _) => l.close_now()?,
+            Socket::UnixListener(l) => l.listener.close_now()?,
+            Socket::TlsListener(l) => l.listener.close_now()?,
+            _ => return Err(wrong_kind("close")),
+        })
+    }))
+}
+
 fn accept_retrying<L: std::os::fd::AsRawFd, S>(
     listener: &Conn<L>,
     accept: impl Fn(&L) -> io::Result<S>,
@@ -444,7 +566,11 @@ where
     const EMFILE: i32 = 24;
     const ENFILE: i32 = 23;
     loop {
+        if listener.is_closed() {
+            return Err(listener_closed());
+        }
         match listener.retry(false, None, &accept) {
+            Err(_) if listener.closed_settled() => return Err(listener_closed()),
             Ok(stream) => {
                 nonblocking(&stream)?;
                 return Ok(Conn::new(stream));
@@ -506,9 +632,13 @@ pub extern "C" fn roc_socket_accept(listener: *mut u64) -> HostSocketAcceptResul
 /// Accept a connection if one is waiting, without waiting: `None` if none
 /// is. For `Select`.
 fn accept_now(listener: &Socket) -> NetResult<Option<Socket>> {
-    fn once<L, S>(listener: &Conn<L>, accept: impl Fn(&L) -> io::Result<S>) -> io::Result<Option<S>> {
+    fn once<L: std::os::fd::AsRawFd, S>(listener: &Conn<L>, accept: impl Fn(&L) -> io::Result<S>) -> io::Result<Option<S>> {
         loop {
+            if listener.is_closed() {
+                return Err(listener_closed());
+            }
             match accept(&listener.io) {
+                Err(_) if listener.closed_settled() => return Err(listener_closed()),
                 Ok(stream) => return Ok(Some(stream)),
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(None),
                 Err(err) if matches!(err.kind(), io::ErrorKind::ConnectionAborted | io::ErrorKind::Interrupted) => {}
@@ -1015,10 +1145,12 @@ pub extern "C" fn roc_udp_recv_from(socket: *mut u64, max: u64) -> HostUdpRecvFr
     let result = with_udp(socket, |s| {
         Ok(s.read_with(|s| {
             with_scratch(max.min(MAX_READ_BYTES) as usize, |buf| {
-                let (len, from): (usize, SocketAddr) = s.recv_from(buf)?;
+                let (len, truncated, from) = recv_datagram(s, buf)?;
+                let from = from.as_socket().map_or_else(String::new, |from| from.to_string());
                 Ok(RocRecvFrom {
                     bytes: roc_bytes(&buf[..len]),
-                    from: RocStr::from_str(&from.to_string(), roc_host()),
+                    from: RocStr::from_str(&from, roc_host()),
+                    truncated,
                 })
             })
         })?)
@@ -1030,6 +1162,31 @@ pub extern "C" fn roc_udp_recv_from(socket: *mut u64, max: u64) -> HostUdpRecvFr
         result,
         |received| ManuallyDrop::new(received)
     )
+}
+
+/// Receive one datagram into `buf`: how much of it fit, whether there was
+/// more (the rest is lost: `MSG_TRUNC`), and who sent it.
+fn recv_datagram(socket: &UdpSocket, buf: &mut [u8]) -> io::Result<(usize, bool, socket2::SockAddr)> {
+    // The kernel only writes bytes into it; `[u8]` and `[MaybeUninit<u8>]`
+    // have the same layout.
+    let buf = unsafe { &mut *(buf as *mut [u8] as *mut [std::mem::MaybeUninit<u8>]) };
+    let mut bufs = [socket2::MaybeUninitSlice::new(buf)];
+    let (len, flags, from) = socket2::SockRef::from(socket).recv_from_vectored(&mut bufs)?;
+    Ok((len, flags.is_truncated(), from))
+}
+
+/// Hosted function: Host.udp_recv!
+#[no_mangle]
+pub extern "C" fn roc_udp_recv(socket: *mut u64, max: u64) -> HostUdpRecvResult {
+    let result = with_udp(socket, |s| {
+        Ok(s.read_with(|s| {
+            with_scratch(max.min(MAX_READ_BYTES) as usize, |buf| {
+                let (len, truncated, _) = recv_datagram(s, buf)?;
+                Ok(RocRecv { bytes: roc_bytes(&buf[..len]), truncated })
+            })
+        })?)
+    });
+    roc_result!(HostUdpRecvResult, HostUdpRecvResultPayload, HostUdpRecvResultTag, result, |received| ManuallyDrop::new(received))
 }
 
 /// Hosted function: Host.udp_set_broadcast!
@@ -1128,8 +1285,12 @@ pub extern "C" fn roc_tls_connect(
     ca_file: RocStr,
     alpn: RocList<RocStr>,
     timeout_ms: u64,
+    cert_file: RocStr,
+    key_file: RocStr,
 ) -> HostSocketAcceptResult {
     let alpn = take_strs(alpn);
+    let (cert_file, key_file) = (take_str(cert_file), take_str(key_file));
+    let cert = client_cert(&cert_file, &key_file);
     let result = with_str(address, |address| {
         with_str(server_name, |server_name| {
             with_str(ca_file, |ca_file| {
@@ -1137,14 +1298,30 @@ pub extern "C" fn roc_tls_connect(
                     // One deadline for the name lookup, connecting, and the
                     // handshake together.
                     let deadline = deadline_after(timeout_ms);
-                    let tcp = tcp_connect(address, deadline)?;
+                    let tcp = tcp_connect(address, deadline, &ConnectFrom::ANY)?;
                     let name = if server_name.is_empty() { crate::tls::host_of(address) } else { server_name };
-                    Ok(Socket::Tls(Box::new(crate::tls::client(tcp, name, ca_file, &alpn, deadline)?)))
+                    Ok(Socket::Tls(Box::new(crate::tls::client(tcp, name, ca_file, &alpn, cert.as_ref(), deadline)?)))
                 })
             })
         })
     });
     handle_result(result)
+}
+
+/// Copy a Roc string argument, then release it.
+fn take_str(text: RocStr) -> String {
+    with_str(text, |text| text.to_string())
+}
+
+/// A client certificate to present, if both files are given.
+fn client_cert<'a>(cert_file: &'a str, key_file: &'a str) -> Option<crate::tls::ClientCert<'a>> {
+    (!cert_file.is_empty()).then_some(crate::tls::ClientCert { cert_file, key_file })
+}
+
+/// How a server checks client certificates: `mode` 0 doesn't ask, 1 asks
+/// (but lets clients without one in), 2 requires one.
+fn client_auth(ca_file: &str, mode: u8) -> Option<crate::tls::ClientAuth<'_>> {
+    (mode != 0).then_some(crate::tls::ClientAuth { ca_file, required: mode == 2 })
 }
 
 /// Hosted function: Host.tls_listen!
@@ -1156,14 +1333,18 @@ pub extern "C" fn roc_tls_listen(
     handshake_timeout_ms: u64,
     idle_ms: u64,
     write_ms: u64,
+    client_ca_file: RocStr,
+    client_auth_mode: u8,
 ) -> HostSocketAcceptResult {
     let timeouts = ServerTimeouts { idle_ms, write_ms };
     let certs = take_certs(certs);
     let alpn = take_strs(alpn);
+    let client_ca_file = take_str(client_ca_file);
     let result = with_str(address, |address| {
         open_socket(|| {
-            let config = crate::tls::server_config(&certs, &alpn)?;
-            let listener = tcp_bind(address)?;
+            let config = crate::tls::server_config(&certs, &alpn, client_auth(&client_ca_file, client_auth_mode).as_ref())?;
+            // Tls.listen! has no backlog or port-reuse options yet.
+            let listener = tcp_bind(address, 1024, false)?;
             Ok(Socket::TlsListener(crate::sockets::TlsListener { listener, config, handshake_timeout_ms, timeouts }))
         })
     });
@@ -1196,14 +1377,18 @@ pub extern "C" fn roc_tls_wrap_client(
     ca_file: RocStr,
     alpn: RocList<RocStr>,
     timeout_ms: u64,
+    cert_file: RocStr,
+    key_file: RocStr,
 ) -> HostSocketAcceptResult {
     let alpn = take_strs(alpn);
+    let (cert_file, key_file) = (take_str(cert_file), take_str(key_file));
+    let cert = client_cert(&cert_file, &key_file);
     let deadline = deadline_after(timeout_ms);
     let result = with_str(server_name, |server_name| {
         with_str(ca_file, |ca_file| {
             with_socket(socket, |socket| {
                 let tcp = plain_tcp(socket)?;
-                open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::client(tcp, server_name, ca_file, &alpn, deadline)?))))
+                open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::client(tcp, server_name, ca_file, &alpn, cert.as_ref(), deadline)?))))
             })
         })
     });
@@ -1217,13 +1402,16 @@ pub extern "C" fn roc_tls_wrap_server(
     certs: RocList<RocTlsCert>,
     alpn: RocList<RocStr>,
     handshake_timeout_ms: u64,
+    client_ca_file: RocStr,
+    client_auth_mode: u8,
 ) -> HostSocketAcceptResult {
     let deadline = deadline_after(handshake_timeout_ms);
     let certs = take_certs(certs);
     let alpn = take_strs(alpn);
+    let client_ca_file = take_str(client_ca_file);
     let result = with_socket(socket, |socket| {
         let tcp = plain_tcp(socket)?;
-        let config = crate::tls::server_config(&certs, &alpn)?;
+        let config = crate::tls::server_config(&certs, &alpn, client_auth(&client_ca_file, client_auth_mode).as_ref())?;
         open_socket(|| Ok(Socket::Tls(Box::new(crate::tls::server(tcp, config, deadline)?))))
     });
     handle_result(result)
@@ -1245,6 +1433,45 @@ pub extern "C" fn roc_tls_server_name(socket: *mut u64) -> HostSocketLocalAddrRe
         Socket::Tls(s) => Ok(s.server_name()?.unwrap_or_default()),
         _ => Err(wrong_kind("server_name")),
     }))
+}
+
+/// Hosted function: Host.tls_peer_certificates!
+#[no_mangle]
+pub extern "C" fn roc_tls_peer_certificates(socket: *mut u64) -> crate::roc_platform_abi::HostTlsPeerCertificatesResult {
+    use crate::roc_platform_abi::{
+        HostTlsPeerCertificatesResult as Out, HostTlsPeerCertificatesResultPayload as P,
+        HostTlsPeerCertificatesResultTag as T,
+    };
+    let certs = with_socket(socket, |socket| match socket {
+        Socket::Tls(s) => Ok(s.peer_certificates()?),
+        _ => Err(wrong_kind("peer_certificates")),
+    });
+    match certs {
+        Ok(certs) => {
+            let list = unsafe { RocList::<RocListWith<u8, false>>::allocate(certs.len(), roc_host()) };
+            for (i, cert) in certs.iter().enumerate() {
+                unsafe { list.elements.add(i).write(roc_bytes(cert)) };
+            }
+            Out { payload: P { ok: ManuallyDrop::new(list) }, tag: T::Ok }
+        }
+        Err(err) => Out { payload: P { err: ManuallyDrop::new(FromNetErr::from_net_err(err)) }, tag: T::Err },
+    }
+}
+
+/// Hosted function: Host.tls_peer_certificate_valid_for!
+#[no_mangle]
+pub extern "C" fn roc_tls_peer_certificate_valid_for(socket: *mut u64, name: RocStr) -> crate::roc_platform_abi::HostFileExistsResult {
+    use crate::roc_platform_abi::{HostFileExistsResult as Out, HostFileExistsResultPayload as P, HostFileExistsResultTag as T};
+    let valid = with_str(name, |name| {
+        with_socket(socket, |socket| match socket {
+            Socket::Tls(s) => Ok(s.peer_certificate_valid_for(name)?),
+            _ => Err(wrong_kind("peer_certificate_valid_for")),
+        })
+    });
+    match valid {
+        Ok(valid) => Out { payload: P { ok: ManuallyDrop::new(valid) }, tag: T::Ok },
+        Err(err) => Out { payload: P { err: ManuallyDrop::new(FromNetErr::from_net_err(err)) }, tag: T::Err },
+    }
 }
 
 /// Hosted function: Host.tls_alpn_protocol!

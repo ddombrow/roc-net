@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use crate::roc_host;
 use crate::roc_platform_abi::{
-    decref_list_of_joinable_or_readable_or_receivable_or_sendable_or_stdin_line_or_writable as decref_sources,
+    decref_list_of_joinable_or_readable_or_receivable_or_sendable_or_signal_caught_or_stdin_line_or_writable as decref_sources,
     CancelledOrReadyOrSourceTimedOutOrTimedOut as Outcome,
     CancelledOrReadyOrSourceTimedOutOrTimedOutPayload as OutcomePayload,
-    CancelledOrReadyOrSourceTimedOutOrTimedOutTag as OutcomeTag, JoinableOrReadableOrReceivableOrSendableOrStdinLineOrWritable as Source,
-    JoinableOrReadableOrReceivableOrSendableOrStdinLineOrWritableTag as SourceTag, RocList,
+    CancelledOrReadyOrSourceTimedOutOrTimedOutTag as OutcomeTag, JoinableOrReadableOrReceivableOrSendableOrSignalCaughtOrStdinLineOrWritable as Source,
+    JoinableOrReadableOrReceivableOrSendableOrSignalCaughtOrStdinLineOrWritableTag as SourceTag, RocList,
 };
 use crate::sched::{self, Woke};
 use crate::sockets::Socket;
@@ -46,6 +46,7 @@ enum Watching {
     Noise(*mut u64, u64),
     Task(*mut u64, u64),
     Stdin(u64),
+    Signal(u64),
 }
 
 fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
@@ -67,6 +68,18 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
     // ends the wait before it starts.
     let mut ready = false;
     for (index, source) in sources.iter().enumerate() {
+        if source.tag == SourceTag::SignalCaught {
+            match crate::signals::watch(&waker) {
+                crate::signals::Watch::Ready => {
+                    ready = true;
+                    break;
+                }
+                crate::signals::Watch::Waiting(id) => {
+                    watching.push(Watching::Signal(id));
+                    continue;
+                }
+            }
+        }
         if source.tag == SourceTag::StdinLine {
             match crate::stdin::watch(&waker) {
                 crate::stdin::Watch::Ready => {
@@ -99,7 +112,7 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
                 SourceTag::Writable => (*source.borrow_payload_writable_unchecked(), true, true),
                 SourceTag::Receivable => (*source.borrow_payload_receivable_unchecked(), false, false),
                 SourceTag::Sendable => (*source.borrow_payload_sendable_unchecked(), false, true),
-                SourceTag::Joinable | SourceTag::StdinLine => unreachable!("handled above"),
+                SourceTag::Joinable | SourceTag::StdinLine | SourceTag::SignalCaught => unreachable!("handled above"),
             }
         };
         if is_socket {
@@ -182,6 +195,7 @@ fn wait_any(sources: &[Source], deadline: Option<Instant>) -> Outcome {
             Watching::Channel(handle, id) => crate::channels::unwatch(handle, id),
             Watching::Task(handle, id) => crate::tasks::unwatch(handle, id),
             Watching::Stdin(id) => crate::stdin::unwatch(id),
+            Watching::Signal(id) => crate::signals::unwatch(id),
             Watching::Noise(handle, id) => {
                 if let Some(Socket::Noise(noise)) = unsafe { crate::sockets::get(handle) } {
                     noise.unwatch(id);

@@ -115,14 +115,19 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   stderr can't stall a server (past about 1 MiB waiting, the oldest lines
   are dropped, and counted; raise `ROC_NET_LOG_BUFFER_KIB` if bursts hit
   that). Use it rather than `Stderr.line!` in servers.
-- `Tcp.listen!`, `Tcp.listen_with!`, `Tcp.connect!`, `Tcp.connect_timeout!`: blocking TCP sockets
+- `Tcp.listen!`, `Tcp.listen_with!`, `Tcp.connect!`, `Tcp.connect_timeout!`, `Tcp.connect_with!`: blocking TCP sockets
   - Accepted streams get 60-second idle (read) and write timeouts, so a
     client that goes quiet or stops reading can't hold a server task forever;
     `Tcp.listen_config.with_idle_timeout(...)`, `.with_write_timeout(...)`
-    change them (also for `Unix`, and `Tls.server_config`)
-  - `Tcp.Listener`: `accept!`, `local_addr!`
+    change them (also for `Unix`, and `Tls.server_config`); `.with_backlog(n)`
+    and `.with_reuse_port(True)` (`SO_REUSEPORT`) set up the listening socket
+  - `Tcp.connect_config.with_local_address(...)`, `.with_interface("eth1")`,
+    `.with_timeout(...)`, for `Tcp.connect_with!`
+  - `Tcp.Listener`: `accept!`, `local_addr!`, `close!` (stop taking
+    connections now, for a server shutting down; also on `Unix` and `Tls`)
   - `Tcp.Stream`: `read!`, `read_into!`, `read_append!`, `write!`, `write_str!`, `shutdown!`, `close!`,
-    `set_read_timeout!`, `set_write_timeout!`, `set_nodelay!`, `local_addr!`, `peer_addr!`
+    `set_read_timeout!`, `set_write_timeout!`, `set_nodelay!`, `set_keepalive!`,
+    `set_recv_buffer_size!`, `set_send_buffer_size!` (and getters), `local_addr!`, `peer_addr!`
   - `read_into!(buf, max)` reuses `buf`'s memory for what arrives (no new
     allocation per read when nothing else holds `buf`); `read_append!` adds
     to it instead (`Framing` reads this way). Also on `Unix` and `Tls` streams.
@@ -130,16 +135,20 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     `Err(TcpErr(ConnectionRefused))` or `Err(TcpErr(TimedOut))`.
 - `Unix.listen!`, `Unix.connect!` (`connect_timeout!`): Unix domain stream sockets on a file path
   - `Unix.Listener`: `accept!`, `local_addr!`; deletes its socket file when it closes
-  - `Unix.Stream`: the same methods as `Tcp.Stream` except `set_nodelay!`
+  - `Unix.Stream`: the same methods as `Tcp.Stream` except `set_nodelay!` and
+    `set_keepalive!`, plus `peer_credentials!` (the peer's user, group and
+    process ids)
   - Errors are `UnixErr(IOErr)`.
 - `Tls.connect!`, `Tls.connect_with!`, `Tls.listen!`: TLS over TCP (rustls)
   - `Tls.Stream`: the same methods as `Tcp.Stream`, plus `ignore_unexpected_eof!`
     and `handshake!` (a server stream otherwise finishes its handshake on its
     first read or write; call it before sharing the stream between tasks),
     `server_name!` (the name the client asked for, SNI), `alpn_protocol!`,
-    and `abort!` (also on `Tcp` and `Unix` streams: end a connection with a
+    `peer_certificates!` and `peer_certificate_valid_for!(name)` (who's at
+    the other end), and `abort!` (also on `Tcp` and `Unix` streams: end a connection with a
     reset rather than cleanly, on error paths)
-  - `Tls.client_config.with_ca_file(...)`, `.with_server_name(...)`, `.with_alpn(...)`, `.with_timeout(...)`
+  - `Tls.client_config.with_ca_file(...)`, `.with_server_name(...)`, `.with_alpn(...)`, `.with_timeout(...)`,
+    `.with_client_cert({ cert_file, key_file })`
   - `Tls.server_config({ cert_file, key_file })`, `.with_handshake_timeout(...)`:
     clients get 10 seconds by default to finish the handshake, a deadline a
     slowloris client can't stretch
@@ -147,6 +156,9 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     certificate per host name (`*.` wildcards too) on one listener, chosen by
     SNI; the one from `server_config` is for every other name.
     `.with_alpn(["h2", "http/1.1"])` for application protocols
+  - Mutual TLS: `.with_client_auth("clients-ca.pem", Required)` (or
+    `Optional`) asks clients for a certificate from that CA; the stream's
+    `peer_certificate_valid_for!("billing.internal")` says who it's for
   - `Tls.wrap_client!`, `Tls.wrap_server!`: upgrade a TCP connection (STARTTLS)
   - Errors are `TlsErr(IOErr)`; certificate problems arrive as `TlsErr(Other(message))`,
     and so do certificate and key files that can't be loaded, naming the file.
@@ -162,10 +174,12 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   `n`th byte. After reading with a `Framing` reader, use
   `reader.copy_to!(to, limit)`, which sends the reader's buffered bytes
   first and keeps anything past the limit for its next read.
-- `Udp.bind!`: UDP sockets
+- `Udp.bind!`, `Udp.bind_with!` (`Udp.bind_config.with_reuse_port(True)`): UDP sockets
   - `Udp.Socket`: `send_to!`, `recv_from!`, `connect!`, `send!`, `recv!`,
     `set_read_timeout!`, `set_write_timeout!`, `set_broadcast!`,
-    `join_multicast!`, `leave_multicast!`, `local_addr!`, `peer_addr!`
+    `join_multicast!`, `leave_multicast!`, buffer sizes, `local_addr!`, `peer_addr!`
+  - Receives say whether the datagram was cut short (`truncated`), so a
+    parser never takes part of a packet for the whole
   - Errors are `UdpErr(IOErr)`.
 - `Framing`: split a stream into messages
   - `each_line!`, `each_frame!`: handle every line or length-prefixed frame
@@ -202,6 +216,9 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
   the old contents or the new, never part. Calls run on helper threads, so
   a slow disk doesn't stall other tasks. Errors are `FileErr(IOErr)`.
 - `Env.var!(name)`: an environment variable, or `VarNotFound(name)`
+- `Signal.catch!([Terminate, Interrupt])`, then `Signal.next!` or `Select`'s
+  `on_signal` arm: SIGINT, SIGTERM, SIGHUP, SIGUSR1 and SIGUSR2, for
+  stopping cleanly or reloading
 - `Random`: `u8!()` ... `u64!()`, `between!(low, high)`, and `bytes!(n)`
   (up to 16 MiB, returning a `Try`), cryptographically secure
 - `Time`: `now!` (monotonic `Instant`), `instant.elapsed!()`, `sleep!`, and
@@ -277,6 +294,9 @@ just run tls_proxy 127.0.0.1:9080 127.0.0.1:9443 \
     127.0.0.1:8080 localhost=127.0.0.1:8081           # terminate TLS, route by SNI name
 just run noise_chat listen 127.0.0.1:7000 ada         # an encrypted 1:1 chat over Noise, remembering keys; then, elsewhere:
 just run noise_chat connect 127.0.0.1:7000 grace
+just run graceful_server 127.0.0.1:8080              # drains on SIGTERM or Ctrl-C (try SLOW 5000 first)
+just run retry_backoff 127.0.0.1:8080 hello          # retries with backoff until a line server is up
+just run connection_pool 127.0.0.1:8080              # 100 requests through a pool of 4 connections
 
 just run udp_echo_server 127.0.0.1:8081
 just run udp_client 127.0.0.1:8081 "hello"

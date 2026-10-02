@@ -24,8 +24,10 @@ Udp := [].{
 		send_to! = |Socket.(socket), bytes, address| udp_err(Host.udp_send_to!(socket, bytes, address))
 
 		## Wait for the next datagram and return its bytes and the sender's
-		## address. A datagram longer than `max` bytes is cut short.
-		recv_from! : Socket, U64 => Try({ bytes : List(U8), from : Str }, [UdpErr(IOErr)])
+		## address. A datagram longer than `max` bytes is cut short, and
+		## `truncated` is `True`: the rest of it is lost, so don't parse it as
+		## if it were whole.
+		recv_from! : Socket, U64 => Try({ bytes : List(U8), from : Str, truncated : Bool }, [UdpErr(IOErr)])
 		recv_from! = |Socket.(socket), max| udp_err(Host.udp_recv_from!(socket, max))
 
 		## Fix this socket's peer: `send!` then sends to `address`, and `recv!`
@@ -39,9 +41,9 @@ Udp := [].{
 		send! = |Socket.(socket), bytes| udp_err(Host.socket_write!(socket, bytes))
 
 		## Wait for the next datagram from the connected peer. A datagram longer
-		## than `max` bytes is cut short.
-		recv! : Socket, U64 => Try(List(U8), [UdpErr(IOErr)])
-		recv! = |Socket.(socket), max| udp_err(Host.socket_read!(socket, max))
+		## than `max` bytes is cut short, and `truncated` is `True`.
+		recv! : Socket, U64 => Try({ bytes : List(U8), truncated : Bool }, [UdpErr(IOErr)])
+		recv! = |Socket.(socket), max| udp_err(Host.udp_recv!(socket, max))
 
 		## Make receives fail with `TimedOut` if no datagram arrives in time.
 		set_read_timeout! : Socket, [NoTimeout, Millis(U64)] => Try({}, [UdpErr(IOErr)])
@@ -73,13 +75,49 @@ Udp := [].{
 		## `connect!` hasn't been called.
 		peer_addr! : Socket => Try(Str, [UdpErr(IOErr)])
 		peer_addr! = |Socket.(socket)| udp_err(Host.socket_peer_addr!(socket))
+
+		## Ask for a receive buffer of `bytes`: how much the operating system
+		## holds for this socket before the sender has to wait (or, for UDP,
+		## before datagrams are dropped). It may adjust the size (Linux doubles
+		## it, for its own bookkeeping); `recv_buffer_size!` says what it chose.
+		set_recv_buffer_size! : Socket, U64 => Try({}, [UdpErr(IOErr)])
+		set_recv_buffer_size! = |Socket.(handle), bytes| udp_err(Host.socket_set_buffer_size!(handle, 0, bytes))
+
+		## Ask for a send buffer of `bytes` (see `set_recv_buffer_size!`).
+		set_send_buffer_size! : Socket, U64 => Try({}, [UdpErr(IOErr)])
+		set_send_buffer_size! = |Socket.(handle), bytes| udp_err(Host.socket_set_buffer_size!(handle, 1, bytes))
+
+		recv_buffer_size! : Socket => Try(U64, [UdpErr(IOErr)])
+		recv_buffer_size! = |Socket.(handle)| udp_err(Host.socket_buffer_size!(handle, 0))
+
+		send_buffer_size! : Socket => Try(U64, [UdpErr(IOErr)])
+		send_buffer_size! = |Socket.(handle)| udp_err(Host.socket_buffer_size!(handle, 1))
 	}
+
+	## How `bind_with!` binds. Start from `bind_config` and adjust.
+	BindConfig :: { reuse : Bool }.{
+
+		## Let several sockets bind the same address and port (`SO_REUSEADDR`
+		## and `SO_REUSEPORT`), each binding with this set: for several
+		## programs receiving one multicast group (as mDNS responders do), or
+		## to spread datagrams to one port over several sockets.
+		with_reuse_port : BindConfig, Bool -> BindConfig
+		with_reuse_port = |BindConfig.(config), reuse| BindConfig.({ ..config, reuse })
+	}
+
+	## No address reuse.
+	bind_config : BindConfig
+	bind_config = BindConfig.({ reuse: False })
 
 	## Bind a socket to `address`, such as `"0.0.0.0:5353"`. Use port 0 to let
 	## the OS choose a free port, which suits a client.
 	bind! : Str => Try(Socket, [UdpErr(IOErr)])
-	bind! = |address|
-		match Host.udp_bind!(address) {
+	bind! = |address| bind_with!(address, bind_config)
+
+	## Bind with the options in `config`.
+	bind_with! : Str, BindConfig => Try(Socket, [UdpErr(IOErr)])
+	bind_with! = |address, BindConfig.(config)|
+		match Host.udp_bind!(address, config.reuse) {
 			Ok(socket) => Ok(Socket.(socket))
 			Err(err) => Err(UdpErr(err))
 		}

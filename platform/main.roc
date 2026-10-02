@@ -40,7 +40,7 @@ platform ""
 	requires {
 		main! : List(Str) => Try({}, [Exit(I32), ..])
 	}
-	exposes [Bytes, Channel, Cryptography, Dns, Env, File, Noise, Framing, IOErr, Log, Random, Pipe, Select, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
+	exposes [Bytes, Channel, Cryptography, Dns, Env, File, Noise, Framing, IOErr, Log, Random, Pipe, Select, Signal, Stdout, Stderr, Stdin, Task, Tcp, Time, Tls, Udp, Unix]
 	packages { roc: "nightly-2026-09-29-7f11a82" }
 	provides { "roc_main": main_for_host!, "roc_run_task": run_task_for_host! }
 	hosted {
@@ -48,6 +48,9 @@ platform ""
 		"roc_stdin_line": Host.stdin_line!,
 		"roc_stdin_read_line": Host.stdin_read_line!,
 		"roc_stdin_try_line": Host.stdin_try_line!,
+		"roc_signal_catch": Host.signal_catch!,
+		"roc_signal_try_next": Host.signal_try_next!,
+		"roc_signal_next": Host.signal_next!,
 		"roc_stdout_line": Host.stdout_line!,
 		"roc_aead_open": Host.aead_open!,
 		"roc_aead_seal": Host.aead_seal!,
@@ -89,6 +92,7 @@ platform ""
 		"roc_time_utc_now_ns": Host.time_utc_now_ns!,
 		"roc_socket_abort": Host.socket_abort!,
 		"roc_socket_accept": Host.socket_accept!,
+		"roc_listener_close": Host.listener_close!,
 		"roc_socket_local_addr": Host.socket_local_addr!,
 		"roc_socket_peer_addr": Host.socket_peer_addr!,
 		"roc_socket_read": Host.socket_read!,
@@ -110,6 +114,8 @@ platform ""
 		"roc_tls_handshake": Host.tls_handshake!,
 		"roc_tls_ignore_unexpected_eof": Host.tls_ignore_unexpected_eof!,
 		"roc_tls_listen": Host.tls_listen!,
+		"roc_tls_peer_certificates": Host.tls_peer_certificates!,
+		"roc_tls_peer_certificate_valid_for": Host.tls_peer_certificate_valid_for!,
 		"roc_tls_server_name": Host.tls_server_name!,
 		"roc_tls_wrap_client": Host.tls_wrap_client!,
 		"roc_tls_wrap_server": Host.tls_wrap_server!,
@@ -118,6 +124,11 @@ platform ""
 		"roc_udp_join_multicast": Host.udp_join_multicast!,
 		"roc_udp_leave_multicast": Host.udp_leave_multicast!,
 		"roc_udp_recv_from": Host.udp_recv_from!,
+		"roc_udp_recv": Host.udp_recv!,
+		"roc_socket_set_keepalive": Host.socket_set_keepalive!,
+		"roc_socket_set_buffer_size": Host.socket_set_buffer_size!,
+		"roc_socket_buffer_size": Host.socket_buffer_size!,
+		"roc_unix_peer_credentials": Host.unix_peer_credentials!,
 		"roc_udp_send_to": Host.udp_send_to!,
 		"roc_udp_set_broadcast": Host.udp_set_broadcast!,
 		"roc_unix_connect": Host.unix_connect!,
@@ -159,6 +170,7 @@ import Host
 import IOErr
 import Random
 import Select
+import Signal
 
 main_for_host! : List(Str) => I32
 main_for_host! = |args| {

@@ -67,6 +67,8 @@ if [ -x "$stdin_bin" ]; then
         while [ ! -e "$marker" ] && [ $tries -lt 600 ]; do sleep 0.05; tries=$((tries + 1)); done
         # A line of exactly 1 MiB (accepted), then one a byte longer (refused).
         head -c 1048576 /dev/zero | tr '\0' x; printf '\n'
+        # The same with \r\n, which doesn't count towards the limit.
+        head -c 1048576 /dev/zero | tr '\0' x; printf '\r\n'
         head -c 1048577 /dev/zero | tr '\0' x; printf '\n'
         printf 'second\nthird\n'
     } | STDIN_TEST_MARKER="$marker" "$stdin_bin"
@@ -98,6 +100,28 @@ if [ -x "$idle_bin" ]; then
     fi
 else
     echo "SKIPPED: the idle Select check ($idle_bin, from tests/select_idle, wasn't built)"
+fi
+# Catching signals (tests/signals), sent with kill(1) when it asks.
+signals_bin="$(dirname "$bin")/signals"
+if [ -x "$signals_bin" ]; then
+    echo "== signals"
+    marker=$(mktemp -u "${TMPDIR:-/tmp}/roc-net-signals.XXXXXX")
+    # Wait (up to 30 seconds) for the program to create a marker file.
+    await() {
+        tries=0
+        while [ ! -e "$1" ] && [ $tries -lt 600 ]; do sleep 0.05; tries=$((tries + 1)); done
+    }
+    SIGNAL_TEST_MARKER="$marker" "$signals_bin" &
+    pid=$!
+    await "$marker"; kill -USR1 $pid 2>/dev/null
+    await "$marker.2"; kill -TERM $pid 2>/dev/null
+    await "$marker.3"; kill -HUP $pid 2>/dev/null; kill -HUP $pid 2>/dev/null
+    wait $pid
+    code=$?
+    rm -f "$marker" "$marker.2" "$marker.3"
+    [ $code = 0 ] || { echo "FAILED: the signal checks (exit $code)"; exit 1; }
+else
+    echo "SKIPPED: the signal checks ($signals_bin, from tests/signals, wasn't built)"
 fi
 # Sockets closing while others open, reusing descriptor numbers: no
 # connection may lose its wake-ups (tests/fd_reuse).

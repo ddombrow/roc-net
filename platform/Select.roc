@@ -1,9 +1,10 @@
 import Host
+import Signal
 import Time
 
 ## Wait for whichever of several things happens first: data on a stream, a
 ## connection on a listener, a value on a channel, room in a channel, a task
-## finishing, a line on stdin, or a timeout.
+## finishing, a line on stdin, a signal, or a timeout.
 ##
 ## Build a `Select` from arms, each saying what to wait for and how to turn
 ## what happened into a value of your own type, then `wait!`:
@@ -169,6 +170,18 @@ Select := [].{
 					Failed(message) => Got(to_out(Err(StdinErr(message))))
 				}
 			Arms.({ arms: List.append(arms, { poll!: poll!, source: StdinLine, on_stream_timeout: NoDeadline }), timeout })
+		}
+
+		## A caught signal (see `Signal.catch!`), such as a request to stop:
+		## `to_out` gets which one. Only signals already caught arrive here; any
+		## other still has its usual effect.
+		on_signal = |Arms.({ arms, timeout }), to_out| {
+			poll! = |{}|
+				match Host.signal_try_next!({}) {
+					NotReady => NotReady
+					Got(c) => Got(to_out(Signal.from_code(c)))
+				}
+			Arms.({ arms: List.append(arms, { poll!: poll!, source: SignalCaught, on_stream_timeout: NoDeadline }), timeout })
 		}
 
 		## Nothing else happening within `duration` of `wait!` starting. With

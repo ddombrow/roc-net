@@ -111,7 +111,9 @@ fn read_line(input: &mut impl BufRead) -> Line {
             None => (buf, false),
         };
         if !too_long {
-            if line.len() + part.len() > MAX_LINE {
+            // One byte over the limit is kept: it may be the `\r` of a
+            // `\r\n`, which doesn't count. The limit applies once it's off.
+            if line.len() + part.len() > MAX_LINE + 1 {
                 too_long = true;
                 line = Vec::new();
             } else {
@@ -124,11 +126,11 @@ fn read_line(input: &mut impl BufRead) -> Line {
             break;
         }
     }
-    if too_long {
-        return Line::TooLong;
-    }
     if line.last() == Some(&b'\r') {
         line.pop();
+    }
+    if too_long || line.len() > MAX_LINE {
+        return Line::TooLong;
     }
     match String::from_utf8(line) {
         Ok(text) => Line::Text(text),

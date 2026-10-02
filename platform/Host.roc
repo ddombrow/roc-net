@@ -6,6 +6,12 @@ import IOErr
 Host := [].{
 	stderr_line! : Str => Try({}, [StderrErr(Str)])
 	stdin_line! : {} => Try(Str, [StdinErr(Str)])
+
+	## `Signal`, by code (Interrupt 0, Terminate 1, Hangup 2, User1 3,
+	## User2 4).
+	signal_catch! : List(U8) => Try({}, IOErr)
+	signal_try_next! : {} => [Got(U8), NotReady]
+	signal_next! : {} => [Got(U8), Cancelled]
 	## The next line from stdin if one has been read, without waiting (and
 	## asking for one if not), for `Select`.
 	stdin_try_line! : {} => [Line(Str), End, Failed(Str), NotReady, TooLong]
@@ -22,18 +28,24 @@ Host := [].{
 
 	## Listen; every accepted stream gets these read (idle) and write timeouts
 	## in milliseconds (0 means none).
-	tcp_listen! : Str, U64, U64 => Try(Socket, IOErr)
+	## `backlog`: the queue of connections waiting for `accept!`;
+	## `reuse_port`: SO_REUSEPORT.
+	tcp_listen! : Str, U64, U64, U32, Bool => Try(Socket, IOErr)
 	## Look up the name and connect, all within `timeout_ms` milliseconds (0
 	## means no limit).
-	tcp_connect! : Str, U64 => Try(Socket, IOErr)
+	## `local_address` to bind first and `interface` to bind to ("" for
+	## neither).
+	tcp_connect! : Str, U64, Str, Str => Try(Socket, IOErr)
 	unix_listen! : Str, U64, U64 => Try(Socket, IOErr)
 	unix_connect! : Str, U64 => Try(Socket, IOErr)
-	udp_bind! : Str => Try(Socket, IOErr)
+	## `reuse`: SO_REUSEADDR and SO_REUSEPORT.
+	udp_bind! : Str, Bool => Try(Socket, IOErr)
 	## Look up the name, connect, and complete a TLS handshake, all within
 	## `timeout_ms` (0 means no limit). An empty `server_name` means the address's host; an empty
 	## `ca_file` means Mozilla's root certificates. `alpn`: the protocols to
 	## offer, most preferred first (none: no ALPN).
-	tls_connect! : Str, Str, Str, List(Str), U64 => Try(Socket, IOErr)
+	## The last two: a client certificate and key to present ("" for none).
+	tls_connect! : Str, Str, Str, List(Str), U64, Str, Str => Try(Socket, IOErr)
 	## Listen for TLS connections. `certs`: certificate chains and private
 	## keys in PEM files, each for the server name `name` (`*.` wildcards
 	## allowed); the one with an empty name is for clients that ask for no
@@ -41,7 +53,9 @@ Host := [].{
 	## first. Each connection must finish its handshake within
 	## `handshake_timeout_ms` of being accepted (0 means no limit), then has
 	## the given read (idle) and write timeouts.
-	tls_listen! : Str, List(TlsCert), List(Str), U64, U64, U64 => Try(Socket, IOErr)
+	## The last two: a CA file for client certificates, and whether to ask
+	## for them (0 no, 1 optional, 2 required).
+	tls_listen! : Str, List(TlsCert), List(Str), U64, U64, U64, Str, U8 => Try(Socket, IOErr)
 	## A certificate for `tls_listen!` and `tls_wrap_server!`.
 	TlsCert : { name : Str, cert_file : Str, key_file : Str }
 	## The server name the client asked for (SNI), lower-cased and without a
@@ -62,12 +76,17 @@ Host := [].{
 	noise_wrap! : Socket, U8, List(U8), U64, List(U8), U64 => Try(Socket, IOErr)
 	## Upgrade a connected TCP stream to TLS as the client (STARTTLS), giving
 	## up if the handshake takes longer than `timeout_ms` (0 means no limit).
-	tls_wrap_client! : Socket, Str, Str, List(Str), U64 => Try(Socket, IOErr)
+	tls_wrap_client! : Socket, Str, Str, List(Str), U64, Str, Str => Try(Socket, IOErr)
 	## Upgrade a connected TCP stream to TLS as the server (STARTTLS); the
 	## handshake must finish within `handshake_timeout_ms` (0 means no limit).
-	tls_wrap_server! : Socket, List(TlsCert), List(Str), U64 => Try(Socket, IOErr)
+	tls_wrap_server! : Socket, List(TlsCert), List(Str), U64, Str, U8 => Try(Socket, IOErr)
+	## The peer's certificate chain (DER, its own first), after the handshake.
+	tls_peer_certificates! : Socket => Try(List(List(U8)), IOErr)
+	tls_peer_certificate_valid_for! : Socket, Str => Try(Bool, IOErr)
 
 	## Accept a connection on a TCP or Unix listener.
+	## Stop listening now (see `Conn::close_now`).
+	listener_close! : Socket => Try({}, IOErr)
 	socket_accept! : Socket => Try(Socket, IOErr)
 	## Read up to `max` bytes from a stream (an empty list means the peer closed
 	## it), or receive one datagram on a connected UDP socket.
@@ -114,7 +133,18 @@ Host := [].{
 	## `socket_read!` receives to datagrams from that address.
 	udp_connect! : Socket, Str => Try({}, IOErr)
 	udp_send_to! : Socket, List(U8), Str => Try({}, IOErr)
-	udp_recv_from! : Socket, U64 => Try({ bytes : List(U8), from : Str }, IOErr)
+	udp_recv_from! : Socket, U64 => Try({ bytes : List(U8), from : Str, truncated : Bool }, IOErr)
+	## A connected UDP socket's next datagram.
+	udp_recv! : Socket, U64 => Try({ bytes : List(U8), truncated : Bool }, IOErr)
+
+	## Socket options, for TCP (and TLS over it), Unix and UDP sockets.
+	## Keepalive: enabled, idle seconds, interval seconds, probes.
+	socket_set_keepalive! : Socket, Bool, U64, U64, U32 => Try({}, IOErr)
+	## Buffer `which`: 0 receive, 1 send.
+	socket_set_buffer_size! : Socket, U8, U64 => Try({}, IOErr)
+	socket_buffer_size! : Socket, U8 => Try(U64, IOErr)
+	## `pid` is -1 where the system doesn't say.
+	unix_peer_credentials! : Socket => Try({ uid : U32, gid : U32, pid : I32 }, IOErr)
 	udp_set_broadcast! : Socket, Bool => Try({}, IOErr)
 	udp_join_multicast! : Socket, Str => Try({}, IOErr)
 	udp_leave_multicast! : Socket, Str => Try({}, IOErr)
@@ -194,7 +224,7 @@ Host := [].{
 	channel_close! : ChannelEnd => {}
 
 	## Something a task can wait on, for `Select`.
-	WaitSource : [Readable(Socket), Writable(Socket), Receivable(ChannelEnd), Sendable(ChannelEnd), Joinable(TaskHandle), StdinLine]
+	WaitSource : [Readable(Socket), Writable(Socket), Receivable(ChannelEnd), Sendable(ChannelEnd), Joinable(TaskHandle), StdinLine, SignalCaught]
 
 	## Wait until any source may be ready, or `timeout_ns` passes (U64.highest:
 	## no limit). A wake-up can be spurious: callers poll their sources again.
