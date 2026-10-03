@@ -193,6 +193,10 @@ Full reference: run `just docs` and open `target/docs/index.html`. In brief:
     `read_exactly!`, `read_frame!`, `read_to_end!`, each returning the result and the updated
     reader: `(line, $reader) = $reader.read_line!()?`
   - `write_frame!`: write a 4-byte big-endian length, then the bytes
+  - `read_parsed!(parse)` and `Select`'s `on_parsed`: a framing of your own,
+    as a pure function of the buffered bytes (`Parsed(value, used)`,
+    `NeedMore` or `Malformed(err)`), so a protocol package can read its
+    messages (and wait for them in a `Select`) like lines and frames
 - `Bytes`: encode and decode `U16`/`U32`/`U64`, big- and little-endian:
   `u32_be` to encode, `take_u32_be` to decode from the front of a list, and
   `u32_be_at` to decode at an offset; plus `take`, `take_u8`, `u8_at`, `bytes_at`;
@@ -282,6 +286,28 @@ memory mappings, so the default `vm.max_map_count` (65,530) allows roughly
 30,000 tasks unless it's raised. Scheduling is cooperative: a task yields
 when it waits and every 128 socket operations, but a long pure computation
 holds its thread until it finishes.
+
+## Packages
+
+Protocols are built as Roc packages on the platform, not inside it (see
+the boundary in `docs/roadmap.md`). This repo has some, in `packages/`,
+each released and versioned on its own as a bundle at
+`https://gitlab.com/api/v4/projects/86936101/packages/generic/NAME/VERSION/<hash>.tar.zst`
+(roc reads the version from the URL):
+
+- `protobuf`: the Protocol Buffers wire format, pure Roc (no platform)
+- `resp`: the Redis serialization protocol (RESP2 and RESP3), and a client
+
+```roc
+app [main!] {
+    pf: platform "https://gitlab.com/.../roc-net/0.7.0/<hash>.tar.zst",
+    resp: "https://gitlab.com/.../resp/0.1.0/<hash>.tar.zst",
+}
+```
+
+Each has a README and CHANGELOG in its directory. `just test` runs their
+tests; `just bundle-package NAME VERSION` builds and checks one's bundle,
+and `just release-package NAME VERSION` publishes it.
 
 ## Examples
 

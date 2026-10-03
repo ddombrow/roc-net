@@ -186,6 +186,9 @@ main! = |_args| {
 		check!("unix: peer credentials, the same seen from both ends", unix_peer_credentials!),
 		check!("tcp: Listener.close! wakes accept! and Select, refuses new connections, keeps old ones", tcp_listener_close!),
 		check!("tcp: Listener.close! racing an accept! that's just starting never strands it", tcp_listener_close_race!),
+		check!("framing: read_parsed! with a framing of its own (varint lengths)", parsed_reads!),
+		check!("framing: Select.on_parsed waits for a whole message, across waits", parsed_select_partial!),
+		check!("framing: read_parsed!'s errors (Malformed, TooLong, UnexpectedEof)", parsed_errors!),
 		check!("mtls: a required client certificate, checked by name", mtls_required!),
 		check!("mtls: a required certificate refuses a client without one", mtls_required_without_cert!),
 		check!("mtls: a required certificate refuses one from another CA", mtls_stranger_cert!),
@@ -4191,4 +4194,105 @@ mtls_wrapped! = || {
 	tls = Tls.wrap_client!(plain, trusting_test_ca.with_server_name("localhost").with_client_cert(client_cert))?
 	server_name_ok = tls.peer_certificate_valid_for!("localhost")?
 	expect_eq((server_name_ok, report.receive_timeout!(Time.seconds(5))?), (True, True))
+}
+
+## A connected TCP pair: (the connecting side, the accepted side).
+tcp_pair! = || {
+	(listener, address) = listen_anywhere!()?
+	(accepted_tx, accepted) = Channel.new!(1)?
+	_ = Task.spawn!(|| {
+		stream = listener.accept!()?
+		accepted_tx.send!(stream)?
+		Ok({})
+	})?
+	client = Tcp.connect!(address)?
+	server = accepted.receive_timeout!(Time.seconds(5))?
+	Ok((client, server))
+}
+
+## A varint length, then that many bytes (as protobuf streams and libp2p
+## frame messages), written the way a package would, for read_parsed!.
+varint_frame = |buffered| {
+	var $len = 0
+	var $scale = 1
+	var $i = 0
+	while True {
+		match List.get(buffered, $i) {
+			Err(_) => return NeedMore
+			Ok(b) => {
+				if $i >= 9 {
+					return Malformed(VarintTooLong)
+				}
+				$len = $len + (b % 128).to_u64() * $scale
+				$i = $i + 1
+				if b < 128 {
+					break
+				}
+				$scale = $scale * 128
+			}
+		}
+	}
+	if List.len(buffered) < $i + $len NeedMore else Parsed(List.sublist(buffered, { start: $i, len: $len }), $i + $len)
+}
+
+parsed_reads! = || {
+	(client, server) = tcp_pair!()?
+	# Three frames in one write, then one whose length takes two bytes.
+	long = List.repeat(7, 200)
+	client.write!(List.concat([3, 97, 98, 99, 0, 2, 100, 101, 200, 1], long))?
+	(first, r1) = Framing.reader(server).read_parsed!(varint_frame)?
+	(second, r2) = r1.read_parsed!(varint_frame)?
+	(third, r3) = r2.read_parsed!(varint_frame)?
+	(fourth, _) = r3.read_parsed!(varint_frame)?
+	expect_eq(
+		(Str.from_utf8_lossy(first), second, Str.from_utf8_lossy(third), fourth == long),
+		("abc", [], "de", True),
+	)
+}
+
+# Like on_line, once a message starts arriving the arm reads it to its end;
+# here it arrives in three pieces (inside the length prefix, then inside the
+# payload), from another task, and one Select returns it whole.
+parsed_select_partial! = || {
+	(client, server) = tcp_pair!()?
+	reader = Framing.reader(server)
+	quiet =
+		Select.new({})
+			.on_parsed(reader, varint_frame, |_| Read)
+			.on_timeout(Time.millis(100), || Nothing)
+			.wait!()?
+	_ = Task.spawn!(|| {
+		client.write!([132])?
+		Time.sleep!(Time.millis(200))?
+		client.write!([1, 1, 2])?
+		Time.sleep!(Time.millis(200))?
+		# The rest: 132 bytes in all, 2 of them sent already.
+		client.write!(List.repeat(9, 130))
+	})?
+	got =
+		Select.new({})
+			.on_parsed(reader, varint_frame, |result| Read(result))
+			.on_timeout(Time.seconds(5), || Nothing)
+			.wait!()?
+	size =
+		match got {
+			Read(Ok((message, _))) => Ok(List.len(message))
+			Read(Err(err)) => Err(Str.inspect(err))
+			Nothing => Err("timed out")
+		}
+	expect_eq((quiet == Nothing, size), (True, Ok(132)))
+}
+
+parsed_errors! = || {
+	(client, server) = tcp_pair!()?
+	client.write!(List.repeat(255, 10))?
+	malformed = shown(Framing.reader(server).read_parsed!(varint_frame))
+	(client2, server2) = tcp_pair!()?
+	client2.write!(List.concat([20], List.repeat(1, 20)))?
+	too_long = shown(Framing.reader_with_max(server2, 8).read_parsed!(varint_frame))
+	(client3, server3) = tcp_pair!()?
+	client3.write!([5, 1, 2])?
+	client3.shutdown!(Write)?
+	cut_short = shown(Framing.reader(server3).read_parsed!(varint_frame))
+	expect_eq((malformed, too_long, cut_short), ("Err(Malformed(VarintTooLong))", "Err(TooLong)", "Err(UnexpectedEof)"))
 }

@@ -11,6 +11,11 @@ cancellation, scopes, `Task.yield!`), except `Time.ticker`, which
 `Select.on_join` for acting on whichever task ends first, and the "any
 stream" docs and `tls_proxy` example. Crypto + Noise moves to 0.4.
 
+**Status (2026-10-02):** 0.6.0 (sockets, signals, mutual TLS) is
+released. The direction changed: protocols are to be built as Roc packages
+on the platform, not inside it. See "The platform boundary" and "0.7.0"
+below; libp2p moves to later, as a package.
+
 ## Context
 
 Every later goal (yamux and libp2p, gossip, ICE, a chat server with
@@ -321,7 +326,7 @@ Where the pieces go:
   move into the platform because of it). Its identity key is generated per
   run until 0.5 adds `File`.
 
-## 0.4.1: Small gaps the chat found (ready to release)
+## 0.4.1: Small gaps the chat found (released)
 
 From building a relay-based chat against 0.4.0 (2026-10-01); each has users
 besides the chat:
@@ -335,7 +340,7 @@ besides the chat:
   it, for "a helper task as long as this block runs" (a proxy's writer, a
   heartbeat). `scope!` still only cancels on its own when the body fails.
 
-## 0.5.0: Files, terminal input, and Select on Noise (ready to release)
+## 0.5.0: Files, terminal input, and Select on Noise (released)
 
 Driven by the chat example, justified without it (see the table above):
 
@@ -361,7 +366,7 @@ Driven by the chat example, justified without it (see the table above):
   fingerprints and a `known_peers` file, all in the example. Done, in one
   `Select` loop.
 
-## 0.6.0: Sockets and operations (ready to release)
+## 0.6.0: Sockets and operations (released)
 
 From reviewing roc-net as a general networking library (2026-10-02); each
 is for servers and clients in general, a proxy among them:
@@ -380,11 +385,122 @@ is for servers and clients in general, a proxy among them:
 - Mutual TLS (client certificates, verifying them, and checking a peer
   certificate's names), moved up from "later".
 
+## The platform boundary (decided 2026-10-02)
+
+The real goal is building general-purpose network protocols, and planning
+libp2p showed how one protocol stack can pull its own pieces (peer IDs,
+multiaddrs, yamux, protobuf messages) into the platform. Spikes settled
+that it doesn't have to: on Roc nightly-2026-09-29, packages can do effects
+on roc-net, in three shapes, all verified with an app:
+
+1. **Depending on roc-net**: `package [M] { pf: platform "…/main.roc" }`,
+   importing `pf.Tcp`, `pf.Select`, `pf.Task`, ... The `platform` keyword
+   is required. This ties the package to an exact roc-net version, so it's
+   re-released with each one.
+2. **No platform dependency, generic over streams**: effectful functions
+   that call `stream.read!` and `stream.write!` through `where` clauses, as
+   `Noise.handshake!` does. Works with any version and any stream.
+3. **No platform dependency, effects passed in**: the app hands over
+   `Task.spawn!` (say) as an argument.
+
+The platform's private `Host` module stays out of reach ("package module is
+private"), so packages get the public API and nothing lower. A pure
+protobuf wire-format package, also spiked, matched `protoc` byte for byte
+in both directions, at about 0.2 µs per small message.
+
+**The rule.** The platform holds only what a package can't:
+
+1. what touches the host: system calls, OS resources, host state (sockets,
+   files, signals, the clock, DNS, TLS through rustls);
+2. what's wired into the host's machinery: scheduler waits, `Select` wait
+   sources, host-side copies (`Pipe`), stream kinds the scheduler knows;
+3. hot paths that want native code (bulk crypto, copying).
+
+Everything else, protocol logic and encodings above all, is a package:
+platform-free (shapes 2 and 3) wherever it can be, since those aren't tied
+to a roc-net version.
+
+**What's in the platform now, by that rule**:
+
+| Module | Why it's in the platform |
+| --- | --- |
+| `Tcp`, `Udp`, `Unix`, `Tls`, `Dns`, `File`, `Env`, `Stdin`/`Stdout`/`Stderr`, `Signal`, `Time`, `Random`, `Log` | the host |
+| `Task`, `Channel`, `Select` | the scheduler |
+| `Pipe`, `Framing` | host-side copies (`Framing.Reader.copy_to!`), and the stream methods every protocol reads with |
+| `Cryptography` (X25519, AEADs, Ed25519) | AWS-LC, native |
+| `Noise` | `Noise.Stream` is a stream kind the host knows (partial messages for `Select`, `Pipe`); the handshake is pure, but produces that stream |
+| `Bytes`; `Cryptography.HmacSha256` and `HkdfSha256` | pure, and would be packages if written today; kept, as moving them would break every user for little gain |
+| `IOErr`, `Host` | the platform's own types |
+
+So: no new pure protocol logic goes into the platform. Moving released
+modules out is not worth the churn on its own; a later breaking release can
+reconsider `Bytes` if a pure "basics" package appears.
+
+## 0.7.0: Protocol packages (in progress)
+
+**Decided (2026-10-02):** packages live in this repo, under `packages/`,
+each versioned and released on its own.
+
+How Roc brings them in (nightly-2026-09-29): there's no registry. A
+dependency is a relative path (for development) or an https URL to a
+`roc bundle` archive, named by its hash and checked against it. A bundle
+has one root `main.roc`, so the platform and every package are separate
+bundles, each at its own URL; one package can hold many modules. A version
+in the URL path (`…/protobuf/0.1.0/<hash>.tar.zst`) takes part in
+resolution: 0.x versions group by minor (1.x and up by major), the build
+uses the highest version mentioned in a group, and apps pin exactly (a
+dependency needing a newer version than the app names is an error, not an
+upgrade). So a package built on roc-net 0.6.0 works with any 0.6.x, and
+only a roc-net minor release (a breaking one) means re-releasing it.
+
+**The platform side** is small, and only what packages can't do:
+
+- **A parse hook (done)**: `reader.read_parsed!(parse)` and
+  `Select.on_parsed(reader, parse, to_out)`, where `parse` is a pure
+  function of the reader's buffered bytes, answering "a value, using n
+  bytes" or "need more". Then any framing (varint lengths, MQTT, RESP, HTTP
+  headers) lives in a package and still works in `Select`; `on_line` and
+  `on_frame` become two built-in parsers. Varint framing itself would then
+  be package code, not platform code.
+
+**Layout and releasing:**
+
+- `packages/NAME/` holds `main.roc` (`package [Modules] { deps }`), its
+  modules, a `CHANGELOG.md`, and tests that `just test` and CI run.
+- During development, dependencies are relative paths: another package
+  (`"../protobuf/main.roc"`) or the platform
+  (`platform "../../platform/main.roc"`).
+- `just release-package NAME VERSION` bundles one package and uploads it to
+  the project's generic package registry as
+  `…/packages/generic/NAME/VERSION/<hash>.tar.zst`, tagged `NAME-vVERSION`.
+  A published bundle can't use relative paths that point outside it, so the
+  release rewrites each one to a released URL, the platform's and other
+  packages', and refuses if one of them isn't released yet (release order:
+  dependencies first).
+- Pure packages with no dependencies (`protobuf`) need no rewriting.
+
+**First packages:**
+
+- **`protobuf`** (done, 0.1.0 ready to release; pure): the wire format (varints, zigzag, fixed32/64,
+  length-delimited fields, walking a message's fields, packed repeated
+  fields), tested against `protoc` in both directions. Schemas are code on
+  top of it: written by hand, or later generated from `.proto` files.
+- **`resp`** (done, 0.1.0 ready to release; generic over streams, checked
+  against Valkey 8 with `just interop-valkey`): the Redis serialization protocol, a
+  client for the common commands, and an example using it.
+- Then, as they're wanted: base58 and base64 (pure), MQTT, WebSocket and
+  HTTP/1.1, each stressing the platform differently (binary framing,
+  long-lived pub/sub, upgrading a connection, pipelining). What they find
+  missing goes into the platform under the rule above.
+
 ## Later
 
-- 0.7: libp2p over TCP (peer IDs, libp2p-noise, multistream-select, yamux on
-  Select + scopes, identify, ping), interop with rust-libp2p.
-- 0.8: sans-I/O UDP foundation with QUIC (quinn-proto); libp2p over QUIC.
+- libp2p over TCP, as a package on roc-net and `protobuf`: peer IDs,
+  libp2p-noise (Noise XX with a signed payload), multistream-select, yamux
+  (Select and scopes), identify, ping; interop with rust-libp2p. The big
+  proof that a full protocol stack can live downstream.
+- A sans-I/O UDP foundation with QUIC (quinn-proto) in the platform (it's
+  host-level: native crypto, timers, packets); libp2p over QUIC.
 - Then DTLS (rtc-dtls with aws-lc vs dimpl), mDNS/STUN/NAT traversal (and
   UDP multicast interface, hop limit and packet info for them), WebSocket,
   libp2p's TLS (self-signed certificates, checked its own way), TLS

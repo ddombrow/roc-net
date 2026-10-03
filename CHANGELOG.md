@@ -4,6 +4,20 @@ Releases are published on
 [GitLab](https://gitlab.com/ddombrow/roc-net/-/releases). Each one names the
 Roc nightly it's built for; apps must use that nightly.
 
+## 0.7.0 (unreleased)
+
+Added:
+
+- **`Framing.Reader.read_parsed!(parse)`** and **`Select.on_parsed`**: read
+  messages of any framing with a pure function of the buffered bytes
+  (`Parsed(value, used)`, `NeedMore` or `Malformed(err)`), with the same
+  limits, timeouts and `Idle` as lines and frames. Protocol packages can now
+  read their messages, and wait for them in a `Select`, without the
+  platform knowing their format.
+- **Packages** in `packages/`, each versioned and released on its own
+  (`just release-package NAME VERSION`): `protobuf` 0.1.0 and `resp` 0.1.0
+  (see their own CHANGELOGs).
+
 ## 0.6.0
 
 Built for Roc `nightly-2026-09-29-7f11a82`, with hosts for macOS (arm64,

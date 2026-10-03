@@ -98,6 +98,21 @@ Select := [].{
 			Arms.({ arms: List.append(arms, { poll!: poll!, source: Readable(reader.socket()), on_stream_timeout }), timeout })
 		}
 
+		## A message of a framing of your own on a `Framing` reader, read with
+		## `parse` (see `Framing.Reader.read_parsed!`). `to_out` gets what
+		## `reader.read_parsed!(parse)` would return, including the reader to
+		## continue with. Like `on_line`, a message that starts arriving is
+		## read to its end, so once this arm has begun, it wins.
+		on_parsed = |Arms.({ arms, timeout }), reader, parse, to_out| {
+			poll! = |{}|
+				match reader.try_read_parsed!(parse) {
+					NotReady => NotReady
+					Ready(result) => Got(to_out(result))
+				}
+			on_stream_timeout = Report(|| to_out(Err(reader.timeout_error())))
+			Arms.({ arms: List.append(arms, { poll!: poll!, source: Readable(reader.socket()), on_stream_timeout }), timeout })
+		}
+
 		## A value arriving on a channel's `receiver`, or the channel closing
 		## (`Err(ChannelClosed)`).
 		on_receive = |Arms.({ arms, timeout }), receiver, to_out| {

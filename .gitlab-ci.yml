@@ -64,6 +64,9 @@ check:
     - !reference [.with-roc, before_script]
   script:
     - for main in examples/*/main.roc tests/*/main.roc; do roc check "$main" >/dev/null || { roc check "$main"; exit 1; }; echo "ok $main"; done
+    # The packages' own tests (they need no host).
+    - for pkg in packages/*/main.roc; do roc test "$pkg" || exit 1; done
+    - for app in packages/*/tests/main.roc; do roc check "$app" >/dev/null || { roc check "$app"; exit 1; }; echo "ok $app"; done
 
 host:
   stage: build
