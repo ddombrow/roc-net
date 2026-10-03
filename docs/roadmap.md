@@ -436,7 +436,7 @@ So: no new pure protocol logic goes into the platform. Moving released
 modules out is not worth the churn on its own; a later breaking release can
 reconsider `Bytes` if a pure "basics" package appears.
 
-## 0.7.0: Protocol packages (in progress)
+## 0.7.0: Protocol packages (ready to release)
 
 **Decided (2026-10-02):** packages live in this repo, under `packages/`,
 each versioned and released on its own.
